@@ -5,8 +5,9 @@ use serde_json::json;
 pub struct PinBarRecognizer;
 
 impl PatternRecognizer for PinBarRecognizer {
-    fn detect(&self, candles: &[CandleData]) -> Vec<serde_json::Value> {
+    fn detect(&self, candles: &[CandleData]) -> serde_json::Value {
         let mut zones = Vec::new();
+        let total_bars = candles.len();
         for i in 0..candles.len() {
             let candle = &candles[i];
             let body = (candle.close - candle.open).abs();
@@ -23,6 +24,11 @@ impl PatternRecognizer for PinBarRecognizer {
                 }));
             }
         }
-        zones
+        json!({
+            "pattern": "pin_bar",
+            "total_bars": total_bars,
+            "total_detected": zones.len(),
+            "data": zones,
+        })
     }
 }

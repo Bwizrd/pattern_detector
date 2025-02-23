@@ -4,18 +4,13 @@ use csv::ReaderBuilder;
 use dotenv::dotenv;
 use reqwest;
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
 use serde_json::json;
-
+use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    PatternRecognizer, 
-    DemandZoneRecognizer, 
-    BullishEngulfingRecognizer, 
-    SupplyZoneRecognizer, 
-    BigBarRecognizer,
-    PinBarRecognizer
+    BigBarRecognizer, BullishEngulfingRecognizer, DemandZoneRecognizer, PatternRecognizer,
+    PinBarRecognizer, SupplyZoneRecognizer,
 };
 
 // Data structures
@@ -115,7 +110,7 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         candles
     };
 
-     // Select recognizer based on pattern query parameter
+    // Select recognizer based on pattern query parameter
     let recognizer: &dyn PatternRecognizer = match query.pattern.as_str() {
         "demand_zone" => &DemandZoneRecognizer,
         "bullish_engulfing" => &BullishEngulfingRecognizer,
@@ -124,6 +119,25 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         "pin_bar" => &PinBarRecognizer, // Added
         _ => return HttpResponse::BadRequest().body(format!("Unknown pattern: {}", query.pattern)),
     };
+
+    {
+        // Future Extension: Combining Multiple Patterns
+        // When you’re ready to handle multiple patterns, you can combine the responses into an array in detect.rs. Here’s how:
+
+        // Collect Responses from Multiple Recognizers:
+
+        // let mut results = Vec::new();
+
+        // // Detect big_bar patterns
+        // let big_bar_recognizer = BigBarRecognizer;
+        // let big_bar_response = big_bar_recognizer.detect(&candles);
+        // results.push(big_bar_response);
+
+        // // Detect pin_bar patterns
+        // let pin_bar_recognizer = PinBarRecognizer;
+        // let pin_bar_response = pin_bar_recognizer.detect(&candles);
+        // results.push(pin_bar_response);
+    }
 
     // Detect patterns and return as JSON (changed from Vec<BuyZone> to Vec<Value>)
     let result = recognizer.detect(&candles);
@@ -135,7 +149,10 @@ fn aggregate_to_5m(candles: Vec<CandleData>) -> Vec<CandleData> {
     let mut result = Vec::new();
     for chunk in candles.chunks(5) {
         if !chunk.is_empty() {
-            let high = chunk.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+            let high = chunk
+                .iter()
+                .map(|c| c.high)
+                .fold(f64::NEG_INFINITY, f64::max);
             let low = chunk.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
             result.push(CandleData {
                 time: chunk[0].time.clone(),

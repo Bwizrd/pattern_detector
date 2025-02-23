@@ -3,7 +3,7 @@ use crate::detect::CandleData;
 use serde_json::Value;
 // Trait for pattern recognizers
 pub trait PatternRecognizer {
-    fn detect(&self, candles: &[CandleData]) -> Vec<Value>;
+    fn detect(&self, candles: &[CandleData]) -> Value; // Return a single JSON object
 }
 
 // Declare submodules

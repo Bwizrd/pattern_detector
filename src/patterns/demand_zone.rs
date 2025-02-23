@@ -5,8 +5,9 @@ use serde_json::json;
 pub struct DemandZoneRecognizer;
 
 impl PatternRecognizer for DemandZoneRecognizer {
-    fn detect(&self, candles: &[CandleData]) -> Vec<serde_json::Value> {
+    fn detect(&self, candles: &[CandleData])  -> serde_json::Value {
         let mut zones = Vec::new();
+        let total_bars = candles.len();
         for i in 0..candles.len() - 2 {
             let first = &candles[i];
             let second = &candles[i + 1];
@@ -24,6 +25,11 @@ impl PatternRecognizer for DemandZoneRecognizer {
                 }));
             }
         }
-        zones
+        json!({
+            "pattern": "demand_zone",
+            "total_bars": total_bars,
+            "total_detected": zones.len(),
+            "data": zones,
+        })
     }
 }

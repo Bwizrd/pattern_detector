@@ -5,7 +5,7 @@ use serde_json::json;
 pub struct BigBarRecognizer;
 
 impl PatternRecognizer for BigBarRecognizer {
-    fn detect(&self, candles: &[CandleData]) -> Vec<serde_json::Value> {
+    fn detect(&self, candles: &[CandleData]) -> serde_json::Value {
         let mut big_bars = Vec::new();
         let pip_value = 0.0002; // Define the pip value for this pattern
         let total_bars = candles.len();
@@ -22,19 +22,16 @@ impl PatternRecognizer for BigBarRecognizer {
             }
         }
 
-        // Construct the enhanced response
-        let response = json!({
+        // Construct the response object
+        json!({
             "pattern": "big_bar",
             "pip_value": pip_value,
             "total_bars": total_bars,
             "total_detected": big_bars.len(),
             "data": big_bars,
-        });
-
-        vec![response] // Return the response as a Vec<Value>
+        })
     }
 }
-
 
 #[test]
 fn test_big_bar_recognizer() {
@@ -65,5 +62,6 @@ fn test_big_bar_recognizer() {
 
     let result = recognizer.detect(&candles);
     println!("Detection result: {:?}", result); // Log the result
-    assert!(!result.is_empty()); // Ensure at least one big bar is detected
+    let data = result.get("data").unwrap().as_array().unwrap();
+    assert!(!data.is_empty()); // Ensure at least one big bar is detected
 }
