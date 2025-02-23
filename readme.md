@@ -1,0 +1,1 @@
+tree -I "target|.git|node_modules"
