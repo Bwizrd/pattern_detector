@@ -83,17 +83,60 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         .has_headers(true)
         .flexible(true)
         .from_reader(cursor);
+
+    let headers = match rdr.headers() {
+        Ok(h) => h.clone(),
+        Err(e) => {
+            return HttpResponse::InternalServerError().body(format!("CSV header error: {}", e))
+        }
+    };
+
+      // Find column indices
+      let mut time_idx = None;
+      let mut open_idx = None;
+      let mut high_idx = None;
+      let mut low_idx = None;
+      let mut close_idx = None;
+      
+      for (i, name) in headers.iter().enumerate() {
+          match name {
+              "_time" => time_idx = Some(i),
+              "open" => open_idx = Some(i),
+              "high" => high_idx = Some(i),
+              "low" => low_idx = Some(i),
+              "close" => close_idx = Some(i),
+              _ => {}
+          }
+      }
+
     for result in rdr.records() {
         if let Ok(record) = result {
-            if record.len() >= 13 && !record[0].starts_with(',') {
-                candles.push(CandleData {
-                    time: record[5].to_string(),
-                    open: record[11].parse().unwrap_or(0.0),
-                    high: record[10].parse().unwrap_or(0.0),
-                    low: record[12].parse().unwrap_or(0.0),
-                    close: record[9].parse().unwrap_or(0.0),
-                });
-            }
+              if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx)) = 
+               (time_idx, open_idx, high_idx, low_idx, close_idx) {
+                
+                if let Some(time_val) = record.get(t_idx) {
+                    let open = record.get(o_idx)
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let high = record.get(h_idx)
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let low = record.get(l_idx)
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    let close = record.get(c_idx)
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(0.0);
+                    
+                    candles.push(CandleData {
+                        time: time_val.to_string(),
+                        open,
+                        high,
+                        low,
+                        close,
+                    });
+                }
+               }
         }
     }
 

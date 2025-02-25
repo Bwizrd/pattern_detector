@@ -1,3 +1,4 @@
+// src/main.rs
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpServer, HttpResponse, Responder};
 use dotenv::dotenv;
