@@ -10,7 +10,7 @@ use std::io::Cursor;
 // Import from crate root
 use crate::patterns::{
     BigBarRecognizer, BullishEngulfingRecognizer, DemandZoneRecognizer, PatternRecognizer,
-    PinBarRecognizer, SupplyZoneRecognizer, RallyRecognizer, SupplyDemandZoneRecognizer
+    PinBarRecognizer, RallyRecognizer, SupplyDemandZoneRecognizer, SupplyZoneRecognizer, SimpleSupplyDemandZoneRecognizer
 };
 
 // Data structures
@@ -94,43 +94,47 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         }
     };
 
-      // Find column indices
-      let mut time_idx = None;
-      let mut open_idx = None;
-      let mut high_idx = None;
-      let mut low_idx = None;
-      let mut close_idx = None;
-      
-      for (i, name) in headers.iter().enumerate() {
-          match name {
-              "_time" => time_idx = Some(i),
-              "open" => open_idx = Some(i),
-              "high" => high_idx = Some(i),
-              "low" => low_idx = Some(i),
-              "close" => close_idx = Some(i),
-              _ => {}
-          }
-      }
+    // Find column indices
+    let mut time_idx = None;
+    let mut open_idx = None;
+    let mut high_idx = None;
+    let mut low_idx = None;
+    let mut close_idx = None;
+
+    for (i, name) in headers.iter().enumerate() {
+        match name {
+            "_time" => time_idx = Some(i),
+            "open" => open_idx = Some(i),
+            "high" => high_idx = Some(i),
+            "low" => low_idx = Some(i),
+            "close" => close_idx = Some(i),
+            _ => {}
+        }
+    }
 
     for result in rdr.records() {
         if let Ok(record) = result {
-              if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx)) = 
-               (time_idx, open_idx, high_idx, low_idx, close_idx) {
-                
+            if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx)) =
+                (time_idx, open_idx, high_idx, low_idx, close_idx)
+            {
                 if let Some(time_val) = record.get(t_idx) {
-                    let open = record.get(o_idx)
+                    let open = record
+                        .get(o_idx)
                         .and_then(|v| v.parse::<f64>().ok())
                         .unwrap_or(0.0);
-                    let high = record.get(h_idx)
+                    let high = record
+                        .get(h_idx)
                         .and_then(|v| v.parse::<f64>().ok())
                         .unwrap_or(0.0);
-                    let low = record.get(l_idx)
+                    let low = record
+                        .get(l_idx)
                         .and_then(|v| v.parse::<f64>().ok())
                         .unwrap_or(0.0);
-                    let close = record.get(c_idx)
+                    let close = record
+                        .get(c_idx)
                         .and_then(|v| v.parse::<f64>().ok())
                         .unwrap_or(0.0);
-                    
+
                     candles.push(CandleData {
                         time: time_val.to_string(),
                         open,
@@ -139,7 +143,7 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
                         close,
                     });
                 }
-               }
+            }
         }
     }
 
@@ -167,7 +171,11 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
                 query.pip_value.unwrap_or(0.0001),          // Default pip value
             );
             recognizer.detect(&candles)
-        },
+        }
+        "simple_supply_demand_zone" => {
+            let recognizer = SimpleSupplyDemandZoneRecognizer;
+            recognizer.detect(&candles)
+        }
         // Existing recognizers
         "demand_zone" => DemandZoneRecognizer.detect(&candles),
         "bullish_engulfing" => BullishEngulfingRecognizer.detect(&candles),
