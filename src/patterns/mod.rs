@@ -1,4 +1,5 @@
 
+// src/patterns/mod.rs
 use crate::detect::CandleData;
 use serde_json::Value;
 // Trait for pattern recognizers
@@ -12,6 +13,8 @@ mod bullish_engulfing;
 mod supply_zone; // Add new module
 mod pin_bar; // Add new module
 mod big_bar; // Add new module
+mod rally;
+mod supply_demand;
 
 // Export recognizers
 pub use demand_zone::DemandZoneRecognizer;
@@ -19,6 +22,8 @@ pub use bullish_engulfing::BullishEngulfingRecognizer;
 pub use supply_zone::SupplyZoneRecognizer;
 pub use pin_bar::PinBarRecognizer;
 pub use big_bar::BigBarRecognizer;
+pub use rally::RallyRecognizer;
+pub use supply_demand::SupplyDemandZoneRecognizer;
 
 // Array of all recognizers - use later when we combine patterns
 // pub const ALL_RECOGNIZERS: &[&dyn PatternRecognizer] = &[
@@ -28,3 +33,4 @@ pub use big_bar::BigBarRecognizer;
 //     &PinBarRecognizer, 
 //     &BigBarRecognizer,
 // ];
+

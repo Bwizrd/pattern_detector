@@ -10,7 +10,7 @@ use std::io::Cursor;
 // Import from crate root
 use crate::patterns::{
     BigBarRecognizer, BullishEngulfingRecognizer, DemandZoneRecognizer, PatternRecognizer,
-    PinBarRecognizer, SupplyZoneRecognizer,
+    PinBarRecognizer, SupplyZoneRecognizer, RallyRecognizer, SupplyDemandZoneRecognizer
 };
 
 // Data structures
@@ -21,6 +21,9 @@ pub struct ChartQuery {
     pub symbol: String,
     pub timeframe: String,
     pub pattern: String,
+    pub min_imbalance_pips: Option<f64>,
+    pub zone_lookback: Option<usize>,
+    pub pip_value: Option<f64>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -154,12 +157,24 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
     };
 
     // Select recognizer based on pattern query parameter
-    let recognizer: &dyn PatternRecognizer = match query.pattern.as_str() {
-        "demand_zone" => &DemandZoneRecognizer,
-        "bullish_engulfing" => &BullishEngulfingRecognizer,
-        "supply_zone" => &SupplyZoneRecognizer,
-        "big_bar" => &BigBarRecognizer, // Added
-        "pin_bar" => &PinBarRecognizer, // Added
+    let result = match query.pattern.as_str() {
+        // For the new combined supply/demand zone recognizer
+        "supply_demand_zone" => {
+            // Create a configured recognizer with optional parameters from query
+            let recognizer = SupplyDemandZoneRecognizer::new(
+                query.min_imbalance_pips.unwrap_or(0.0010), // Default 10 pips
+                query.zone_lookback.unwrap_or(20),          // Default 20 candles
+                query.pip_value.unwrap_or(0.0001),          // Default pip value
+            );
+            recognizer.detect(&candles)
+        },
+        // Existing recognizers
+        "demand_zone" => DemandZoneRecognizer.detect(&candles),
+        "bullish_engulfing" => BullishEngulfingRecognizer.detect(&candles),
+        "supply_zone" => SupplyZoneRecognizer.detect(&candles),
+        "big_bar" => BigBarRecognizer.detect(&candles),
+        "pin_bar" => PinBarRecognizer.detect(&candles),
+        "rally" => RallyRecognizer.detect(&candles),
         _ => return HttpResponse::BadRequest().body(format!("Unknown pattern: {}", query.pattern)),
     };
 
@@ -183,7 +198,6 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
     }
 
     // Detect patterns and return as JSON (changed from Vec<BuyZone> to Vec<Value>)
-    let result = recognizer.detect(&candles);
 
     HttpResponse::Ok().json(result)
 }

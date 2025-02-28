@@ -45,10 +45,14 @@ async fn main() -> std::io::Result<()> {
     let port = 8080;
 
     println!("Application is running on http://{}:{}", host, port);
+    println!("Available endpoints:");
+    println!("  GET http://{}:{}/analyze", host, port);
+    println!("  GET http://{}:{}/echo", host, port);
+    println!("  GET http://{}:{}/health", host, port);
 
     HttpServer::new(|| {
         let cors = Cors::default()
-            .allowed_origin("http://localhost:8000")
+            .allowed_origin("http://localhost:4200")
             .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"])
             .allowed_headers(vec![actix_web::http::header::CONTENT_TYPE])
             .max_age(3600);
