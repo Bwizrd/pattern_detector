@@ -102,6 +102,7 @@ fn test_rally_recognizer() {
             low: 1.2998,
             open: 1.3000,
             close: 1.3008,
+            volume: 110
         },
         CandleData {
             time: "2023-10-01T00:01:00Z".to_string(),
@@ -109,6 +110,7 @@ fn test_rally_recognizer() {
             low: 1.3005,
             open: 1.3008,
             close: 1.3012,
+            volume: 110
         },
         CandleData {
             time: "2023-10-01T00:02:00Z".to_string(),
@@ -116,6 +118,7 @@ fn test_rally_recognizer() {
             low: 1.3010,
             open: 1.3012,
             close: 1.3018,
+            volume: 110
         },
         // Small drop
         CandleData {
@@ -124,6 +127,7 @@ fn test_rally_recognizer() {
             low: 1.3000,
             open: 1.3018,
             close: 1.3005,
+            volume: 110
         },
         // Another small rally
         CandleData {
@@ -132,6 +136,7 @@ fn test_rally_recognizer() {
             low: 1.3000,
             open: 1.3005,
             close: 1.3008,
+            volume: 110
         },
         CandleData {
             time: "2023-10-01T00:05:00Z".to_string(),
@@ -139,6 +144,7 @@ fn test_rally_recognizer() {
             low: 1.3007,
             open: 1.3008,
             close: 1.3014,
+            volume: 110
         },
         CandleData {
             time: "2023-10-01T00:06:00Z".to_string(),
@@ -146,6 +152,7 @@ fn test_rally_recognizer() {
             low: 1.3012,
             open: 1.3014,
             close: 1.3022,
+            volume: 110
         },
     ];
 

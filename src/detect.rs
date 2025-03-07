@@ -9,8 +9,9 @@ use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    BigBarRecognizer, BullishEngulfingRecognizer, DemandZoneRecognizer, PatternRecognizer,
-    PinBarRecognizer, RallyRecognizer, SupplyDemandZoneRecognizer, SupplyZoneRecognizer, SimpleSupplyDemandZoneRecognizer
+    BigBarRecognizer, BullishEngulfingRecognizer, ConsolidationRecognizer, DemandZoneRecognizer,
+    PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer,
+    SupplyDemandZoneRecognizer, SupplyZoneRecognizer,
 };
 
 // Data structures
@@ -21,9 +22,6 @@ pub struct ChartQuery {
     pub symbol: String,
     pub timeframe: String,
     pub pattern: String,
-    pub min_imbalance_pips: Option<f64>,
-    pub zone_lookback: Option<usize>,
-    pub pip_value: Option<f64>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -33,6 +31,7 @@ pub struct CandleData {
     pub high: f64,
     pub low: f64,
     pub close: f64,
+    pub volume: u32,
 }
 
 #[derive(Serialize)]
@@ -100,6 +99,7 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
     let mut high_idx = None;
     let mut low_idx = None;
     let mut close_idx = None;
+    let mut volume_idx = None;
 
     for (i, name) in headers.iter().enumerate() {
         match name {
@@ -108,14 +108,15 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
             "high" => high_idx = Some(i),
             "low" => low_idx = Some(i),
             "close" => close_idx = Some(i),
+            "volume" => volume_idx = Some(i),
             _ => {}
         }
     }
 
     for result in rdr.records() {
         if let Ok(record) = result {
-            if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx)) =
-                (time_idx, open_idx, high_idx, low_idx, close_idx)
+            if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx), Some(c_vdx)) =
+                (time_idx, open_idx, high_idx, low_idx, close_idx, volume_idx)
             {
                 if let Some(time_val) = record.get(t_idx) {
                     let open = record
@@ -134,6 +135,10 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
                         .get(c_idx)
                         .and_then(|v| v.parse::<f64>().ok())
                         .unwrap_or(0.0);
+                    let volume = record
+                        .get(c_vdx)
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
 
                     candles.push(CandleData {
                         time: time_val.to_string(),
@@ -141,6 +146,7 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
                         high,
                         low,
                         close,
+                        volume,
                     });
                 }
             }
@@ -164,16 +170,15 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
     let result = match query.pattern.as_str() {
         // For the new combined supply/demand zone recognizer
         "supply_demand_zone" => {
-            // Create a configured recognizer with optional parameters from query
-            let recognizer = SupplyDemandZoneRecognizer::new(
-                query.min_imbalance_pips.unwrap_or(0.0010), // Default 10 pips
-                query.zone_lookback.unwrap_or(20),          // Default 20 candles
-                query.pip_value.unwrap_or(0.0001),          // Default pip value
-            );
+            let recognizer = SupplyDemandZoneRecognizer;
             recognizer.detect(&candles)
         }
         "simple_supply_demand_zone" => {
             let recognizer = SimpleSupplyDemandZoneRecognizer;
+            recognizer.detect(&candles)
+        }
+        "consolidation_zone" => {
+            let recognizer = ConsolidationRecognizer::default();
             recognizer.detect(&candles)
         }
         // Existing recognizers
@@ -225,6 +230,7 @@ fn aggregate_to_5m(candles: Vec<CandleData>) -> Vec<CandleData> {
                 high,
                 low,
                 close: chunk.last().unwrap().close,
+                volume: chunk[0].volume,
             });
         }
     }

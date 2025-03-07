@@ -51,6 +51,7 @@ fn test_big_bar_recognizer() {
             low: 1.2998,
             open: 1.2999,
             close: 1.29995,
+            volume: 110
         },
         CandleData {
             time: "2023-10-01T00:01:00Z".to_string(), // Adjusted to 1-minute increments
@@ -58,6 +59,7 @@ fn test_big_bar_recognizer() {
             low: 1.3000,
             open: 1.3001,
             close: 1.3003,
+            volume: 90
         },
         CandleData {
             time: "2023-10-01T00:02:00Z".to_string(), // Adjusted to 1-minute increments
@@ -65,6 +67,7 @@ fn test_big_bar_recognizer() {
             low: 1.3005,
             open: 1.3006,
             close: 1.3008,
+            volume: 100
         },
     ];
 
