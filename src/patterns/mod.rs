@@ -17,9 +17,11 @@ mod rally;
 mod supply_demand;
 mod supply_demand_zone_simple;
 mod consolidation;
+mod drop_base_rally;
+mod demand_move_away;
 
 // Export recognizers
-pub use demand_zone::DemandZoneRecognizer;
+pub use demand_zone::FlexibleDemandZoneRecognizer;
 pub use bullish_engulfing::BullishEngulfingRecognizer;
 pub use supply_zone::SupplyZoneRecognizer;
 pub use pin_bar::PinBarRecognizer;
@@ -28,6 +30,8 @@ pub use rally::RallyRecognizer;
 pub use supply_demand::SupplyDemandZoneRecognizer;
 pub use supply_demand_zone_simple::SimpleSupplyDemandZoneRecognizer;
 pub use consolidation::ConsolidationRecognizer;
+pub use drop_base_rally::DropBaseRallyRecognizer;
+pub use demand_move_away::DemandMoveAwayRecognizer;
 
 // Array of all recognizers - use later when we combine patterns
 // pub const ALL_RECOGNIZERS: &[&dyn PatternRecognizer] = &[

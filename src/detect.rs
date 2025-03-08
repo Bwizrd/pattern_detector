@@ -9,7 +9,8 @@ use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    BigBarRecognizer, BullishEngulfingRecognizer, ConsolidationRecognizer, DemandZoneRecognizer,
+    BigBarRecognizer, BullishEngulfingRecognizer, ConsolidationRecognizer,
+    DemandMoveAwayRecognizer, DropBaseRallyRecognizer, FlexibleDemandZoneRecognizer,
     PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer,
     SupplyDemandZoneRecognizer, SupplyZoneRecognizer,
 };
@@ -55,15 +56,20 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         format!("{}_SB", query.symbol)
     };
 
+    // Get the requested timeframe from the query parameters
+    let timeframe = &query.timeframe;
+
+    // Construct the flux query with timeframe filtering
     let flux_query = format!(
         r#"from(bucket: "{}")
         |> range(start: {}, stop: {})
-        |> filter(fn: (r) => r._measurement == "trendbar")
-        |> filter(fn: (r) => r.symbol == "{}")
+        |> filter(fn: (r) => r["_measurement"] == "trendbar")
+        |> filter(fn: (r) => r["symbol"] == "{}")
+        |> filter(fn: (r) => r["timeframe"] == "{}")
         |> toFloat()
         |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
         |> sort(columns: ["_time"])"#,
-        bucket, query.start_time, query.end_time, query.symbol
+        bucket, query.start_time, query.end_time, symbol, timeframe
     );
 
     let url = format!("{}/api/v2/query?org={}", host, org);
@@ -156,18 +162,25 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
     if candles.is_empty() {
         return HttpResponse::NotFound().json(json!({
             "error": "No data found",
-            "message": format!("No candles found for symbol {} in the specified time range.", symbol)
+            "message": format!("No candles found for symbol {} with timeframe {} in the specified time range.", symbol, timeframe)
         }));
     }
 
-    let candles = if query.timeframe == "5m" {
-        aggregate_to_5m(candles)
-    } else {
-        candles
-    };
-
     // Select recognizer based on pattern query parameter
     let result = match query.pattern.as_str() {
+        // For DBR pattern
+        "drop_base_rally" => {
+            let recognizer = DropBaseRallyRecognizer::default();
+            recognizer.detect(&candles)
+        }
+        "demand_zone_flexible" => {
+            let recognizer = FlexibleDemandZoneRecognizer::default();
+            recognizer.detect(&candles)
+        }
+        "demand_move_away" => {
+            let recognizer = DemandMoveAwayRecognizer::default();
+            recognizer.detect(&candles)
+        }
         // For the new combined supply/demand zone recognizer
         "supply_demand_zone" => {
             let recognizer = SupplyDemandZoneRecognizer;
@@ -182,7 +195,6 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
             recognizer.detect(&candles)
         }
         // Existing recognizers
-        "demand_zone" => DemandZoneRecognizer.detect(&candles),
         "bullish_engulfing" => BullishEngulfingRecognizer.detect(&candles),
         "supply_zone" => SupplyZoneRecognizer.detect(&candles),
         "big_bar" => BigBarRecognizer.detect(&candles),
@@ -191,48 +203,5 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         _ => return HttpResponse::BadRequest().body(format!("Unknown pattern: {}", query.pattern)),
     };
 
-    {
-        // Future Extension: Combining Multiple Patterns
-        // When you’re ready to handle multiple patterns, you can combine the responses into an array in detect.rs. Here’s how:
-
-        // Collect Responses from Multiple Recognizers:
-
-        // let mut results = Vec::new();
-
-        // // Detect big_bar patterns
-        // let big_bar_recognizer = BigBarRecognizer;
-        // let big_bar_response = big_bar_recognizer.detect(&candles);
-        // results.push(big_bar_response);
-
-        // // Detect pin_bar patterns
-        // let pin_bar_recognizer = PinBarRecognizer;
-        // let pin_bar_response = pin_bar_recognizer.detect(&candles);
-        // results.push(pin_bar_response);
-    }
-
-    // Detect patterns and return as JSON (changed from Vec<BuyZone> to Vec<Value>)
-
     HttpResponse::Ok().json(result)
-}
-
-fn aggregate_to_5m(candles: Vec<CandleData>) -> Vec<CandleData> {
-    let mut result = Vec::new();
-    for chunk in candles.chunks(5) {
-        if !chunk.is_empty() {
-            let high = chunk
-                .iter()
-                .map(|c| c.high)
-                .fold(f64::NEG_INFINITY, f64::max);
-            let low = chunk.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
-            result.push(CandleData {
-                time: chunk[0].time.clone(),
-                open: chunk[0].open,
-                high,
-                low,
-                close: chunk.last().unwrap().close,
-                volume: chunk[0].volume,
-            });
-        }
-    }
-    result
 }
