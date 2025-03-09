@@ -9,10 +9,7 @@ use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    BigBarRecognizer, BullishEngulfingRecognizer, ConsolidationRecognizer,
-    DemandMoveAwayRecognizer, DropBaseRallyRecognizer, FlexibleDemandZoneRecognizer,
-    PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer,
-    SupplyDemandZoneRecognizer, SupplyZoneRecognizer,
+    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer, ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, SupplyDemandZoneRecognizer, SupplyZoneRecognizer
 };
 
 // Data structures
@@ -192,6 +189,10 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         }
         "consolidation_zone" => {
             let recognizer = ConsolidationRecognizer::default();
+            recognizer.detect(&candles)
+        }
+        "combined_demand" => {
+            let recognizer = CombinedDemandRecognizer::default();
             recognizer.detect(&candles)
         }
         // Existing recognizers
