@@ -28,7 +28,7 @@ pub use supply_zone::SupplyZoneRecognizer;
 pub use pin_bar::PinBarRecognizer;
 pub use big_bar::BigBarRecognizer;
 pub use rally::RallyRecognizer;
-pub use supply_demand::SupplyDemandZoneRecognizer;
+pub use supply_demand::EnhancedSupplyDemandZoneRecognizer;
 pub use supply_demand_zone_simple::SimpleSupplyDemandZoneRecognizer;
 pub use consolidation::ConsolidationRecognizer;
 pub use drop_base_rally::DropBaseRallyRecognizer;
