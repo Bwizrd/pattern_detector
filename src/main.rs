@@ -6,6 +6,8 @@ use env_logger;
 
 mod detect; // Declares detect module
 mod patterns; // Declares patterns module
+pub mod trades; 
+pub mod trading; 
 
 // Echo endpoint structures
 #[derive(serde::Serialize)]

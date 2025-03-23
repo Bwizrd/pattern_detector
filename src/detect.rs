@@ -4,13 +4,16 @@ use csv::ReaderBuilder;
 use dotenv::dotenv;
 use reqwest;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer, ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, EnhancedSupplyDemandZoneRecognizer, SupplyZoneRecognizer
+    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer, ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer, EnhancedSupplyDemandZoneRecognizer, FiftyPercentBeforeBigBarRecognizer, FiftyPercentBodyCandleRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, SupplyZoneRecognizer
 };
+
+// Import trading modules
+use crate::trades::TradeConfig;
 
 // Data structures
 #[derive(Deserialize)]
@@ -20,6 +23,11 @@ pub struct ChartQuery {
     pub symbol: String,
     pub timeframe: String,
     pub pattern: String,
+    pub enable_trading: Option<bool>,
+    pub lot_size: Option<f64>,
+    pub stop_loss_pips: Option<f64>,
+    pub take_profit_pips: Option<f64>,
+    pub enable_trailing_stop: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -162,6 +170,20 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
             "message": format!("No candles found for symbol {} with timeframe {} in the specified time range.", symbol, timeframe)
         }));
     }
+    ///// Set up trading config
+    let enable_trading = query.enable_trading.unwrap_or(false);
+    let trade_config = if enable_trading {
+        TradeConfig {
+            enabled: true,
+            lot_size: query.lot_size.unwrap_or(0.01),
+            default_stop_loss_pips: query.stop_loss_pips.unwrap_or(20.0),
+            default_take_profit_pips: query.take_profit_pips.unwrap_or(40.0),
+            enable_trailing_stop: query.enable_trailing_stop.unwrap_or(false),
+            ..TradeConfig::default()
+        }
+    } else {
+        TradeConfig::default()
+    };
 
     // Select recognizer based on pattern query parameter
     let result = match query.pattern.as_str() {
@@ -181,10 +203,30 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         // For the new combined supply/demand zone recognizer
         "supply_demand_zone" => {
             let recognizer = EnhancedSupplyDemandZoneRecognizer::default();
-            recognizer.detect(&candles)
+            let pattern_result = recognizer.detect(&candles);
+
+            if enable_trading {
+                let (trades, summary) = recognizer.trade(&candles, trade_config);
+
+                let mut response_obj = pattern_result.as_object().unwrap().clone();
+                response_obj.insert("trades".to_string(), json!(trades));
+                response_obj.insert("trade_summary".to_string(), json!(summary));
+
+                Value::Object(response_obj)
+            } else {
+                pattern_result
+            }
         }
         "simple_supply_demand_zone" => {
             let recognizer = SimpleSupplyDemandZoneRecognizer;
+            recognizer.detect(&candles)
+        }
+        "fifty_percent_body_candle" => {
+            let recognizer = FiftyPercentBodyCandleRecognizer::default();
+            recognizer.detect(&candles)
+        }
+        "fifty_percent_before_big_bar" => {
+            let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
             recognizer.detect(&candles)
         }
         "consolidation_zone" => {
