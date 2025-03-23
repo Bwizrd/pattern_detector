@@ -1,5 +1,7 @@
 use crate::detect::CandleData;
 use crate::patterns::PatternRecognizer;
+use crate::trading::TradeExecutor;
+use crate::trades::{Trade, TradeConfig, TradeSummary};
 use serde_json::json;
 
 pub struct FiftyPercentBeforeBigBarRecognizer {
@@ -130,7 +132,7 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 } else {
                     format!("50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body)")
                 };
-                
+
                 demand_zones.push(json!({
                     "category": "Price",
                     "type": "demand_zone",
@@ -227,5 +229,21 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 "lines": []
             }
         })
+    }
+
+    fn trade(&self, candles: &[CandleData], config: TradeConfig) -> (Vec<Trade>, TradeSummary) {
+        // Get the pattern data
+        let pattern_data = self.detect(candles);
+        
+        // Create a trade executor with the provided config
+        let executor = TradeExecutor::new(config);
+        
+        // Execute trades based on the pattern
+        let trades = executor.execute_trades_for_pattern("fifty_percent_before_big_bar", &pattern_data, candles);
+        
+        // Generate summary
+        let summary = TradeSummary::from_trades(&trades);
+        
+        (trades, summary)
     }
 }

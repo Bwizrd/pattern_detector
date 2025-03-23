@@ -108,10 +108,18 @@ impl Trade {
         self.status = TradeStatus::Closed;
         self.exit_time = Some(exit_candle.time.clone());
         
-        let exit_price = match self.direction {
-            TradeDirection::Long => exit_candle.close,
-            TradeDirection::Short => exit_candle.close,
+        // Set exit price based on reason
+        let exit_price = if exit_reason == "Stop Loss" {
+            // Use the actual stop loss price when stopped out
+            self.stop_loss
+        } else if exit_reason == "Take Profit" {
+            // Use the actual take profit price when taking profit
+            self.take_profit
+        } else {
+            // Otherwise use candle close
+            exit_candle.close
         };
+        
         self.exit_price = Some(exit_price);
         
         // Calculate P/L in pips (assuming 4 decimal places for forex)
@@ -121,7 +129,7 @@ impl Trade {
             TradeDirection::Short => (self.entry_price - exit_price) / pip_value,
         };
         
-        // Calculate P/L in account currency (simplified)
+        // Calculate P/L in account currency
         let profit_loss = profit_loss_pips * 10.0 * self.lot_size; // Assuming $10 per pip for 1.0 lot
         
         self.profit_loss = Some(profit_loss);

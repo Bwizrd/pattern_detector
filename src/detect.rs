@@ -9,7 +9,11 @@ use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer, ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer, EnhancedSupplyDemandZoneRecognizer, FiftyPercentBeforeBigBarRecognizer, FiftyPercentBodyCandleRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer, PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, SupplyZoneRecognizer
+    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer,
+    ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer,
+    EnhancedSupplyDemandZoneRecognizer, FiftyPercentBeforeBigBarRecognizer,
+    FiftyPercentBodyCandleRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer,
+    PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, SupplyZoneRecognizer,
 };
 
 // Import trading modules
@@ -227,7 +231,19 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         }
         "fifty_percent_before_big_bar" => {
             let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
-            recognizer.detect(&candles)
+            let pattern_result = recognizer.detect(&candles);
+
+            if enable_trading {
+                let (trades, summary) = recognizer.trade(&candles, trade_config);
+
+                let mut response_obj = pattern_result.as_object().unwrap().clone();
+                response_obj.insert("trades".to_string(), json!(trades));
+                response_obj.insert("trade_summary".to_string(), json!(summary));
+
+                Value::Object(response_obj)
+            } else {
+                pattern_result
+            }
         }
         "consolidation_zone" => {
             let recognizer = ConsolidationRecognizer::default();
