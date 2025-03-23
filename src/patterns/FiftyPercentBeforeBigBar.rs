@@ -6,6 +6,7 @@ pub struct FiftyPercentBeforeBigBarRecognizer {
     // Configuration parameters
     max_body_size_percent: f64,    // For 50% body candles (default 50%)
     min_big_bar_body_percent: f64, // For big bars (default 65%)
+    proximal_extension_percent: f64, // How much to extend the proximal side (0.0 = no extension)
 }
 
 impl Default for FiftyPercentBeforeBigBarRecognizer {
@@ -13,6 +14,7 @@ impl Default for FiftyPercentBeforeBigBarRecognizer {
         Self {
             max_body_size_percent: 50.0,
             min_big_bar_body_percent: 0.65,
+            proximal_extension_percent: 0.02, // Default to 0.2% extension (set to 0.0 to disable)
         }
     }
 }
@@ -92,11 +94,19 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             // We found a pattern! Now determine if it's a supply or demand zone based on the big bar direction
             let is_bullish_big_bar = big_candle.close > big_candle.open;
             
-            // Create zone using ONLY the 50% body candle's range
+            // Create zone using the 50% body candle's range with potential extension
             if is_bullish_big_bar {
                 // Bullish big bar = demand zone
                 let zone_low = fifty_candle.low;
-                let zone_high = fifty_candle.high;
+                
+                // For demand zones, extend the upper boundary (proximal side)
+                let extension_amount = if self.proximal_extension_percent > 0.0 {
+                    fifty_candle.high * (self.proximal_extension_percent / 100.0)
+                } else {
+                    0.0
+                };
+                
+                let zone_high = fifty_candle.high + extension_amount;
                 
                 // Find how far to extend the zone (until price touches or breaks the zone)
                 let mut zone_end_index = i + 1;
@@ -112,6 +122,14 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 // Calculate relative size for display
                 let relative_size = (big_range / avg_range * 100.0).round() as i32;
                 let body_percent = (big_body_percentage * 100.0).round() as i32;
+                
+                // Include extension information in detection method
+                let method_text = if self.proximal_extension_percent > 0.0 {
+                    format!("50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body, {:.2}% extended)", 
+                            self.proximal_extension_percent)
+                } else {
+                    format!("50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body)")
+                };
                 
                 demand_zones.push(json!({
                     "category": "Price",
@@ -121,19 +139,30 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                     "zone_high": zone_high,
                     "zone_low": zone_low,
                     "fifty_percent_line": (zone_high + zone_low) / 2.0,
-                    "detection_method": format!("50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body)"),
-                    "quality_score": 75.0, // High quality by default since it meets our strict criteria
-                    "strength": "Strong"
+                    "detection_method": method_text,
+                    "quality_score": 75.0,
+                    "strength": "Strong",
+                    "extended": self.proximal_extension_percent > 0.0,
+                    "extension_percent": self.proximal_extension_percent
                 }));
             } else {
                 // Bearish big bar = supply zone
-                let zone_high = fifty_candle.high;
                 let zone_low = fifty_candle.low;
+                
+                // For supply zones, extend the lower boundary (proximal side)
+                let extension_amount = if self.proximal_extension_percent > 0.0 {
+                    fifty_candle.low * (self.proximal_extension_percent / 100.0)
+                } else {
+                    0.0
+                };
+                
+                let zone_high = fifty_candle.high;
+                let zone_low_extended = zone_low - extension_amount;
                 
                 // Find how far to extend the zone (until price touches or breaks the zone)
                 let mut zone_end_index = i + 1;
                 for j in (i + 2)..candles.len() {
-                    if candles[j].low <= zone_high && candles[j].high >= zone_low {
+                    if candles[j].low <= zone_high && candles[j].high >= zone_low_extended {
                         // Price has touched the zone, include this candle plus one more
                         zone_end_index = j.saturating_add(1).min(candles.len() - 1);
                         break;
@@ -145,17 +174,27 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 let relative_size = (big_range / avg_range * 100.0).round() as i32;
                 let body_percent = (big_body_percentage * 100.0).round() as i32;
                 
+                // Include extension information in detection method
+                let method_text = if self.proximal_extension_percent > 0.0 {
+                    format!("50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body, {:.1}% extended)", 
+                            self.proximal_extension_percent)
+                } else {
+                    format!("50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body)")
+                };
+                
                 supply_zones.push(json!({
                     "category": "Price",
                     "type": "supply_zone",
                     "start_time": fifty_candle.time.clone(),
                     "end_time": candles[zone_end_index].time.clone(),
                     "zone_high": zone_high,
-                    "zone_low": zone_low,
-                    "fifty_percent_line": (zone_high + zone_low) / 2.0,
-                    "detection_method": format!("50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body)"),
-                    "quality_score": 75.0, // High quality by default since it meets our strict criteria
-                    "strength": "Strong"
+                    "zone_low": zone_low_extended,
+                    "fifty_percent_line": (zone_high + zone_low_extended) / 2.0,
+                    "detection_method": method_text,
+                    "quality_score": 75.0,
+                    "strength": "Strong",
+                    "extended": self.proximal_extension_percent > 0.0,
+                    "extension_percent": self.proximal_extension_percent
                 }));
             }
         }
@@ -167,8 +206,9 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             "total_detected": supply_zones.len() + demand_zones.len(),
             "avg_range": avg_range,
             "big_bar_threshold": big_bar_threshold,
+            "proximal_extension_percent": self.proximal_extension_percent,
             "datasets": {
-                "price": 2, // Two datasets: supply_zones and demand_zones
+                "price": 2, 
                 "oscillators": 0,
                 "lines": 0
             },
