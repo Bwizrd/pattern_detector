@@ -324,12 +324,10 @@ impl TradeExecutor {
 
                     // Place stop loss below the zone
                     // Place stop loss below the zone (5 pips below zone_low)
-                    let stop_loss = zone_low - (5.0 * pip_size);
+                    let stop_loss = entry_price - (self.config.default_stop_loss_pips * pip_size);
 
                     // Take profit is a multiple of the risk
-                    let risk_pips = (entry_price - stop_loss) / pip_size;
-                    let reward_pips = risk_pips * 2.0; // 1:2 risk:reward
-                    let take_profit = entry_price + (reward_pips * pip_size);
+                    let take_profit = entry_price + (self.config.default_take_profit_pips * pip_size);
 
                     // Create a new trade
                     let trade = Trade::new(
@@ -403,14 +401,10 @@ impl TradeExecutor {
                     let entry_price = candles[i].close;
                     let pip_size = 0.0001; // 4 decimal places for forex
 
-                    // Place stop loss above the zone
-                    // Place stop loss above the zone (5 pips above zone_high)
-                    let stop_loss = zone_high + (5.0 * pip_size);
+                    let stop_loss = entry_price + (self.config.default_stop_loss_pips * pip_size);
 
                     // Take profit is a multiple of the risk
-                    let risk_pips = (stop_loss - entry_price) / pip_size;
-                    let reward_pips = risk_pips * 2.0; // 1:2 risk:reward
-                    let take_profit = entry_price - (reward_pips * pip_size);
+                    let take_profit = entry_price - (self.config.default_take_profit_pips * pip_size);
 
                     // Create a new trade
                     let trade = Trade::new(

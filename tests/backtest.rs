@@ -1,31 +1,225 @@
+use dotenv::dotenv;
 use pattern_detector::detect::CandleData;
 use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
 use pattern_detector::patterns::PatternRecognizer;
 use pattern_detector::trades::TradeConfig;
-use pattern_detector::trades::TradeDirection;
-use dotenv::dotenv;
-use reqwest;
-use csv::ReaderBuilder;
-use std::io::Cursor;
-use serde_json::json;
-use chrono::DateTime;
+use pattern_detector::trading::TradeExecutor;
+use chrono::{DateTime, Duration, Utc};
 
 #[tokio::test]
 async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
     // Load environment variables
     dotenv().ok();
+    // Parse command-line arguments
+    // In your test file
+    let lot_size = std::env::var("LOT_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.01);
+    let take_profit_pips = std::env::var("TP_PIPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20.0);
+    let stop_loss_pips = std::env::var("SL_PIPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10.0);
+    // Default values
+
     let host = std::env::var("INFLUXDB_HOST").unwrap_or("http://localhost:8086".to_string());
     let org = std::env::var("INFLUXDB_ORG").expect("INFLUXDB_ORG must be set");
     let token = std::env::var("INFLUXDB_TOKEN").expect("INFLUXDB_TOKEN must be set");
     let bucket = std::env::var("INFLUXDB_BUCKET").expect("INFLUXDB_BUCKET must be set");
 
-    // Set the symbol and timeframe for backtesting
+    // Set the symbol and timeframe parameters
     let symbol = "GBPUSD_SB";
-    let timeframe = "1h";
+    let hourly_timeframe = "1h";
+    let minute_timeframe = "1m";
     let start_time = "2025-02-17T00:00:00Z";
     let end_time = "2025-03-21T23:59:59Z";
 
-    // Query data
+    // Load hourly data for pattern detection
+    println!("Loading hourly data for pattern detection...");
+    let hourly_candles = load_candles(
+        &host,
+        &org,
+        &token,
+        &bucket,
+        symbol,
+        hourly_timeframe,
+        start_time,
+        end_time,
+    )
+    .await?;
+    println!("Loaded {} hourly candles", hourly_candles.len());
+
+    // Load minute data for precise execution
+    println!("Loading 1-minute data for precise execution...");
+    let minute_candles = load_candles(
+        &host,
+        &org,
+        &token,
+        &bucket,
+        symbol,
+        minute_timeframe,
+        start_time,
+        end_time,
+    )
+    .await?;
+    println!("Loaded {} minute candles", minute_candles.len());
+
+    let start_datetime = DateTime::parse_from_rfc3339(start_time)
+        .unwrap_or_else(|_| DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap())
+        .with_timezone(&Utc);
+
+    let end_datetime = DateTime::parse_from_rfc3339(end_time)
+        .unwrap_or_else(|_| DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap())
+        .with_timezone(&Utc);
+
+    let duration = end_datetime - start_datetime;
+    let total_days = duration.num_days();
+
+    // Create trade config
+    let trade_config = TradeConfig {
+        enabled: true,
+        lot_size: lot_size,
+        default_stop_loss_pips: stop_loss_pips,
+        default_take_profit_pips: take_profit_pips,
+        risk_percent: 1.0,
+        max_trades_per_pattern: 2,
+        enable_trailing_stop: false,
+        trailing_stop_activation_pips: 10.0,
+        trailing_stop_distance_pips: 5.0,
+        ..Default::default()
+    };
+
+    // Create a trade executor with minute data
+    let mut trade_executor = TradeExecutor::new(trade_config);
+    trade_executor.set_minute_candles(minute_candles); // Set minute data for precise execution
+
+    // Run pattern detection
+    let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
+    let pattern_data = recognizer.detect(&hourly_candles);
+
+    // Execute trades using the executor
+    let trades = trade_executor.execute_trades_for_pattern(
+        "fifty_percent_before_big_bar",
+        &pattern_data,
+        &hourly_candles,
+    );
+
+    // Calculate summary from trades
+    let summary = pattern_detector::trades::TradeSummary::from_trades(&trades);
+
+    // Calculate total pips directly
+    let mut total_winning_pips = 0.0;
+    let mut total_losing_pips = 0.0;
+    for trade in &trades {
+        if let Some(pl_pips) = trade.profit_loss_pips {
+            if pl_pips > 0.0 {
+                total_winning_pips += pl_pips;
+            } else {
+                total_losing_pips += pl_pips.abs();
+            }
+        }
+    }
+    let net_pips = total_winning_pips - total_losing_pips;
+
+    // Print results
+    println!(
+        "\nBacktest Results for 50% Body Before Big Bar Pattern on {} {}:",
+        symbol, hourly_timeframe
+    );
+    println!("Total Trades: {}", summary.total_trades);
+    println!("Win Rate: {:.2}%", summary.win_rate);
+    println!("Total Profit/Loss: {:.2}", summary.total_profit_loss);
+    println!("Total Net Pips: {:.1}", net_pips);
+    println!("Profit Factor: {:.2}", summary.profit_factor);
+    if summary.total_trades > 0 {
+        let avg_profit_per_trade = summary.total_profit_loss / (summary.total_trades as f64);
+        println!("Per Trade: {:.2}", avg_profit_per_trade);
+    } else {
+        println!("Per Trade: 0.00");
+    }
+
+    println!("Backtest Period: {} days (from {} to {})", 
+         total_days, 
+         start_datetime.format("%Y-%m-%d"),
+         end_datetime.format("%Y-%m-%d"));
+
+    // Print individual trade details
+    println!(
+        "\n{:<5} {:<12} {:<28} {:<10} {:<10} {:<15}",
+        "No.", "Direction", "Entry Time", "Entry", "P/L pips", "Reason"
+    );
+    println!("{:-<85}", "");
+
+    for (i, trade) in trades.iter().enumerate() {
+        if let (Some(exit_price), Some(exit_time), Some(pl_pips), Some(exit_reason)) = (
+            trade.exit_price,
+            &trade.exit_time,
+            trade.profit_loss_pips,
+            &trade.exit_reason,
+        ) {
+            println!(
+                "{:<5} {:<12} {:<28} {:<10.5} {:<10.1} {:<15}",
+                i + 1,
+                format!("{:?}", trade.direction),
+                trade.entry_time,
+                trade.entry_price,
+                pl_pips,
+                exit_reason
+            );
+
+            // Debug info for stops and targets
+            let pip_size = 0.0001;
+            let stop_distance = match trade.direction {
+                pattern_detector::trades::TradeDirection::Long => {
+                    (trade.entry_price - trade.stop_loss) / pip_size
+                }
+                pattern_detector::trades::TradeDirection::Short => {
+                    (trade.stop_loss - trade.entry_price) / pip_size
+                }
+            };
+
+            println!(
+                "      Stop Loss: {} ({:.1} pips from entry)",
+                trade.stop_loss, stop_distance
+            );
+            println!(
+                "      Take Profit: {} ({:.1} pips from entry)",
+                trade.take_profit,
+                match trade.direction {
+                    pattern_detector::trades::TradeDirection::Long =>
+                        (trade.take_profit - trade.entry_price) / pip_size,
+                    pattern_detector::trades::TradeDirection::Short =>
+                        (trade.entry_price - trade.take_profit) / pip_size,
+                }
+            );
+            println!("      Exit Time: {}", exit_time);
+        }
+    }
+
+    Ok(())
+}
+
+// Helper function to load candles (implement this separately)
+async fn load_candles(
+    host: &str,
+    org: &str,
+    token: &str,
+    bucket: &str,
+    symbol: &str,
+    timeframe: &str,
+    start_time: &str,
+    end_time: &str,
+) -> Result<Vec<CandleData>, Box<dyn std::error::Error>> {
+    use csv::ReaderBuilder;
+    use reqwest;
+    use serde_json::json;
+    use std::io::Cursor;
+
+    // Query construction
     let flux_query = format!(
         r#"from(bucket: "{}")
         |> range(start: {}, stop: {})
@@ -38,12 +232,12 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
         bucket, start_time, end_time, symbol, timeframe
     );
 
-    // Get data from your database
+    // Execute query
     let url = format!("{}/api/v2/query?org={}", host, org);
     let client = reqwest::Client::new();
     let response = client
         .post(&url)
-        .bearer_auth(&token)
+        .bearer_auth(token)
         .json(&json!({"query": flux_query, "type": "flux"}))
         .send()
         .await?
@@ -60,7 +254,7 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
 
     // Parse headers
     let headers = rdr.headers()?;
-    
+
     // Find column indices
     let mut time_idx = None;
     let mut open_idx = None;
@@ -88,11 +282,26 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
             (time_idx, open_idx, high_idx, low_idx, close_idx, volume_idx)
         {
             if let Some(time_val) = record.get(t_idx) {
-                let open = record.get(o_idx).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-                let high = record.get(h_idx).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-                let low = record.get(l_idx).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-                let close = record.get(c_idx).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-                let volume = record.get(v_idx).and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+                let open = record
+                    .get(o_idx)
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let high = record
+                    .get(h_idx)
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let low = record
+                    .get(l_idx)
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let close = record
+                    .get(c_idx)
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let volume = record
+                    .get(v_idx)
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or(0);
 
                 candles.push(CandleData {
                     time: time_val.to_string(),
@@ -106,120 +315,5 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("Loaded {} candles for {} {}", candles.len(), symbol, timeframe);
-
-    // Create config
-    let trade_config = TradeConfig {
-        enabled: true,
-        lot_size: 0.01,
-        default_stop_loss_pips: 10.0,
-        default_take_profit_pips: 20.0,
-        risk_percent: 1.0,
-        max_trades_per_pattern: 2,
-        enable_trailing_stop: false,
-        trailing_stop_activation_pips: 10.0,
-        trailing_stop_distance_pips: 5.0,
-        ..Default::default()
-    };
-    
-    // Run backtest
-    let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
-    let (trades, summary) = recognizer.trade(&candles, trade_config);
-    
-    // Print results
-    println!("\nBacktest Results for 50% Body Before Big Bar Pattern on {} {}:", symbol, timeframe);
-    println!("Total Trades: {}", summary.total_trades);
-    println!("Win Rate: {:.2}%", summary.win_rate);
-    println!("Total Profit/Loss: {:.2}", summary.total_profit_loss);
-    println!("Profit Factor: {:.2}", summary.profit_factor);
-    
-    // Print trades with detailed information
-    println!("\n{:<5} {:<12} {:<28} {:<10} {:<28} {:<10} {:<10} {:<15}", 
-        "No.", "Direction", "Entry Time", "Entry", "Exit Time", "Exit", "P/L pips", "Reason");
-    println!("{:-<120}", "");
-
-    for (i, trade) in trades.iter().enumerate() {
-        if let (Some(exit_price), Some(exit_time), Some(pl_pips), Some(exit_reason)) = 
-            (trade.exit_price, &trade.exit_time, trade.profit_loss_pips, &trade.exit_reason)
-        {
-            // Format timestamps for human readability
-            let entry_time = format_timestamp(&trade.entry_time);
-            let exit_time_fmt = format_timestamp(exit_time);
-            
-            println!("{:<5} {:<12} {:<28} {:<10.5} {:<28} {:<10.5} {:<10.1} {:<15}", 
-                i+1, 
-                format!("{:?}", trade.direction),
-                entry_time,
-                trade.entry_price,
-                exit_time_fmt,
-                exit_price,
-                pl_pips,
-                exit_reason);
-            
-            // Debug info for stops and targets
-            let pip_size = 0.0001;
-            let stop_distance = match trade.direction {
-                TradeDirection::Long => (trade.entry_price - trade.stop_loss) / pip_size,
-                TradeDirection::Short => (trade.stop_loss - trade.entry_price) / pip_size,
-            };
-            
-            println!("      Stop Loss: {} ({:.1} pips from entry)", 
-                trade.stop_loss, stop_distance);
-            
-            // Special debug for large losses
-            if pl_pips.abs() > 30.0 {
-                println!("      *** WARNING: Large loss detected ***");
-                println!("      Expected max loss based on stop: {:.1} pips", stop_distance);
-                println!("      Actual loss: {:.1} pips", pl_pips.abs());
-                println!("      Stop distance difference: {:.1} pips", pl_pips.abs() - stop_distance);
-            }
-        }
-    }
-    
-    // Find Trade #5 for detailed investigation
-    if trades.len() >= 5 {
-        let trade5 = &trades[4]; // Zero-indexed, so Trade #5 is at index 4
-        if let Some(exit_idx) = trade5.candlestick_idx_exit {
-            println!("\n--- DETAILED ANALYSIS OF TRADE #5 ---");
-            println!("Direction: {:?}", trade5.direction);
-            println!("Entry: {} at {}", trade5.entry_price, format_timestamp(&trade5.entry_time));
-            println!("Stop Loss: {}", trade5.stop_loss);
-            
-            // Look at candles around the exit
-            let start_idx = trade5.candlestick_idx_entry;
-            println!("\nCANDLES FROM ENTRY TO EXIT:");
-            
-            for idx in start_idx..=exit_idx {
-                let candle = &candles[idx];
-                let formatted_time = format_timestamp(&candle.time);
-                
-                // Mark significant candles
-                let marker = if idx == start_idx { 
-                    "ENTRY→" 
-                } else if idx == exit_idx { 
-                    "EXIT→" 
-                } else { 
-                    "     " 
-                };
-                
-                println!("{}[{}] {}: O={:.5}, H={:.5}, L={:.5}, C={:.5}", 
-                    marker, idx, formatted_time, candle.open, candle.high, candle.low, candle.close);
-                
-                // Check if this candle would hit stop
-                if idx > start_idx && trade5.direction == TradeDirection::Short && candle.high >= trade5.stop_loss {
-                    println!("      STOP LOSS HIT! High {:.5} > Stop {:.5}", candle.high, trade5.stop_loss);
-                }
-            }
-        }
-    }
-    
-    Ok(())
-}
-
-// Helper function to format ISO timestamps to human-readable format
-fn format_timestamp(timestamp: &str) -> String {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(timestamp) {
-        return dt.format("%Y-%m-%d %H:%M:%S").to_string();
-    }
-    timestamp.to_string()
+    Ok(candles)
 }
