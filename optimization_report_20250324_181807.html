@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Forex Trading Strategy Optimization Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1, h2 { color: #333366; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #f5f5f5; }
+        .summary { background-color: #e6f7ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .best { background-color: #e6ffe6; }
+    </style>
+</head>
+<body>
+    <h1>Forex Trading Strategy Optimization Report</h1>
+    <div class="summary">
+        <h2>Backtest Summary</h2>
+        <p><strong>Pattern:</strong> Fifty Percent Before Big Bar</p>
+        <p><strong>Symbol:</strong> EURUSD_SB</p>
+        <p><strong>Period:</strong> 32 days (from 2025-02-17 to 2025-03-21)</p>
+        <p><strong>Total Combinations Tested:</strong> 72</p>
+    </div>
+
+    <h2>Top 10 Parameter Combinations</h2>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Symbol</th>
+            <th>Timeframe</th>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+
+        <tr class="best">
+            <td>1</td>
+            <td>EURUSD_SB</td>
+            <td>30m</td>
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>66.67%</td>
+            <td>5.00</td>
+            <td>56.00</td>
+            <td>21</td>
+            <td>56.0</td>
+        </tr>
+
+        <tr>
+            <td>2</td>
+            <td>EURUSD_SB</td>
+            <td>4h</td>
+            <td>0.10</td>
+            <td>76.3</td>
+            <td>26.0</td>
+            <td>50.00%</td>
+            <td>2.93</td>
+            <td>50.30</td>
+            <td>2</td>
+            <td>50.3</td>
+        </tr>
+
+        <tr>
+            <td>3</td>
+            <td>EURUSD_SB</td>
+            <td>1h</td>
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>53.33%</td>
+            <td>2.86</td>
+            <td>26.00</td>
+            <td>15</td>
+            <td>26.0</td>
+        </tr>
+
+        <tr>
+            <td>4</td>
+            <td>EURUSD_SB</td>
+            <td>4h</td>
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>50.00%</td>
+            <td>2.50</td>
+            <td>3.00</td>
+            <td>2</td>
+            <td>3.0</td>
+        </tr>
+
+        <tr>
+            <td>5</td>
+            <td>EURUSD_SB</td>
+            <td>4h</td>
+            <td>0.10</td>
+            <td>52.5</td>
+            <td>26.0</td>
+            <td>50.00%</td>
+            <td>2.02</td>
+            <td>26.50</td>
+            <td>2</td>
+            <td>26.5</td>
+        </tr>
+
+        <tr>
+            <td>6</td>
+            <td>EURUSD_SB</td>
+            <td>4h</td>
+            <td>0.10</td>
+            <td>76.3</td>
+            <td>38.0</td>
+            <td>50.00%</td>
+            <td>2.01</td>
+            <td>38.30</td>
+            <td>2</td>
+            <td>38.3</td>
+        </tr>
+
+        <tr>
+            <td>7</td>
+            <td>EURUSD_SB</td>
+            <td>15m</td>
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>40.74%</td>
+            <td>1.72</td>
+            <td>46.00</td>
+            <td>54</td>
+            <td>46.0</td>
+        </tr>
+
+        <tr>
+            <td>8</td>
+            <td>EURUSD_SB</td>
+            <td>30m</td>
+            <td>0.10</td>
+            <td>28.8</td>
+            <td>14.0</td>
+            <td>42.86%</td>
+            <td>1.43</td>
+            <td>71.90</td>
+            <td>21</td>
+            <td>71.9</td>
+        </tr>
+
+        <tr>
+            <td>9</td>
+            <td>EURUSD_SB</td>
+            <td>30m</td>
+            <td>0.10</td>
+            <td>28.8</td>
+            <td>26.0</td>
+            <td>57.14%</td>
+            <td>1.39</td>
+            <td>92.30</td>
+            <td>21</td>
+            <td>92.3</td>
+        </tr>
+
+        <tr>
+            <td>10</td>
+            <td>EURUSD_SB</td>
+            <td>4h</td>
+            <td>0.10</td>
+            <td>52.5</td>
+            <td>38.0</td>
+            <td>50.00%</td>
+            <td>1.38</td>
+            <td>14.50</td>
+            <td>2</td>
+            <td>14.5</td>
+        </tr>
+    </table>
+
+    <h2>Results by Timeframe</h2>
+
+    <h3>Timeframe: 15m</h3>
+    <table>
+        <tr>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+        <tr class="best">
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>40.74%</td>
+            <td>1.72</td>
+            <td>46.00</td>
+            <td>54</td>
+            <td>46.0</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 5m</h3>
+    <table>
+        <tr>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+        <tr class="best">
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>33.80%</td>
+            <td>1.28</td>
+            <td>78.00</td>
+            <td>213</td>
+            <td>78.0</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 4h</h3>
+    <table>
+        <tr>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+        <tr class="best">
+            <td>0.10</td>
+            <td>76.3</td>
+            <td>26.0</td>
+            <td>50.00%</td>
+            <td>2.93</td>
+            <td>50.30</td>
+            <td>2</td>
+            <td>50.3</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 1h</h3>
+    <table>
+        <tr>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+        <tr class="best">
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>53.33%</td>
+            <td>2.86</td>
+            <td>26.00</td>
+            <td>15</td>
+            <td>26.0</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 1m</h3>
+    <table>
+        <tr>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+        <tr class="best">
+            <td>0.10</td>
+            <td>76.3</td>
+            <td>2.0</td>
+            <td>3.00%</td>
+            <td>1.12</td>
+            <td>329.10</td>
+            <td>1435</td>
+            <td>329.1</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 30m</h3>
+    <table>
+        <tr>
+            <th>Lot Size</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Total P/L</th>
+            <th>Trades</th>
+            <th>Net Pips</th>
+        </tr>
+        <tr class="best">
+            <td>0.10</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>66.67%</td>
+            <td>5.00</td>
+            <td>56.00</td>
+            <td>21</td>
+            <td>56.0</td>
+        </tr>
+    </table>
+
+    <h2>Conclusion</h2>
+    <p>The optimization process tested 72 different parameter combinations across 7 timeframes.</p>
+
+    <p>The best overall combination achieved a profit factor of 5.00 with a win rate of 66.67%.</p>
+    <p>Best parameters: Timeframe: 30m, TP: 5.0 pips, SL: 2.0 pips.</p>
+
+    <p>Generated on: 2025-03-24 18:18:07</p>
+</body>
+</html>
