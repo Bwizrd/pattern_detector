@@ -19,6 +19,8 @@ use crate::data_loader::load_candles;
 use crate::html_reporter::generate_report;
 use crate::parameter_generator::generate_parameter_grid;
 
+mod multi_currency;
+
 // Parameter search configuration
 #[derive(Clone)]
 pub struct ParameterSearchConfig {

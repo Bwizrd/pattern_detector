@@ -1,4 +1,4 @@
-// tests/optimization/html_reporter.rs
+/// tests/optimization/html_reporter.rs
 use std::fs::File;
 use std::io::Write;
 use std::collections::HashMap;
@@ -21,10 +21,12 @@ pub fn generate_report(
     // Create copies for sorting
     let mut pf_sorted = results.to_vec();
     let mut pips_sorted = results.to_vec();
+    let mut winrate_sorted = results.to_vec();
     
-    // Sort by profit factor and net pips
+    // Sort by profit factor, net pips, and win rate
     pf_sorted.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
     pips_sorted.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
+    winrate_sorted.sort_by(|a, b| b.win_rate.partial_cmp(&a.win_rate).unwrap());
 
     // Create CSV report
     let csv_filename = format!("optimization_results_{}.csv", 
@@ -66,11 +68,14 @@ pub fn generate_report(
     // Write top results by net pips
     write_net_pips_table(&mut html_file, &pips_sorted)?;
     
+    // Write top results by win rate
+    write_win_rate_table(&mut html_file, &winrate_sorted)?;
+    
     // Write timeframe-specific results
     write_timeframe_results(&mut html_file, results)?;
     
     // Write conclusion
-    write_conclusion(&mut html_file, results, &pf_sorted, &pips_sorted)?;
+    write_conclusion(&mut html_file, results, &pf_sorted, &pips_sorted, &winrate_sorted)?;
     
     // Close HTML
     writeln!(html_file, r#"
@@ -79,7 +84,7 @@ pub fn generate_report(
 </html>"#, chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"))?;
 
     // Print summary to console
-    print_console_summary(&pf_sorted, &pips_sorted, &csv_filename, &html_filename);
+    print_console_summary(&pf_sorted, &pips_sorted, &winrate_sorted, &csv_filename, &html_filename);
     
     Ok(())
 }
@@ -222,6 +227,54 @@ fn write_net_pips_table(file: &mut File, results: &[OptimizationResult]) -> Resu
     Ok(())
 }
 
+fn write_win_rate_table(file: &mut File, results: &[OptimizationResult]) -> Result<(), Box<dyn std::error::Error>> {
+    writeln!(file, r#"
+    <h2>Top 10 Results by Win Rate</h2>
+    <p>Optimizing for consistency and psychological comfort (higher percentage of winning trades)</p>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Timeframe</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>"#)?;
+
+    // Get top 10 by win rate or all if less than 10
+    let top_count = std::cmp::min(10, results.len());
+    for i in 0..top_count {
+        let result = &results[i];
+        writeln!(file, r#"
+        <tr{}>
+            <td>{}</td>
+            <td>{}</td>
+            <td>{:.1}</td>
+            <td>{:.1}</td>
+            <td>{:.2}%</td>
+            <td>{:.2}</td>
+            <td>{:.1}</td>
+            <td>{}</td>
+        </tr>"#, 
+            if i == 0 { " class=\"best\"" } else { "" },
+            i + 1,
+            result.timeframe,
+            result.take_profit_pips,
+            result.stop_loss_pips,
+            result.win_rate,
+            result.profit_factor,
+            result.net_pips,
+            result.total_trades
+        )?;
+    }
+    
+    writeln!(file, "    </table>")?;
+    
+    Ok(())
+}
+
 fn write_timeframe_results(file: &mut File, results: &[OptimizationResult]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(file, r#"
     <h2>Results by Timeframe</h2>"#)?;
@@ -236,7 +289,7 @@ fn write_timeframe_results(file: &mut File, results: &[OptimizationResult]) -> R
             .push(result.clone());
     }
 
-    // For each timeframe, show best result by PF and best by pips
+    // For each timeframe, show best result by PF, pips, and win rate
     for (timeframe, mut group) in timeframe_groups {
         if group.is_empty() {
             continue;
@@ -250,6 +303,11 @@ fn write_timeframe_results(file: &mut File, results: &[OptimizationResult]) -> R
         let mut pips_group = group.clone();
         pips_group.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
         let best_pips = &pips_group[0];
+        
+        // Sort by win rate
+        let mut winrate_group = group.clone();
+        winrate_group.sort_by(|a, b| b.win_rate.partial_cmp(&a.win_rate).unwrap());
+        let best_winrate = &winrate_group[0];
         
         writeln!(file, r#"
     <h3>Timeframe: {}</h3>
@@ -281,6 +339,15 @@ fn write_timeframe_results(file: &mut File, results: &[OptimizationResult]) -> R
             <td>{:.1}</td>
             <td>{}</td>
         </tr>
+        <tr>
+            <td>Best Win Rate</td>
+            <td>{:.1}</td>
+            <td>{:.1}</td>
+            <td>{:.2}%</td>
+            <td>{:.2}</td>
+            <td>{:.1}</td>
+            <td>{}</td>
+        </tr>
     </table>"#,
             timeframe,
             best_pf.take_profit_pips,
@@ -295,7 +362,14 @@ fn write_timeframe_results(file: &mut File, results: &[OptimizationResult]) -> R
             best_pips.win_rate,
             best_pips.profit_factor,
             best_pips.net_pips,
-            best_pips.total_trades
+            best_pips.total_trades,
+            
+            best_winrate.take_profit_pips,
+            best_winrate.stop_loss_pips,
+            best_winrate.win_rate,
+            best_winrate.profit_factor,
+            best_winrate.net_pips,
+            best_winrate.total_trades
         )?;
     }
     
@@ -307,6 +381,7 @@ fn write_conclusion(
     results: &[OptimizationResult],
     pf_sorted: &[OptimizationResult],
     pips_sorted: &[OptimizationResult],
+    winrate_sorted: &[OptimizationResult],
 ) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(file, r#"
     <h2>Conclusion</h2>
@@ -314,7 +389,7 @@ fn write_conclusion(
         results.len()
     )?;
 
-    if !pf_sorted.is_empty() && !pips_sorted.is_empty() {
+    if !pf_sorted.is_empty() && !pips_sorted.is_empty() && !winrate_sorted.is_empty() {
         writeln!(file, r#"
     <h3>Optimization Approaches Comparison</h3>
     <div class="approach-comparison">
@@ -338,6 +413,16 @@ fn write_conclusion(
             <p><strong>Trades:</strong> {}</p>
             <p><em>Higher total profit but potentially higher risk and larger drawdowns.</em></p>
         </div>
+        <div class="approach-card winrate">
+            <h3>Win Rate Optimization</h3>
+            <p><strong>Timeframe:</strong> {}</p>
+            <p><strong>TP/SL:</strong> {:.1}/{:.1} pips (ratio: {:.1})</p>
+            <p><strong>Win Rate:</strong> {:.2}%</p>
+            <p><strong>Profit Factor:</strong> {:.2}</p>
+            <p><strong>Net Pips:</strong> {:.1}</p>
+            <p><strong>Trades:</strong> {}</p>
+            <p><em>Psychologically easier to trade with more winning trades, but may sacrifice overall profitability.</em></p>
+        </div>
     </div>
     
     <h3>Making Your Decision</h3>
@@ -345,8 +430,9 @@ fn write_conclusion(
     <ul>
         <li><strong>Risk Tolerance:</strong> Lower risk tolerance favors the profit factor approach</li>
         <li><strong>Account Size:</strong> Smaller accounts may benefit from consistency (profit factor)</li>
-        <li><strong>Trading Psychology:</strong> If drawdowns affect your decision-making, prefer profit factor</li>
+        <li><strong>Trading Psychology:</strong> If drawdowns affect your decision-making, prefer profit factor or win rate approach</li>
         <li><strong>Performance Goals:</strong> If maximizing returns is primary, consider the net pips approach</li>
+        <li><strong>Emotional Management:</strong> If you need confidence from winning trades, prioritize win rate</li>
     </ul>"#,
             pf_sorted[0].timeframe,
             pf_sorted[0].take_profit_pips,
@@ -364,7 +450,16 @@ fn write_conclusion(
             pips_sorted[0].win_rate,
             pips_sorted[0].profit_factor,
             pips_sorted[0].net_pips,
-            pips_sorted[0].total_trades
+            pips_sorted[0].total_trades,
+            
+            winrate_sorted[0].timeframe,
+            winrate_sorted[0].take_profit_pips,
+            winrate_sorted[0].stop_loss_pips,
+            winrate_sorted[0].take_profit_pips / winrate_sorted[0].stop_loss_pips,
+            winrate_sorted[0].win_rate,
+            winrate_sorted[0].profit_factor,
+            winrate_sorted[0].net_pips,
+            winrate_sorted[0].total_trades
         )?;
     }
     
@@ -374,13 +469,14 @@ fn write_conclusion(
 fn print_console_summary(
     pf_sorted: &[OptimizationResult],
     pips_sorted: &[OptimizationResult],
+    winrate_sorted: &[OptimizationResult],
     csv_filename: &str,
     html_filename: &str,
 ) {
     println!("\nOptimization Complete");
     println!("Report files: {} and {}", csv_filename, html_filename);
     
-    if !pf_sorted.is_empty() && !pips_sorted.is_empty() {
+    if !pf_sorted.is_empty() && !pips_sorted.is_empty() && !winrate_sorted.is_empty() {
         println!("\nOptimization Approaches Comparison:");
         println!("----------------------------------");
         println!("Best by Profit Factor (consistency):");
@@ -398,5 +494,13 @@ fn print_console_summary(
         println!("  Profit Factor: {:.2}", pips_sorted[0].profit_factor);
         println!("  Net Pips: {:.1}", pips_sorted[0].net_pips);
         println!("  Total Trades: {}", pips_sorted[0].total_trades);
+        
+        println!("\nBest by Win Rate (psychological ease):");
+        println!("  Timeframe: {}", winrate_sorted[0].timeframe);
+        println!("  TP/SL: {:.1}/{:.1} pips", winrate_sorted[0].take_profit_pips, winrate_sorted[0].stop_loss_pips);
+        println!("  Win Rate: {:.2}%", winrate_sorted[0].win_rate);
+        println!("  Profit Factor: {:.2}", winrate_sorted[0].profit_factor);
+        println!("  Net Pips: {:.1}", winrate_sorted[0].net_pips);
+        println!("  Total Trades: {}", winrate_sorted[0].total_trades);
     }
 }

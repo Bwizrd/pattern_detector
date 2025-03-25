@@ -4,3 +4,4 @@ pub mod data_loader;
 pub mod html_reporter;
 pub mod parameter_generator;
 pub mod main;
+pub mod multi_currency;
