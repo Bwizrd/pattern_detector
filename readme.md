@@ -2,6 +2,7 @@ tree -I "target|.git|node_modules"
 
 cargo test --test backtest -- --nocapture
 cargo test --test multithreaded_optimization -- --nocapture
+cargo test --test optimization/main -- --nocaptur
 
 I am building a forex data pattern recognizer in rust and displaying the results in an Angular App using SciCharts. The Data is stored in an Influx db.
 

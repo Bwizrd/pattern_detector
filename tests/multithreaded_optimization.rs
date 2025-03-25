@@ -1,4 +1,5 @@
 // tests/multithreaded_optimization.rs
+// tests/enhanced_optimization.rs
 use dotenv::dotenv;
 use pattern_detector::detect::CandleData;
 use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
@@ -40,7 +41,7 @@ struct OptimizationResult {
 }
 
 #[tokio::test]
-async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     // Load environment variables
     dotenv().ok();
 
@@ -81,6 +82,9 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
     // Cache for loaded candles to avoid redundant loading
     let candle_cache = Arc::new(TokioMutex::new(HashMap::<(String, String), Vec<CandleData>>::new()));
 
+    println!("Starting optimization for {} across {} timeframes", 
+             search_config.symbol, search_config.timeframes.len());
+
     // Spawn tasks for each timeframe
     for timeframe in &search_config.timeframes {
         let symbol = search_config.symbol.clone();
@@ -98,7 +102,7 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
 
         // Spawn a task for this timeframe
         let task = task::spawn(async move {
-            println!("Starting optimization for {} {}", symbol, timeframe);
+            println!("Processing timeframe: {}", timeframe);
             
             // Safely load hourly candles with tokio mutex
             let hourly_candles = {
@@ -168,12 +172,10 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
             let pattern_data = recognizer.detect(&hourly_candles);
 
             // Track best parameters and results
-            let mut current_best_profit_factor = 0.0;
-            let mut current_best_params = (
-                search_config.lot_size,
-                (search_config.take_profit_range.0 + search_config.take_profit_range.1) / 2.0,
-                (search_config.stop_loss_range.0 + search_config.stop_loss_range.1) / 2.0,
-            );
+            let mut best_profit_factor = 0.0;
+            let mut best_net_pips = 0.0;
+            let mut best_pf_params = (0.0, 0.0);
+            let mut best_pips_params = (0.0, 0.0);
             
             // Generate parameter combinations systematically
             let test_points = generate_parameter_grid(
@@ -186,6 +188,11 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
             
             // Test each parameter combination
             for (take_profit_pips, stop_loss_pips) in test_points {
+                // Skip invalid risk:reward ratios
+                if take_profit_pips <= stop_loss_pips {
+                    continue;
+                }
+                
                 // Create trade config
                 let trade_config = TradeConfig {
                     enabled: true,
@@ -228,8 +235,8 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 let net_pips = total_winning_pips - total_losing_pips;
 
-                // Add result to the shared results if we have trades
-                if summary.total_trades > 0 {
+                // Add result to the shared results if we have enough trades
+                if summary.total_trades >= 5 {
                     let result = OptimizationResult {
                         symbol: symbol.clone(),
                         timeframe: timeframe.clone(),
@@ -243,12 +250,16 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
                         net_pips,
                     };
                     
-                    // Update best parameters if we found better results
-                    if summary.profit_factor > current_best_profit_factor && summary.total_trades >= 5 {
-                        current_best_profit_factor = summary.profit_factor;
-                        current_best_params = (search_config.lot_size, take_profit_pips, stop_loss_pips);
-                        println!("New best params for {}: TP: {:.1}, SL: {:.1}, PF: {:.2}", 
-                                 timeframe, take_profit_pips, stop_loss_pips, summary.profit_factor);
+                    // Update best parameters for profit factor
+                    if summary.profit_factor > best_profit_factor {
+                        best_profit_factor = summary.profit_factor;
+                        best_pf_params = (take_profit_pips, stop_loss_pips);
+                    }
+                    
+                    // Update best parameters for net pips
+                    if net_pips > best_net_pips {
+                        best_net_pips = net_pips;
+                        best_pips_params = (take_profit_pips, stop_loss_pips);
                     }
 
                     // Safely store results with tokio mutex
@@ -257,10 +268,11 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             
-            println!("Optimization complete for {} {}", symbol, timeframe);
-            println!("Best parameters: TP: {:.1}, SL: {:.1}, PF: {:.2}", 
-                     current_best_params.1, current_best_params.2, 
-                     current_best_profit_factor);
+            println!("Results for {}:", timeframe);
+            println!("  Best PF: {:.2} (TP: {:.1}, SL: {:.1})", 
+                     best_profit_factor, best_pf_params.0, best_pf_params.1);
+            println!("  Best Pips: {:.1} (TP: {:.1}, SL: {:.1})", 
+                     best_net_pips, best_pips_params.0, best_pips_params.1);
         });
 
         tasks.push(task);
@@ -279,6 +291,10 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
     
     // Sort by profit factor (descending)
     sorted_results.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
+    
+    // Create a copy sorted by net pips
+    let mut pips_sorted_results = sorted_results.clone();
+    pips_sorted_results.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
 
     // Create CSV report
     let csv_filename = format!("optimization_results_{}.csv", 
@@ -326,6 +342,11 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
         tr:hover {{ background-color: #f5f5f5; }}
         .summary {{ background-color: #e6f7ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
         .best {{ background-color: #e6ffe6; }}
+        .tabs {{ display: flex; margin-bottom: 10px; }}
+        .tab {{ padding: 8px 16px; cursor: pointer; background-color: #f1f1f1; border: 1px solid #ccc; }}
+        .tab.active {{ background-color: #e6f7ff; border-bottom: none; }}
+        .tab-content {{ display: none; }}
+        .tab-content.active {{ display: block; }}
     </style>
 </head>
 <body>
@@ -339,22 +360,20 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
     </div>
 "#, search_config.symbol, total_days, start_datetime.format("%Y-%m-%d"), end_datetime.format("%Y-%m-%d"), sorted_results.len())?;
 
-    // Write top 10 results
+    // Write top 10 results by profit factor
     write!(html_file, r#"
-    <h2>Top 10 Parameter Combinations</h2>
+    <h2>Top 10 Results by Profit Factor</h2>
+    <p>Optimizing for risk-adjusted returns (consistency and risk management)</p>
     <table>
         <tr>
             <th>Rank</th>
-            <th>Symbol</th>
             <th>Timeframe</th>
-            <th>Lot Size</th>
             <th>TP (pips)</th>
             <th>SL (pips)</th>
             <th>Win Rate</th>
             <th>Profit Factor</th>
-            <th>Total P/L</th>
-            <th>Trades</th>
             <th>Net Pips</th>
+            <th>Trades</th>
         </tr>
 "#)?;
 
@@ -366,29 +385,70 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
         <tr{}>
             <td>{}</td>
             <td>{}</td>
-            <td>{}</td>
-            <td>{:.2}</td>
             <td>{:.1}</td>
             <td>{:.1}</td>
             <td>{:.2}%</td>
             <td>{:.2}</td>
-            <td>{:.2}</td>
-            <td>{}</td>
             <td>{:.1}</td>
+            <td>{}</td>
         </tr>
 "#, 
             if i == 0 { " class=\"best\"" } else { "" },
             i + 1,
-            result.symbol,
             result.timeframe,
-            result.lot_size,
             result.take_profit_pips,
             result.stop_loss_pips,
             result.win_rate,
             result.profit_factor,
-            result.total_profit_loss,
-            result.total_trades,
-            result.net_pips
+            result.net_pips,
+            result.total_trades
+        )?;
+    }
+    
+    write!(html_file, "    </table>\n")?;
+
+    // Write top 10 results by net pips
+    write!(html_file, r#"
+    <h2>Top 10 Results by Net Pips</h2>
+    <p>Optimizing for total profit (potentially higher returns with higher risk)</p>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Timeframe</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+"#)?;
+
+    // Get top 10 by pips or all if less than 10
+    let pips_top_count = std::cmp::min(10, pips_sorted_results.len());
+    for i in 0..pips_top_count {
+        let result = &pips_sorted_results[i];
+        write!(html_file, r#"
+        <tr{}>
+            <td>{}</td>
+            <td>{}</td>
+            <td>{:.1}</td>
+            <td>{:.1}</td>
+            <td>{:.2}%</td>
+            <td>{:.2}</td>
+            <td>{:.1}</td>
+            <td>{}</td>
+        </tr>
+"#, 
+            if i == 0 { " class=\"best\"" } else { "" },
+            i + 1,
+            result.timeframe,
+            result.take_profit_pips,
+            result.stop_loss_pips,
+            result.win_rate,
+            result.profit_factor,
+            result.net_pips,
+            result.total_trades
         )?;
     }
     
@@ -409,53 +469,71 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
             .push(result.clone());
     }
 
-    // For each timeframe, show best result
-    for (timeframe, group) in timeframe_groups {
-        let mut best_group = group.clone();
-        best_group.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
+    // For each timeframe, show best result by PF and best by pips
+    for (timeframe, mut group) in timeframe_groups {
+        if group.is_empty() {
+            continue;
+        }
         
-        if !best_group.is_empty() {
-            let best = &best_group[0];
-            
-            write!(html_file, r#"
+        // Sort by profit factor
+        group.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
+        let best_pf = &group[0];
+        
+        // Sort by net pips
+        let mut pips_group = group.clone();
+        pips_group.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
+        let best_pips = &pips_group[0];
+        
+        write!(html_file, r#"
     <h3>Timeframe: {}</h3>
     <table>
         <tr>
-            <th>Lot Size</th>
+            <th>Optimization</th>
             <th>TP (pips)</th>
             <th>SL (pips)</th>
             <th>Win Rate</th>
             <th>Profit Factor</th>
-            <th>Total P/L</th>
-            <th>Trades</th>
             <th>Net Pips</th>
+            <th>Trades</th>
         </tr>
         <tr class="best">
-            <td>{:.2}</td>
+            <td>Best Profit Factor</td>
             <td>{:.1}</td>
             <td>{:.1}</td>
             <td>{:.2}%</td>
             <td>{:.2}</td>
-            <td>{:.2}</td>
-            <td>{}</td>
             <td>{:.1}</td>
+            <td>{}</td>
+        </tr>
+        <tr>
+            <td>Best Net Pips</td>
+            <td>{:.1}</td>
+            <td>{:.1}</td>
+            <td>{:.2}%</td>
+            <td>{:.2}</td>
+            <td>{:.1}</td>
+            <td>{}</td>
         </tr>
     </table>
 "#,
-                timeframe,
-                best.lot_size,
-                best.take_profit_pips,
-                best.stop_loss_pips,
-                best.win_rate,
-                best.profit_factor,
-                best.total_profit_loss,
-                best.total_trades,
-                best.net_pips
-            )?;
-        }
+            timeframe,
+            best_pf.take_profit_pips,
+            best_pf.stop_loss_pips,
+            best_pf.win_rate,
+            best_pf.profit_factor,
+            best_pf.net_pips,
+            best_pf.total_trades,
+            
+            best_pips.take_profit_pips,
+            best_pips.stop_loss_pips,
+            best_pips.win_rate,
+            best_pips.profit_factor,
+            best_pips.net_pips,
+            best_pips.total_trades
+        )?;
     }
 
-    // Close HTML
+    // Add comparison of optimization approaches
     write!(html_file, r#"
     <h2>Conclusion</h2>
     <p>The optimization process tested {} different parameter combinations across {} timeframes.</p>
@@ -464,16 +542,63 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
         search_config.timeframes.len()
     )?;
 
-    if !sorted_results.is_empty() {
+    if !sorted_results.is_empty() && !pips_sorted_results.is_empty() {
         write!(html_file, r#"
-    <p>The best overall combination achieved a profit factor of {:.2} with a win rate of {:.2}%.</p>
-    <p>Best parameters: Timeframe: {}, TP: {:.1} pips, SL: {:.1} pips.</p>
+    <h3>Optimization Approaches Comparison</h3>
+    <table>
+        <tr>
+            <th>Approach</th>
+            <th>Timeframe</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+            <th>Description</th>
+        </tr>
+        <tr class="best">
+            <td>Profit Factor</td>
+            <td>{}</td>
+            <td>{:.1}</td>
+            <td>{:.1}</td>
+            <td>{:.2}%</td>
+            <td>{:.2}</td>
+            <td>{:.1}</td>
+            <td>{}</td>
+            <td>Prioritizes consistency and risk management</td>
+        </tr>
+        <tr>
+            <td>Net Pips</td>
+            <td>{}</td>
+            <td>{:.1}</td>
+            <td>{:.1}</td>
+            <td>{:.2}%</td>
+            <td>{:.2}</td>
+            <td>{:.1}</td>
+            <td>{}</td>
+            <td>Prioritizes total profit</td>
+        </tr>
+    </table>
+    
+    <p><strong>Profit Factor Approach:</strong> More consistent returns with better risk management. Typically has lower drawdowns.</p>
+    <p><strong>Net Pips Approach:</strong> Higher total profit but potentially higher risk and larger drawdowns.</p>
 "#,
-            sorted_results[0].profit_factor,
-            sorted_results[0].win_rate,
             sorted_results[0].timeframe,
             sorted_results[0].take_profit_pips,
-            sorted_results[0].stop_loss_pips
+            sorted_results[0].stop_loss_pips,
+            sorted_results[0].win_rate,
+            sorted_results[0].profit_factor,
+            sorted_results[0].net_pips,
+            sorted_results[0].total_trades,
+            
+            pips_sorted_results[0].timeframe,
+            pips_sorted_results[0].take_profit_pips,
+            pips_sorted_results[0].stop_loss_pips,
+            pips_sorted_results[0].win_rate,
+            pips_sorted_results[0].profit_factor,
+            pips_sorted_results[0].net_pips,
+            pips_sorted_results[0].total_trades
         )?;
     }
 
@@ -490,19 +615,26 @@ async fn run_adaptive_optimization() -> Result<(), Box<dyn std::error::Error>> {
     println!("Total parameter combinations tested: {}", sorted_results.len());
     println!("Results saved to {} and {}", csv_filename, html_filename);
     
-    if !sorted_results.is_empty() {
-        let best = &sorted_results[0];
-        println!("\nBest Parameters:");
-        println!("Symbol: {}", best.symbol);
-        println!("Timeframe: {}", best.timeframe);
-        println!("Lot Size: {:.2}", best.lot_size);
-        println!("Take Profit: {:.1} pips", best.take_profit_pips);
-        println!("Stop Loss: {:.1} pips", best.stop_loss_pips);
-        println!("Win Rate: {:.2}%", best.win_rate);
-        println!("Profit Factor: {:.2}", best.profit_factor);
-        println!("Total P/L: {:.2}", best.total_profit_loss);
-        println!("Total Trades: {}", best.total_trades);
-        println!("Net Pips: {:.1}", best.net_pips);
+    if !sorted_results.is_empty() && !pips_sorted_results.is_empty() {
+        println!("\nOptimization Approaches Comparison:");
+        println!("----------------------------------");
+        println!("Best by Profit Factor (consistency):");
+        println!("  Timeframe: {}", sorted_results[0].timeframe);
+        println!("  Take Profit: {:.1} pips", sorted_results[0].take_profit_pips);
+        println!("  Stop Loss: {:.1} pips", sorted_results[0].stop_loss_pips);
+        println!("  Win Rate: {:.2}%", sorted_results[0].win_rate);
+        println!("  Profit Factor: {:.2}", sorted_results[0].profit_factor);
+        println!("  Net Pips: {:.1}", sorted_results[0].net_pips);
+        println!("  Total Trades: {}", sorted_results[0].total_trades);
+        
+        println!("\nBest by Net Pips (total profit):");
+        println!("  Timeframe: {}", pips_sorted_results[0].timeframe);
+        println!("  Take Profit: {:.1} pips", pips_sorted_results[0].take_profit_pips);
+        println!("  Stop Loss: {:.1} pips", pips_sorted_results[0].stop_loss_pips);
+        println!("  Win Rate: {:.2}%", pips_sorted_results[0].win_rate);
+        println!("  Profit Factor: {:.2}", pips_sorted_results[0].profit_factor);
+        println!("  Net Pips: {:.1}", pips_sorted_results[0].net_pips);
+        println!("  Total Trades: {}", pips_sorted_results[0].total_trades);
     }
 
     Ok(())
@@ -519,22 +651,50 @@ fn generate_parameter_grid(
     // Calculate how many points to sample in each dimension
     let dim_size = (max_points as f64).sqrt().ceil() as usize;
     
-    // Generate points in grid fashion
+    // Generate TP points
+    let mut tp_values = Vec::new();
     for i in 0..dim_size {
-        for j in 0..dim_size {
-            let tp_value = tp_range.0 + (tp_range.1 - tp_range.0) * (i as f64 / dim_size as f64);
-            let sl_value = sl_range.0 + (sl_range.1 - sl_range.0) * (j as f64 / dim_size as f64);
-            
-            // Round to 1 decimal place
-            let tp_rounded = (tp_value * 10.0).round() / 10.0;
-            let sl_rounded = (sl_value * 10.0).round() / 10.0;
-            
+        let tp_value = tp_range.0 + (tp_range.1 - tp_range.0) * (i as f64 / (dim_size - 1) as f64);
+        tp_values.push((tp_value * 10.0).round() / 10.0);
+    }
+    
+    // Generate SL points
+    let mut sl_values = Vec::new();
+    for i in 0..dim_size {
+        let sl_value = sl_range.0 + (sl_range.1 - sl_range.0) * (i as f64 / (dim_size - 1) as f64);
+        sl_values.push((sl_value * 10.0).round() / 10.0);
+    }
+    
+    // Add some specific values that are frequently good
+    tp_values.push(5.0);
+    tp_values.push(10.0);
+    tp_values.push(15.0);
+    tp_values.push(20.0);
+    
+    sl_values.push(2.0);
+    sl_values.push(5.0);
+    sl_values.push(10.0);
+    
+    // Generate combinations
+    for &tp in &tp_values {
+        for &sl in &sl_values {
             // Only include reasonable risk:reward ratios
-            if tp_rounded > sl_rounded {
-                results.push((tp_rounded, sl_rounded));
+            if tp > sl {
+                results.push((tp, sl));
             }
         }
     }
+    
+    // Remove duplicates
+    results.sort_by(|a, b| {
+        let cmp = a.0.partial_cmp(&b.0).unwrap();
+        if cmp == std::cmp::Ordering::Equal {
+            a.1.partial_cmp(&b.1).unwrap()
+        } else {
+            cmp
+        }
+    });
+    results.dedup();
     
     results
 }
