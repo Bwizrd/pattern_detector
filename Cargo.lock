@@ -1849,6 +1849,8 @@ dependencies = [
  "influxdb2",
  "influxdb2-structmap",
  "log",
+ "parking_lot 0.12.3",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",

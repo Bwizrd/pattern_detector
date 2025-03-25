@@ -1,3 +1,4 @@
+// tests/backtest.rs
 use dotenv::dotenv;
 use pattern_detector::detect::CandleData;
 use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
@@ -32,11 +33,17 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
     let bucket = std::env::var("INFLUXDB_BUCKET").expect("INFLUXDB_BUCKET must be set");
 
     // Set the symbol and timeframe parameters
-    let symbol = "GBPUSD_SB";
-    let hourly_timeframe = "1h";
-    let minute_timeframe = "1m";
-    let start_time = "2025-02-17T00:00:00Z";
-    let end_time = "2025-03-21T23:59:59Z";
+    // let symbol = "GBPUSD_SB";
+    // let hourly_timeframe = "1h";
+    // let minute_timeframe = "1m";
+    // let start_time = "2025-02-17T00:00:00Z";
+    // let end_time = "2025-03-21T23:59:59Z";
+    let symbol = std::env::var("SYMBOL").expect("SYMBOL must be set");
+    let hourly_timeframe = std::env::var("HOURLY_TIMEFRAME").expect("HOURLY_TIMEFRAME must be set");
+    let minute_timeframe = std::env::var("MINUTE_TIMEFRAME").expect("MINUTE_TIMEFRAME must be set");
+    let start_time = std::env::var("START_TIME").expect("START_TIME must be set");
+    let end_time = std::env::var("END_TIME").expect("END_TIME must be set");
+
 
     // Load hourly data for pattern detection
     println!("Loading hourly data for pattern detection...");
@@ -45,10 +52,10 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
         &org,
         &token,
         &bucket,
-        symbol,
-        hourly_timeframe,
-        start_time,
-        end_time,
+        &symbol,
+        &hourly_timeframe,
+        &start_time,
+        &end_time,
     )
     .await?;
     println!("Loaded {} hourly candles", hourly_candles.len());
@@ -60,19 +67,19 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
         &org,
         &token,
         &bucket,
-        symbol,
-        minute_timeframe,
-        start_time,
-        end_time,
+        &symbol,
+        &minute_timeframe,
+        &start_time,
+        &end_time,
     )
     .await?;
     println!("Loaded {} minute candles", minute_candles.len());
 
-    let start_datetime = DateTime::parse_from_rfc3339(start_time)
+    let start_datetime = DateTime::parse_from_rfc3339(&start_time)
         .unwrap_or_else(|_| DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap())
         .with_timezone(&Utc);
 
-    let end_datetime = DateTime::parse_from_rfc3339(end_time)
+    let end_datetime = DateTime::parse_from_rfc3339(&end_time)
         .unwrap_or_else(|_| DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z").unwrap())
         .with_timezone(&Utc);
 

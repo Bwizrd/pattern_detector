@@ -1,5 +1,8 @@
 tree -I "target|.git|node_modules"
 
+cargo test --test backtest -- --nocapture
+cargo test --test multithreaded_optimization -- --nocapture
+
 I am building a forex data pattern recognizer in rust and displaying the results in an Angular App using SciCharts. The Data is stored in an Influx db.
 
 The Rust backend has 
@@ -51,3 +54,5 @@ Here is an example of a Rust pattern detector. I want to create one for 50% body
 
 
 
+
+Now I'm wondering if I could use recursion to go through all the currency pairs and all the timeframes and then keep trying multiple stop loss, tp and lot sizes to find the optimal profit factor across all of them. Rust is good at concurrency so this should be super fast too. Is that possible? And to also have a report created.

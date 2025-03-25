@@ -21,6 +21,8 @@ futures = "0.3"
 influxdb2 = "0.5.2"
 influxdb2-structmap = "0.2.0"
 cucumber = "0.21.1"
+rand = "0.8.5"
+parking_lot = "0.12.1"
 
 
 
