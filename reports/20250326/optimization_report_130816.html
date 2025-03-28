@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Forex Trading Strategy Optimization Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1, h2, h3 { color: #333366; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #f5f5f5; }
+        .summary { background-color: #e6f7ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .best { background-color: #e6ffe6; }
+        .approach-comparison { display: flex; }
+        .approach-card { flex: 1; margin: 10px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .approach-card h3 { margin-top: 0; }
+        .approach-card.pf { background-color: #e6f7ff; }
+        .approach-card.pips { background-color: #e6ffe6; }
+    </style>
+</head>
+<body>
+    <h1>Forex Trading Strategy Optimization Report</h1>
+    <div class="summary">
+        <h2>Backtest Summary</h2>
+        <p><strong>Pattern:</strong> Fifty Percent Before Big Bar</p>
+        <p><strong>Symbol:</strong> EURAUD_SB</p>
+        <p><strong>Period:</strong> 32 days (from 2025-02-17 to 2025-03-21)</p>
+        <p><strong>Total Combinations Tested:</strong> 108</p>
+    </div>
+
+    <h2>Top 10 Results by Profit Factor</h2>
+    <p>Optimizing for risk-adjusted returns (consistency and risk management)</p>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Timeframe</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+
+        <tr class="best">
+            <td>1</td>
+            <td>1h</td>
+            <td>100.0</td>
+            <td>2.0</td>
+            <td>23.08%</td>
+            <td>15.00</td>
+            <td>280.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>2</td>
+            <td>1h</td>
+            <td>68.3</td>
+            <td>2.0</td>
+            <td>23.08%</td>
+            <td>10.25</td>
+            <td>184.9</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>3</td>
+            <td>1h</td>
+            <td>15.0</td>
+            <td>2.0</td>
+            <td>53.85%</td>
+            <td>8.75</td>
+            <td>93.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>4</td>
+            <td>1h</td>
+            <td>20.0</td>
+            <td>2.0</td>
+            <td>38.46%</td>
+            <td>6.25</td>
+            <td>84.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>5</td>
+            <td>1h</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>6.14</td>
+            <td>771.2</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>6</td>
+            <td>1h</td>
+            <td>100.0</td>
+            <td>5.0</td>
+            <td>23.08%</td>
+            <td>6.00</td>
+            <td>250.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>7</td>
+            <td>1h</td>
+            <td>10.0</td>
+            <td>2.0</td>
+            <td>53.85%</td>
+            <td>5.83</td>
+            <td>58.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>8</td>
+            <td>1h</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>69.23%</td>
+            <td>5.62</td>
+            <td>37.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>9</td>
+            <td>1h</td>
+            <td>36.7</td>
+            <td>2.0</td>
+            <td>23.08%</td>
+            <td>5.51</td>
+            <td>90.1</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>10</td>
+            <td>15m</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>64.29%</td>
+            <td>4.50</td>
+            <td>140.0</td>
+            <td>56</td>
+        </tr>
+    </table>
+
+    <h2>Top 10 Results by Net Pips</h2>
+    <p>Optimizing for total profit (potentially higher returns with higher risk)</p>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Timeframe</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+
+        <tr class="best">
+            <td>1</td>
+            <td>5m</td>
+            <td>100.0</td>
+            <td>34.0</td>
+            <td>37.31%</td>
+            <td>1.64</td>
+            <td>2726.6</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>2</td>
+            <td>5m</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>43.78%</td>
+            <td>1.44</td>
+            <td>2493.7</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>3</td>
+            <td>5m</td>
+            <td>68.3</td>
+            <td>34.0</td>
+            <td>41.79%</td>
+            <td>1.38</td>
+            <td>1503.3</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>4</td>
+            <td>5m</td>
+            <td>100.0</td>
+            <td>18.0</td>
+            <td>21.89%</td>
+            <td>1.50</td>
+            <td>1423.2</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>5</td>
+            <td>5m</td>
+            <td>68.3</td>
+            <td>50.0</td>
+            <td>47.76%</td>
+            <td>1.20</td>
+            <td>1066.9</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>6</td>
+            <td>5m</td>
+            <td>100.0</td>
+            <td>10.0</td>
+            <td>14.43%</td>
+            <td>1.60</td>
+            <td>1029.2</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>7</td>
+            <td>1h</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>6.14</td>
+            <td>771.2</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>8</td>
+            <td>5m</td>
+            <td>68.3</td>
+            <td>18.0</td>
+            <td>25.37%</td>
+            <td>1.27</td>
+            <td>739.2</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>9</td>
+            <td>5m</td>
+            <td>36.7</td>
+            <td>34.0</td>
+            <td>52.24%</td>
+            <td>1.18</td>
+            <td>590.0</td>
+            <td>201</td>
+        </tr>
+
+        <tr>
+            <td>10</td>
+            <td>1h</td>
+            <td>68.3</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>4.24</td>
+            <td>485.9</td>
+            <td>13</td>
+        </tr>
+    </table>
+
+    <h2>Top 10 Results by Win Rate</h2>
+    <p>Optimizing for consistency and psychological comfort (higher percentage of winning trades)</p>
+    <table>
+        <tr>
+            <th>Rank</th>
+            <th>Timeframe</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+
+        <tr class="best">
+            <td>1</td>
+            <td>1h</td>
+            <td>68.3</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>4.24</td>
+            <td>485.9</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>2</td>
+            <td>1h</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>6.14</td>
+            <td>771.2</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>3</td>
+            <td>1h</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>69.23%</td>
+            <td>5.62</td>
+            <td>37.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>4</td>
+            <td>15m</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>64.29%</td>
+            <td>4.50</td>
+            <td>140.0</td>
+            <td>56</td>
+        </tr>
+
+        <tr>
+            <td>5</td>
+            <td>1h</td>
+            <td>10.0</td>
+            <td>2.0</td>
+            <td>53.85%</td>
+            <td>5.83</td>
+            <td>58.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>6</td>
+            <td>1h</td>
+            <td>10.0</td>
+            <td>5.0</td>
+            <td>53.85%</td>
+            <td>2.33</td>
+            <td>40.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>7</td>
+            <td>1h</td>
+            <td>15.0</td>
+            <td>2.0</td>
+            <td>53.85%</td>
+            <td>8.75</td>
+            <td>93.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>8</td>
+            <td>1h</td>
+            <td>15.0</td>
+            <td>5.0</td>
+            <td>53.85%</td>
+            <td>3.50</td>
+            <td>75.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>9</td>
+            <td>1h</td>
+            <td>15.0</td>
+            <td>10.0</td>
+            <td>53.85%</td>
+            <td>1.75</td>
+            <td>45.0</td>
+            <td>13</td>
+        </tr>
+
+        <tr>
+            <td>10</td>
+            <td>1h</td>
+            <td>36.7</td>
+            <td>34.0</td>
+            <td>53.85%</td>
+            <td>1.18</td>
+            <td>37.4</td>
+            <td>13</td>
+        </tr>
+    </table>
+
+    <h2>Results by Timeframe</h2>
+
+    <h3>Timeframe: 15m</h3>
+    <table>
+        <tr>
+            <th>Optimization</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+        <tr class="best">
+            <td>Best Profit Factor</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>64.29%</td>
+            <td>4.50</td>
+            <td>140.0</td>
+            <td>56</td>
+        </tr>
+        <tr>
+            <td>Best Net Pips</td>
+            <td>100.0</td>
+            <td>18.0</td>
+            <td>21.43%</td>
+            <td>1.42</td>
+            <td>334.2</td>
+            <td>56</td>
+        </tr>
+        <tr>
+            <td>Best Win Rate</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>64.29%</td>
+            <td>4.50</td>
+            <td>140.0</td>
+            <td>56</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 5m</h3>
+    <table>
+        <tr>
+            <th>Optimization</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+        <tr class="best">
+            <td>Best Profit Factor</td>
+            <td>100.0</td>
+            <td>34.0</td>
+            <td>37.31%</td>
+            <td>1.64</td>
+            <td>2726.6</td>
+            <td>201</td>
+        </tr>
+        <tr>
+            <td>Best Net Pips</td>
+            <td>100.0</td>
+            <td>34.0</td>
+            <td>37.31%</td>
+            <td>1.64</td>
+            <td>2726.6</td>
+            <td>201</td>
+        </tr>
+        <tr>
+            <td>Best Win Rate</td>
+            <td>36.7</td>
+            <td>34.0</td>
+            <td>52.24%</td>
+            <td>1.18</td>
+            <td>590.0</td>
+            <td>201</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 1h</h3>
+    <table>
+        <tr>
+            <th>Optimization</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+        <tr class="best">
+            <td>Best Profit Factor</td>
+            <td>100.0</td>
+            <td>2.0</td>
+            <td>23.08%</td>
+            <td>15.00</td>
+            <td>280.0</td>
+            <td>13</td>
+        </tr>
+        <tr>
+            <td>Best Net Pips</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>6.14</td>
+            <td>771.2</td>
+            <td>13</td>
+        </tr>
+        <tr>
+            <td>Best Win Rate</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>76.92%</td>
+            <td>6.14</td>
+            <td>771.2</td>
+            <td>13</td>
+        </tr>
+    </table>
+
+    <h3>Timeframe: 30m</h3>
+    <table>
+        <tr>
+            <th>Optimization</th>
+            <th>TP (pips)</th>
+            <th>SL (pips)</th>
+            <th>Win Rate</th>
+            <th>Profit Factor</th>
+            <th>Net Pips</th>
+            <th>Trades</th>
+        </tr>
+        <tr class="best">
+            <td>Best Profit Factor</td>
+            <td>10.0</td>
+            <td>2.0</td>
+            <td>37.04%</td>
+            <td>2.94</td>
+            <td>66.0</td>
+            <td>27</td>
+        </tr>
+        <tr>
+            <td>Best Net Pips</td>
+            <td>100.0</td>
+            <td>50.0</td>
+            <td>44.44%</td>
+            <td>1.60</td>
+            <td>450.0</td>
+            <td>27</td>
+        </tr>
+        <tr>
+            <td>Best Win Rate</td>
+            <td>5.0</td>
+            <td>2.0</td>
+            <td>48.15%</td>
+            <td>2.32</td>
+            <td>37.0</td>
+            <td>27</td>
+        </tr>
+    </table>
+
+    <h2>Conclusion</h2>
+    <p>The optimization process tested 108 different parameter combinations across various timeframes.</p>
+
+    <h3>Optimization Approaches Comparison</h3>
+    <div class="approach-comparison">
+        <div class="approach-card pf">
+            <h3>Profit Factor Optimization</h3>
+            <p><strong>Timeframe:</strong> 1h</p>
+            <p><strong>TP/SL:</strong> 100.0/2.0 pips (ratio: 50.0)</p>
+            <p><strong>Win Rate:</strong> 23.08%</p>
+            <p><strong>Profit Factor:</strong> 15.00</p>
+            <p><strong>Net Pips:</strong> 280.0</p>
+            <p><strong>Trades:</strong> 13</p>
+            <p><em>More consistent returns with better risk management. Typically has lower drawdowns.</em></p>
+        </div>
+        <div class="approach-card pips">
+            <h3>Net Pips Optimization</h3>
+            <p><strong>Timeframe:</strong> 5m</p>
+            <p><strong>TP/SL:</strong> 100.0/34.0 pips (ratio: 2.9)</p>
+            <p><strong>Win Rate:</strong> 37.31%</p>
+            <p><strong>Profit Factor:</strong> 1.64</p>
+            <p><strong>Net Pips:</strong> 2726.6</p>
+            <p><strong>Trades:</strong> 201</p>
+            <p><em>Higher total profit but potentially higher risk and larger drawdowns.</em></p>
+        </div>
+        <div class="approach-card winrate">
+            <h3>Win Rate Optimization</h3>
+            <p><strong>Timeframe:</strong> 1h</p>
+            <p><strong>TP/SL:</strong> 68.3/50.0 pips (ratio: 1.4)</p>
+            <p><strong>Win Rate:</strong> 76.92%</p>
+            <p><strong>Profit Factor:</strong> 4.24</p>
+            <p><strong>Net Pips:</strong> 485.9</p>
+            <p><strong>Trades:</strong> 13</p>
+            <p><em>Psychologically easier to trade with more winning trades, but may sacrifice overall profitability.</em></p>
+        </div>
+    </div>
+    
+    <h3>Making Your Decision</h3>
+    <p>When choosing between optimization approaches, consider:</p>
+    <ul>
+        <li><strong>Risk Tolerance:</strong> Lower risk tolerance favors the profit factor approach</li>
+        <li><strong>Account Size:</strong> Smaller accounts may benefit from consistency (profit factor)</li>
+        <li><strong>Trading Psychology:</strong> If drawdowns affect your decision-making, prefer profit factor or win rate approach</li>
+        <li><strong>Performance Goals:</strong> If maximizing returns is primary, consider the net pips approach</li>
+        <li><strong>Emotional Management:</strong> If you need confidence from winning trades, prioritize win rate</li>
+    </ul>
+
+    <p>Generated on: 2025-03-26 13:08:16</p>
+</body>
+</html>

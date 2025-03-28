@@ -1,18 +1,18 @@
 // tests/multithreaded_optimization.rs
 // tests/enhanced_optimization.rs
+use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use pattern_detector::detect::CandleData;
 use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
 use pattern_detector::patterns::PatternRecognizer;
 use pattern_detector::trades::{TradeConfig, TradeSummary};
 use pattern_detector::trading::TradeExecutor;
-use chrono::{DateTime, Utc};
-use tokio::sync::Mutex as TokioMutex;
-use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::task;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
+use tokio::task;
 
 // Parameter search configuration
 #[derive(Clone)]
@@ -67,12 +67,19 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     // Define parameter search configuration - EURUSD only with fixed lot size
     let search_config = ParameterSearchConfig {
         symbol: "EURUSD_SB".to_string(),
-        timeframes: vec!["1m".to_string(), "5m".to_string(), "15m".to_string(), 
-                        "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
-        lot_size: 0.1,                     // Fixed lot size
-        take_profit_range: (5.0, 100.0),   // Min and max take profit pips
-        stop_loss_range: (2.0, 50.0),      // Min and max stop loss pips
-        max_iterations: 10,                // Maximum search iterations
+        timeframes: vec![
+            "1m".to_string(),
+            "5m".to_string(),
+            "15m".to_string(),
+            "30m".to_string(),
+            "1h".to_string(),
+            "4h".to_string(),
+            "1d".to_string(),
+        ],
+        lot_size: 0.1,                   // Fixed lot size
+        take_profit_range: (5.0, 100.0), // Min and max take profit pips
+        stop_loss_range: (2.0, 50.0),    // Min and max stop loss pips
+        max_iterations: 10,              // Maximum search iterations
     };
 
     // Create shared result storage using a tokio mutex
@@ -80,10 +87,15 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     let mut tasks = Vec::new();
 
     // Cache for loaded candles to avoid redundant loading
-    let candle_cache = Arc::new(TokioMutex::new(HashMap::<(String, String), Vec<CandleData>>::new()));
+    let candle_cache = Arc::new(TokioMutex::new(
+        HashMap::<(String, String), Vec<CandleData>>::new(),
+    ));
 
-    println!("Starting optimization for {} across {} timeframes", 
-             search_config.symbol, search_config.timeframes.len());
+    println!(
+        "Starting optimization for {} across {} timeframes",
+        search_config.symbol,
+        search_config.timeframes.len()
+    );
 
     // Spawn tasks for each timeframe
     for timeframe in &search_config.timeframes {
@@ -103,7 +115,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
         // Spawn a task for this timeframe
         let task = task::spawn(async move {
             println!("Processing timeframe: {}", timeframe);
-            
+
             // Safely load hourly candles with tokio mutex
             let hourly_candles = {
                 let mut cache = candle_cache.lock().await;
@@ -112,7 +124,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     // Safe to drop mutex while awaiting
                     drop(cache);
-                    
+
                     let candles = load_candles(
                         &host,
                         &org,
@@ -125,7 +137,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .await
                     .unwrap_or_default();
-                    
+
                     // Re-acquire mutex
                     let mut cache = candle_cache.lock().await;
                     cache.insert((symbol.clone(), timeframe.clone()), candles.clone());
@@ -141,7 +153,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     // Safe to drop mutex while awaiting
                     drop(cache);
-                    
+
                     let candles = load_candles(
                         &host,
                         &org,
@@ -154,7 +166,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                     )
                     .await
                     .unwrap_or_default();
-                    
+
                     // Re-acquire mutex
                     let mut cache = candle_cache.lock().await;
                     cache.insert((symbol.clone(), minute_timeframe.clone()), candles.clone());
@@ -176,23 +188,27 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             let mut best_net_pips = 0.0;
             let mut best_pf_params = (0.0, 0.0);
             let mut best_pips_params = (0.0, 0.0);
-            
+
             // Generate parameter combinations systematically
             let test_points = generate_parameter_grid(
                 &search_config.take_profit_range,
                 &search_config.stop_loss_range,
-                search_config.max_iterations
+                search_config.max_iterations,
             );
-            
-            println!("Testing {} parameter combinations for {}", test_points.len(), timeframe);
-            
+
+            println!(
+                "Testing {} parameter combinations for {}",
+                test_points.len(),
+                timeframe
+            );
+
             // Test each parameter combination
             for (take_profit_pips, stop_loss_pips) in test_points {
                 // Skip invalid risk:reward ratios
                 if take_profit_pips <= stop_loss_pips {
                     continue;
                 }
-                
+
                 // Create trade config
                 let trade_config = TradeConfig {
                     enabled: true,
@@ -249,13 +265,13 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                         total_trades: summary.total_trades,
                         net_pips,
                     };
-                    
+
                     // Update best parameters for profit factor
                     if summary.profit_factor > best_profit_factor {
                         best_profit_factor = summary.profit_factor;
                         best_pf_params = (take_profit_pips, stop_loss_pips);
                     }
-                    
+
                     // Update best parameters for net pips
                     if net_pips > best_net_pips {
                         best_net_pips = net_pips;
@@ -267,12 +283,16 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                     results_guard.push(result);
                 }
             }
-            
+
             println!("Results for {}:", timeframe);
-            println!("  Best PF: {:.2} (TP: {:.1}, SL: {:.1})", 
-                     best_profit_factor, best_pf_params.0, best_pf_params.1);
-            println!("  Best Pips: {:.1} (TP: {:.1}, SL: {:.1})", 
-                     best_net_pips, best_pips_params.0, best_pips_params.1);
+            println!(
+                "  Best PF: {:.2} (TP: {:.1}, SL: {:.1})",
+                best_profit_factor, best_pf_params.0, best_pf_params.1
+            );
+            println!(
+                "  Best Pips: {:.1} (TP: {:.1}, SL: {:.1})",
+                best_net_pips, best_pips_params.0, best_pips_params.1
+            );
         });
 
         tasks.push(task);
@@ -285,25 +305,32 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate report
     let results_guard = results.lock().await;
-    
+
     // Convert to standard Vec for sorting
     let mut sorted_results = results_guard.clone();
-    
+
     // Sort by profit factor (descending)
     sorted_results.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
-    
+
     // Create a copy sorted by net pips
     let mut pips_sorted_results = sorted_results.clone();
     pips_sorted_results.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
 
+    let date_str = chrono::Utc::now().format("%Y%m%d").to_string();
+    let report_dir = format!("reports/{}", date_str);
+    std::fs::create_dir_all(&report_dir)?;
+
     // Create CSV report
-    let csv_filename = format!("optimization_results_{}.csv", 
-        chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+    let csv_filename = format!(
+        "{}/optimization_results_{}.csv",
+        report_dir,
+        chrono::Utc::now().format("%H%M%S")
+    );
     let mut csv_file = File::create(&csv_filename)?;
-    
+
     // Write CSV header
     writeln!(csv_file, "Symbol,Timeframe,Lot Size,TP Pips,SL Pips,Win Rate,Profit Factor,Total P/L,Total Trades,Net Pips")?;
-    
+
     // Write data
     for result in &sorted_results {
         writeln!(
@@ -323,12 +350,16 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Generate HTML report
-    let html_filename = format!("optimization_report_{}.html", 
-        chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+    let html_filename = format!(
+        "optimization_report_{}.html",
+        chrono::Utc::now().format("%Y%m%d_%H%M%S")
+    );
     let mut html_file = File::create(&html_filename)?;
-    
+
     // Write HTML header
-    write!(html_file, r#"<!DOCTYPE html>
+    write!(
+        html_file,
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Forex Trading Strategy Optimization Report</title>
@@ -358,10 +389,18 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
         <p><strong>Period:</strong> {} days (from {} to {})</p>
         <p><strong>Total Combinations Tested:</strong> {}</p>
     </div>
-"#, search_config.symbol, total_days, start_datetime.format("%Y-%m-%d"), end_datetime.format("%Y-%m-%d"), sorted_results.len())?;
+"#,
+        search_config.symbol,
+        total_days,
+        start_datetime.format("%Y-%m-%d"),
+        end_datetime.format("%Y-%m-%d"),
+        sorted_results.len()
+    )?;
 
     // Write top 10 results by profit factor
-    write!(html_file, r#"
+    write!(
+        html_file,
+        r#"
     <h2>Top 10 Results by Profit Factor</h2>
     <p>Optimizing for risk-adjusted returns (consistency and risk management)</p>
     <table>
@@ -375,13 +414,16 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             <th>Net Pips</th>
             <th>Trades</th>
         </tr>
-"#)?;
+"#
+    )?;
 
     // Get top 10 or all if less than 10
     let top_count = std::cmp::min(10, sorted_results.len());
     for i in 0..top_count {
         let result = &sorted_results[i];
-        write!(html_file, r#"
+        write!(
+            html_file,
+            r#"
         <tr{}>
             <td>{}</td>
             <td>{}</td>
@@ -392,7 +434,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             <td>{:.1}</td>
             <td>{}</td>
         </tr>
-"#, 
+"#,
             if i == 0 { " class=\"best\"" } else { "" },
             i + 1,
             result.timeframe,
@@ -404,11 +446,13 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             result.total_trades
         )?;
     }
-    
+
     write!(html_file, "    </table>\n")?;
 
     // Write top 10 results by net pips
-    write!(html_file, r#"
+    write!(
+        html_file,
+        r#"
     <h2>Top 10 Results by Net Pips</h2>
     <p>Optimizing for total profit (potentially higher returns with higher risk)</p>
     <table>
@@ -422,13 +466,16 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             <th>Net Pips</th>
             <th>Trades</th>
         </tr>
-"#)?;
+"#
+    )?;
 
     // Get top 10 by pips or all if less than 10
     let pips_top_count = std::cmp::min(10, pips_sorted_results.len());
     for i in 0..pips_top_count {
         let result = &pips_sorted_results[i];
-        write!(html_file, r#"
+        write!(
+            html_file,
+            r#"
         <tr{}>
             <td>{}</td>
             <td>{}</td>
@@ -439,7 +486,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             <td>{:.1}</td>
             <td>{}</td>
         </tr>
-"#, 
+"#,
             if i == 0 { " class=\"best\"" } else { "" },
             i + 1,
             result.timeframe,
@@ -451,13 +498,16 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             result.total_trades
         )?;
     }
-    
+
     write!(html_file, "    </table>\n")?;
 
     // Add results by timeframe
-    write!(html_file, r#"
+    write!(
+        html_file,
+        r#"
     <h2>Results by Timeframe</h2>
-"#)?;
+"#
+    )?;
 
     // Group by timeframe
     let mut timeframe_groups = HashMap::new();
@@ -474,17 +524,19 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
         if group.is_empty() {
             continue;
         }
-        
+
         // Sort by profit factor
         group.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
         let best_pf = &group[0];
-        
+
         // Sort by net pips
         let mut pips_group = group.clone();
         pips_group.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
         let best_pips = &pips_group[0];
-        
-        write!(html_file, r#"
+
+        write!(
+            html_file,
+            r#"
     <h3>Timeframe: {}</h3>
     <table>
         <tr>
@@ -523,7 +575,6 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             best_pf.profit_factor,
             best_pf.net_pips,
             best_pf.total_trades,
-            
             best_pips.take_profit_pips,
             best_pips.stop_loss_pips,
             best_pips.win_rate,
@@ -534,16 +585,20 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Add comparison of optimization approaches
-    write!(html_file, r#"
+    write!(
+        html_file,
+        r#"
     <h2>Conclusion</h2>
     <p>The optimization process tested {} different parameter combinations across {} timeframes.</p>
-"#, 
+"#,
         sorted_results.len(),
         search_config.timeframes.len()
     )?;
 
     if !sorted_results.is_empty() && !pips_sorted_results.is_empty() {
-        write!(html_file, r#"
+        write!(
+            html_file,
+            r#"
     <h3>Optimization Approaches Comparison</h3>
     <table>
         <tr>
@@ -591,7 +646,6 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
             sorted_results[0].profit_factor,
             sorted_results[0].net_pips,
             sorted_results[0].total_trades,
-            
             pips_sorted_results[0].timeframe,
             pips_sorted_results[0].take_profit_pips,
             pips_sorted_results[0].stop_loss_pips,
@@ -602,37 +656,54 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    write!(html_file, r#"
+    write!(
+        html_file,
+        r#"
     <p>Generated on: {}</p>
 </body>
 </html>
-"#, 
+"#,
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
     )?;
 
     // Print summary to console
     println!("\nOptimization Complete:");
-    println!("Total parameter combinations tested: {}", sorted_results.len());
+    println!(
+        "Total parameter combinations tested: {}",
+        sorted_results.len()
+    );
     println!("Results saved to {} and {}", csv_filename, html_filename);
-    
+
     if !sorted_results.is_empty() && !pips_sorted_results.is_empty() {
         println!("\nOptimization Approaches Comparison:");
         println!("----------------------------------");
         println!("Best by Profit Factor (consistency):");
         println!("  Timeframe: {}", sorted_results[0].timeframe);
-        println!("  Take Profit: {:.1} pips", sorted_results[0].take_profit_pips);
+        println!(
+            "  Take Profit: {:.1} pips",
+            sorted_results[0].take_profit_pips
+        );
         println!("  Stop Loss: {:.1} pips", sorted_results[0].stop_loss_pips);
         println!("  Win Rate: {:.2}%", sorted_results[0].win_rate);
         println!("  Profit Factor: {:.2}", sorted_results[0].profit_factor);
         println!("  Net Pips: {:.1}", sorted_results[0].net_pips);
         println!("  Total Trades: {}", sorted_results[0].total_trades);
-        
+
         println!("\nBest by Net Pips (total profit):");
         println!("  Timeframe: {}", pips_sorted_results[0].timeframe);
-        println!("  Take Profit: {:.1} pips", pips_sorted_results[0].take_profit_pips);
-        println!("  Stop Loss: {:.1} pips", pips_sorted_results[0].stop_loss_pips);
+        println!(
+            "  Take Profit: {:.1} pips",
+            pips_sorted_results[0].take_profit_pips
+        );
+        println!(
+            "  Stop Loss: {:.1} pips",
+            pips_sorted_results[0].stop_loss_pips
+        );
         println!("  Win Rate: {:.2}%", pips_sorted_results[0].win_rate);
-        println!("  Profit Factor: {:.2}", pips_sorted_results[0].profit_factor);
+        println!(
+            "  Profit Factor: {:.2}",
+            pips_sorted_results[0].profit_factor
+        );
         println!("  Net Pips: {:.1}", pips_sorted_results[0].net_pips);
         println!("  Total Trades: {}", pips_sorted_results[0].total_trades);
     }
@@ -644,37 +715,37 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
 fn generate_parameter_grid(
     tp_range: &(f64, f64),
     sl_range: &(f64, f64),
-    max_points: usize
+    max_points: usize,
 ) -> Vec<(f64, f64)> {
     let mut results = Vec::new();
-    
+
     // Calculate how many points to sample in each dimension
     let dim_size = (max_points as f64).sqrt().ceil() as usize;
-    
+
     // Generate TP points
     let mut tp_values = Vec::new();
     for i in 0..dim_size {
         let tp_value = tp_range.0 + (tp_range.1 - tp_range.0) * (i as f64 / (dim_size - 1) as f64);
         tp_values.push((tp_value * 10.0).round() / 10.0);
     }
-    
+
     // Generate SL points
     let mut sl_values = Vec::new();
     for i in 0..dim_size {
         let sl_value = sl_range.0 + (sl_range.1 - sl_range.0) * (i as f64 / (dim_size - 1) as f64);
         sl_values.push((sl_value * 10.0).round() / 10.0);
     }
-    
+
     // Add some specific values that are frequently good
     tp_values.push(5.0);
     tp_values.push(10.0);
     tp_values.push(15.0);
     tp_values.push(20.0);
-    
+
     sl_values.push(2.0);
     sl_values.push(5.0);
     sl_values.push(10.0);
-    
+
     // Generate combinations
     for &tp in &tp_values {
         for &sl in &sl_values {
@@ -684,7 +755,7 @@ fn generate_parameter_grid(
             }
         }
     }
-    
+
     // Remove duplicates
     results.sort_by(|a, b| {
         let cmp = a.0.partial_cmp(&b.0).unwrap();
@@ -695,7 +766,7 @@ fn generate_parameter_grid(
         }
     });
     results.dedup();
-    
+
     results
 }
 

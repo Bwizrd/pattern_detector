@@ -5,27 +5,46 @@ use super::parameter_generator::generate_parameter_grid;
 use crate::OptimizationResult;
 use crate::ParameterSearchConfig;
 
+use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use pattern_detector::detect::CandleData;
 use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
 use pattern_detector::patterns::PatternRecognizer;
 use pattern_detector::trades::{TradeConfig, TradeSummary};
 use pattern_detector::trading::TradeExecutor;
-use chrono::{DateTime, Utc};
-use tokio::sync::Mutex as TokioMutex;
-use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::task;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
+use tokio::task;
 
 // Define list of currency pairs to test
 const CURRENCY_PAIRS: &[&str] = &[
-    "EURUSD_SB", "GBPUSD_SB", "USDJPY_SB", "USDCHF_SB", "AUDUSD_SB",
-    "USDCAD_SB", "NZDUSD_SB", "EURGBP_SB", "EURJPY_SB", "EURCHF_SB",
-    "EURAUD_SB", "EURCAD_SB", "EURNZD_SB", "GBPJPY_SB", "GBPCHF_SB",
-    "GBPAUD_SB", "GBPCAD_SB", "GBPNZD_SB", "AUDJPY_SB", "AUDNZD_SB",
-    "AUDCAD_SB", "NZDJPY_SB", "CADJPY_SB", "CHFJPY_SB",
+    "EURUSD_SB",
+    "GBPUSD_SB",
+    "USDJPY_SB",
+    "USDCHF_SB",
+    "AUDUSD_SB",
+    "USDCAD_SB",
+    "NZDUSD_SB",
+    "EURGBP_SB",
+    "EURJPY_SB",
+    "EURCHF_SB",
+    "EURAUD_SB",
+    "EURCAD_SB",
+    "EURNZD_SB",
+    "GBPJPY_SB",
+    "GBPCHF_SB",
+    "GBPAUD_SB",
+    "GBPCAD_SB",
+    "GBPNZD_SB",
+    "AUDJPY_SB",
+    "AUDNZD_SB",
+    "AUDCAD_SB",
+    "NZDJPY_SB",
+    "CADJPY_SB",
+    "CHFJPY_SB",
 ];
 
 // Store best results for each currency
@@ -49,7 +68,7 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
     let bucket = std::env::var("INFLUXDB_BUCKET").expect("INFLUXDB_BUCKET must be set");
     let start_time = std::env::var("START_TIME").expect("START_TIME must be set");
     let end_time = std::env::var("END_TIME").expect("END_TIME must be set");
-    
+
     // Check if 1m timeframe should be skipped
     let skip_1m = std::env::var("SKIP_1M_TIMEFRAME")
         .map(|v| v.to_lowercase() == "true" || v == "1")
@@ -73,20 +92,26 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
     let total_days = (end_datetime - start_datetime).num_days();
 
     // Define timeframes, optionally excluding 1m
-    let mut timeframes = vec!["5m".to_string(), "15m".to_string(), 
-                         "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()];
-                         
+    let mut timeframes = vec![
+        "5m".to_string(),
+        "15m".to_string(),
+        "30m".to_string(),
+        "1h".to_string(),
+        "4h".to_string(),
+        "1d".to_string(),
+    ];
+
     if !skip_1m {
         timeframes.push("1m".to_string());
     }
 
     // Store all currency results for the summary report
     let all_currency_results = Arc::new(TokioMutex::new(Vec::<BestResults>::new()));
-    
+
     // Process currency pairs in batches to avoid overloading the system
     for chunk in CURRENCY_PAIRS.chunks(max_concurrent) {
         let mut tasks = Vec::new();
-        
+
         // Process each currency pair in this batch concurrently
         for &currency in chunk {
             let currency_string = currency.to_string();
@@ -98,11 +123,11 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
             let end_time = end_time.clone();
             let timeframes = timeframes.clone();
             let all_currency_results = Arc::clone(&all_currency_results);
-            
+
             // Spawn a task for this currency pair
             let task = task::spawn(async move {
                 println!("Starting optimization for {}", currency_string);
-                
+
                 // Define parameter search configuration for this currency
                 let search_config = ParameterSearchConfig {
                     symbol: currency_string.clone(),
@@ -112,14 +137,17 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                     stop_loss_range: (2.0, 50.0),
                     max_iterations: 10,
                 };
-                
+
                 // Create storage for the results
                 let currency_results = Arc::new(TokioMutex::new(Vec::<OptimizationResult>::new()));
                 let mut timeframe_tasks = Vec::new();
-                
+
                 // Cache for loaded candles
-                let candle_cache = Arc::new(TokioMutex::new(HashMap::<(String, String), Vec<CandleData>>::new()));
-                
+                let candle_cache = Arc::new(TokioMutex::new(HashMap::<
+                    (String, String),
+                    Vec<CandleData>,
+                >::new()));
+
                 // Process each timeframe for this currency
                 for timeframe in &search_config.timeframes {
                     let symbol = search_config.symbol.clone();
@@ -134,7 +162,7 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                     let results = Arc::clone(&currency_results);
                     let candle_cache = Arc::clone(&candle_cache);
                     let search_config = search_config.clone();
-                    
+
                     // Spawn a task for this timeframe
                     let task = task::spawn(async move {
                         // Load timeframe candles
@@ -145,7 +173,7 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                             } else {
                                 // Release the mutex before the await
                                 drop(cache);
-                                
+
                                 let candles = load_candles(
                                     &host,
                                     &org,
@@ -158,7 +186,7 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                                 )
                                 .await
                                 .unwrap_or_default();
-                                
+
                                 // Re-acquire mutex
                                 let mut cache = candle_cache.lock().await;
                                 cache.insert((symbol.clone(), timeframe.clone()), candles.clone());
@@ -169,12 +197,14 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                         // Load minute candles for execution
                         let minute_candles = {
                             let cache = candle_cache.lock().await;
-                            if let Some(candles) = cache.get(&(symbol.clone(), minute_timeframe.clone())) {
+                            if let Some(candles) =
+                                cache.get(&(symbol.clone(), minute_timeframe.clone()))
+                            {
                                 candles.clone()
                             } else {
                                 // Release the mutex before the await
                                 drop(cache);
-                                
+
                                 let candles = load_candles(
                                     &host,
                                     &org,
@@ -187,10 +217,13 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                                 )
                                 .await
                                 .unwrap_or_default();
-                                
+
                                 // Re-acquire mutex
                                 let mut cache = candle_cache.lock().await;
-                                cache.insert((symbol.clone(), minute_timeframe.clone()), candles.clone());
+                                cache.insert(
+                                    (symbol.clone(), minute_timeframe.clone()),
+                                    candles.clone(),
+                                );
                                 candles
                             }
                         };
@@ -208,16 +241,16 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                         let test_points = generate_parameter_grid(
                             &search_config.take_profit_range,
                             &search_config.stop_loss_range,
-                            search_config.max_iterations
+                            search_config.max_iterations,
                         );
-                        
+
                         // Test each parameter combination
                         for (take_profit_pips, stop_loss_pips) in test_points {
                             // Skip invalid risk:reward ratios
                             if take_profit_pips <= stop_loss_pips {
                                 continue;
                             }
-                            
+
                             // Create trade config
                             let trade_config = TradeConfig {
                                 enabled: true,
@@ -258,7 +291,13 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                                     }
                                 }
                             }
-                            let net_pips = total_winning_pips - total_losing_pips;
+                            // In your code where you calculate pips
+                            let net_pips = if symbol.contains("JPY") {
+                                // Adjust JPY pairs by dividing by 100
+                                total_winning_pips / 100.0 - total_losing_pips / 100.0
+                            } else {
+                                total_winning_pips - total_losing_pips
+                            };
 
                             // Add result if we have enough trades
                             if summary.total_trades >= 5 {
@@ -280,64 +319,86 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                             }
                         }
                     });
-                    
+
                     timeframe_tasks.push(task);
                 }
-                
+
                 // Wait for all timeframe tasks to complete
                 for task in timeframe_tasks {
                     let _ = task.await;
                 }
-                
+
                 // Generate individual currency report
                 let results_guard = currency_results.lock().await;
                 if !results_guard.is_empty() {
                     // Generate the HTML report for this currency
                     crate::html_reporter::generate_report(
-                        &results_guard, 
+                        &results_guard,
                         &search_config,
                         start_datetime,
                         end_datetime,
                         total_days,
-                    ).unwrap_or_else(|e| println!("Error generating report for {}: {}", currency_string, e));
-                    
+                    )
+                    .unwrap_or_else(|e| {
+                        println!("Error generating report for {}: {}", currency_string, e)
+                    });
+
                     // Sort results for summary report
                     let mut pf_sorted = results_guard.clone();
                     let mut pips_sorted = results_guard.clone();
                     let mut winrate_sorted = results_guard.clone();
-                    
-                    pf_sorted.sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
+
+                    pf_sorted
+                        .sort_by(|a, b| b.profit_factor.partial_cmp(&a.profit_factor).unwrap());
                     pips_sorted.sort_by(|a, b| b.net_pips.partial_cmp(&a.net_pips).unwrap());
                     winrate_sorted.sort_by(|a, b| b.win_rate.partial_cmp(&a.win_rate).unwrap());
-                    
+
                     // Save best results for this currency
                     let best_results = BestResults {
                         currency: currency_string.clone(),
-                        best_by_pf: if !pf_sorted.is_empty() { Some(pf_sorted[0].clone()) } else { None },
-                        best_by_pips: if !pips_sorted.is_empty() { Some(pips_sorted[0].clone()) } else { None },
-                        best_by_winrate: if !winrate_sorted.is_empty() { Some(winrate_sorted[0].clone()) } else { None },
+                        best_by_pf: if !pf_sorted.is_empty() {
+                            Some(pf_sorted[0].clone())
+                        } else {
+                            None
+                        },
+                        best_by_pips: if !pips_sorted.is_empty() {
+                            Some(pips_sorted[0].clone())
+                        } else {
+                            None
+                        },
+                        best_by_winrate: if !winrate_sorted.is_empty() {
+                            Some(winrate_sorted[0].clone())
+                        } else {
+                            None
+                        },
                     };
-                    
+
                     // Add to global results
                     let mut all_results = all_currency_results.lock().await;
                     all_results.push(best_results);
                 }
-                
+
                 println!("Completed optimization for {}", currency_string);
             });
-            
+
             tasks.push(task);
         }
-        
+
         // Wait for this batch of currency pairs to complete
         for task in tasks {
             let _ = task.await;
         }
     }
-    
+
     // Generate summary report
-    generate_summary_report(all_currency_results, start_datetime, end_datetime, total_days).await?;
-    
+    generate_summary_report(
+        all_currency_results,
+        start_datetime,
+        end_datetime,
+        total_days,
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -348,18 +409,27 @@ async fn generate_summary_report(
     total_days: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let results = all_results.lock().await;
-    
+
     if results.is_empty() {
         println!("No results to include in summary report");
         return Ok(());
     }
-    
-    let summary_filename = format!("currency_summary_report_{}.html", 
-        chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+
+    let date_str = chrono::Utc::now().format("%Y%m%d").to_string();
+    let report_dir = format!("reports/{}", date_str);
+    std::fs::create_dir_all(&report_dir)?;
+
+    let summary_filename = format!(
+        "{}/currency_summary_report_{}.html",
+        report_dir,
+        chrono::Utc::now().format("%H%M%S")
+    );
     let mut html_file = File::create(&summary_filename)?;
-    
+
     // Write HTML header
-    writeln!(html_file, r#"<!DOCTYPE html>
+    writeln!(
+        html_file,
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Multi-Currency Trading Optimization Summary</title>
@@ -384,10 +454,16 @@ async fn generate_summary_report(
         <p><strong>Period:</strong> {} days (from {} to {})</p>
         <p><strong>Currencies Tested:</strong> {}</p>
     </div>"#,
-        total_days, start_datetime.format("%Y-%m-%d"), end_datetime.format("%Y-%m-%d"), results.len())?;
-    
+        total_days,
+        start_datetime.format("%Y-%m-%d"),
+        end_datetime.format("%Y-%m-%d"),
+        results.len()
+    )?;
+
     // --- Profit Factor section ---
-    writeln!(html_file, r#"
+    writeln!(
+        html_file,
+        r#"
     <div class="profit-factor-section">
         <h2>Best Settings by Profit Factor</h2>
         <p>Currency pairs ranked by highest profit factor (best risk management and consistency)</p>
@@ -401,16 +477,20 @@ async fn generate_summary_report(
                 <th>Profit Factor</th>
                 <th>Net Pips</th>
                 <th>Trades</th>
-            </tr>"#)?;
-    
+            </tr>"#
+    )?;
+
     // Sort by profit factor
-    let mut pf_results: Vec<_> = results.iter()
+    let mut pf_results: Vec<_> = results
+        .iter()
         .filter_map(|r| r.best_by_pf.as_ref().map(|pf| (r.currency.clone(), pf)))
         .collect();
     pf_results.sort_by(|a, b| b.1.profit_factor.partial_cmp(&a.1.profit_factor).unwrap());
-    
+
     for (i, (currency, result)) in pf_results.iter().enumerate() {
-        writeln!(html_file, r#"
+        writeln!(
+            html_file,
+            r#"
             <tr{}>
                 <td>{}</td>
                 <td>{}</td>
@@ -433,11 +513,13 @@ async fn generate_summary_report(
             result.total_trades
         )?;
     }
-    
+
     writeln!(html_file, "        </table>\n    </div>")?;
-    
+
     // --- Net Pips section ---
-    writeln!(html_file, r#"
+    writeln!(
+        html_file,
+        r#"
     <div class="net-pips-section">
         <h2>Best Settings by Net Pips</h2>
         <p>Currency pairs ranked by highest net pips (best total profitability)</p>
@@ -451,16 +533,24 @@ async fn generate_summary_report(
                 <th>Profit Factor</th>
                 <th>Net Pips</th>
                 <th>Trades</th>
-            </tr>"#)?;
-    
+            </tr>"#
+    )?;
+
     // Sort by net pips
-    let mut pips_results: Vec<_> = results.iter()
-        .filter_map(|r| r.best_by_pips.as_ref().map(|pips| (r.currency.clone(), pips)))
+    let mut pips_results: Vec<_> = results
+        .iter()
+        .filter_map(|r| {
+            r.best_by_pips
+                .as_ref()
+                .map(|pips| (r.currency.clone(), pips))
+        })
         .collect();
     pips_results.sort_by(|a, b| b.1.net_pips.partial_cmp(&a.1.net_pips).unwrap());
-    
+
     for (i, (currency, result)) in pips_results.iter().enumerate() {
-        writeln!(html_file, r#"
+        writeln!(
+            html_file,
+            r#"
             <tr{}>
                 <td>{}</td>
                 <td>{}</td>
@@ -483,11 +573,13 @@ async fn generate_summary_report(
             result.total_trades
         )?;
     }
-    
+
     writeln!(html_file, "        </table>\n    </div>")?;
-    
+
     // --- Win Rate section ---
-    writeln!(html_file, r#"
+    writeln!(
+        html_file,
+        r#"
     <div class="win-rate-section">
         <h2>Best Settings by Win Rate</h2>
         <p>Currency pairs ranked by highest win rate (best psychological comfort)</p>
@@ -501,16 +593,24 @@ async fn generate_summary_report(
                 <th>Profit Factor</th>
                 <th>Net Pips</th>
                 <th>Trades</th>
-            </tr>"#)?;
-    
+            </tr>"#
+    )?;
+
     // Sort by win rate
-    let mut winrate_results: Vec<_> = results.iter()
-        .filter_map(|r| r.best_by_winrate.as_ref().map(|wr| (r.currency.clone(), wr)))
+    let mut winrate_results: Vec<_> = results
+        .iter()
+        .filter_map(|r| {
+            r.best_by_winrate
+                .as_ref()
+                .map(|wr| (r.currency.clone(), wr))
+        })
         .collect();
     winrate_results.sort_by(|a, b| b.1.win_rate.partial_cmp(&a.1.win_rate).unwrap());
-    
+
     for (i, (currency, result)) in winrate_results.iter().enumerate() {
-        writeln!(html_file, r#"
+        writeln!(
+            html_file,
+            r#"
             <tr{}>
                 <td>{}</td>
                 <td>{}</td>
@@ -533,11 +633,13 @@ async fn generate_summary_report(
             result.total_trades
         )?;
     }
-    
+
     writeln!(html_file, "        </table>\n    </div>")?;
-    
+
     // Add conclusion
-    writeln!(html_file, r#"
+    writeln!(
+        html_file,
+        r#"
     <h2>Currency Performance Analysis</h2>
     <p>The table below shows the top performing currency for each optimization approach:</p>
     <table>
@@ -583,36 +685,117 @@ async fn generate_summary_report(
 </body>
 </html>"#,
         // PF best
-        if !pf_results.is_empty() { &pf_results[0].0 } else { "N/A" },
-        if !pf_results.is_empty() { &pf_results[0].1.timeframe } else { "N/A" },
-        if !pf_results.is_empty() { pf_results[0].1.take_profit_pips } else { 0.0 },
-        if !pf_results.is_empty() { pf_results[0].1.stop_loss_pips } else { 0.0 },
-        if !pf_results.is_empty() { pf_results[0].1.win_rate } else { 0.0 },
-        if !pf_results.is_empty() { pf_results[0].1.profit_factor } else { 0.0 },
-        if !pf_results.is_empty() { pf_results[0].1.net_pips } else { 0.0 },
-        
+        if !pf_results.is_empty() {
+            &pf_results[0].0
+        } else {
+            "N/A"
+        },
+        if !pf_results.is_empty() {
+            &pf_results[0].1.timeframe
+        } else {
+            "N/A"
+        },
+        if !pf_results.is_empty() {
+            pf_results[0].1.take_profit_pips
+        } else {
+            0.0
+        },
+        if !pf_results.is_empty() {
+            pf_results[0].1.stop_loss_pips
+        } else {
+            0.0
+        },
+        if !pf_results.is_empty() {
+            pf_results[0].1.win_rate
+        } else {
+            0.0
+        },
+        if !pf_results.is_empty() {
+            pf_results[0].1.profit_factor
+        } else {
+            0.0
+        },
+        if !pf_results.is_empty() {
+            pf_results[0].1.net_pips
+        } else {
+            0.0
+        },
         // Pips best
-        if !pips_results.is_empty() { &pips_results[0].0 } else { "N/A" },
-        if !pips_results.is_empty() { &pips_results[0].1.timeframe } else { "N/A" },
-        if !pips_results.is_empty() { pips_results[0].1.take_profit_pips } else { 0.0 },
-        if !pips_results.is_empty() { pips_results[0].1.stop_loss_pips } else { 0.0 },
-        if !pips_results.is_empty() { pips_results[0].1.win_rate } else { 0.0 },
-        if !pips_results.is_empty() { pips_results[0].1.profit_factor } else { 0.0 },
-        if !pips_results.is_empty() { pips_results[0].1.net_pips } else { 0.0 },
-        
+        if !pips_results.is_empty() {
+            &pips_results[0].0
+        } else {
+            "N/A"
+        },
+        if !pips_results.is_empty() {
+            &pips_results[0].1.timeframe
+        } else {
+            "N/A"
+        },
+        if !pips_results.is_empty() {
+            pips_results[0].1.take_profit_pips
+        } else {
+            0.0
+        },
+        if !pips_results.is_empty() {
+            pips_results[0].1.stop_loss_pips
+        } else {
+            0.0
+        },
+        if !pips_results.is_empty() {
+            pips_results[0].1.win_rate
+        } else {
+            0.0
+        },
+        if !pips_results.is_empty() {
+            pips_results[0].1.profit_factor
+        } else {
+            0.0
+        },
+        if !pips_results.is_empty() {
+            pips_results[0].1.net_pips
+        } else {
+            0.0
+        },
         // Win rate best
-        if !winrate_results.is_empty() { &winrate_results[0].0 } else { "N/A" },
-        if !winrate_results.is_empty() { &winrate_results[0].1.timeframe } else { "N/A" },
-        if !winrate_results.is_empty() { winrate_results[0].1.take_profit_pips } else { 0.0 },
-        if !winrate_results.is_empty() { winrate_results[0].1.stop_loss_pips } else { 0.0 },
-        if !winrate_results.is_empty() { winrate_results[0].1.win_rate } else { 0.0 },
-        if !winrate_results.is_empty() { winrate_results[0].1.profit_factor } else { 0.0 },
-        if !winrate_results.is_empty() { winrate_results[0].1.net_pips } else { 0.0 },
-        
+        if !winrate_results.is_empty() {
+            &winrate_results[0].0
+        } else {
+            "N/A"
+        },
+        if !winrate_results.is_empty() {
+            &winrate_results[0].1.timeframe
+        } else {
+            "N/A"
+        },
+        if !winrate_results.is_empty() {
+            winrate_results[0].1.take_profit_pips
+        } else {
+            0.0
+        },
+        if !winrate_results.is_empty() {
+            winrate_results[0].1.stop_loss_pips
+        } else {
+            0.0
+        },
+        if !winrate_results.is_empty() {
+            winrate_results[0].1.win_rate
+        } else {
+            0.0
+        },
+        if !winrate_results.is_empty() {
+            winrate_results[0].1.profit_factor
+        } else {
+            0.0
+        },
+        if !winrate_results.is_empty() {
+            winrate_results[0].1.net_pips
+        } else {
+            0.0
+        },
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S")
     )?;
-    
+
     println!("Summary report generated: {}", summary_filename);
-    
+
     Ok(())
 }
