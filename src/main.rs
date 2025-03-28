@@ -7,7 +7,8 @@ use env_logger;
 mod detect; // Declares detect module
 mod patterns; // Declares patterns module
 pub mod trades; 
-pub mod trading; 
+pub mod trading;
+mod backtest;
 
 // Echo endpoint structures
 #[derive(serde::Serialize)]
@@ -42,15 +43,17 @@ async fn health_check() -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    env_logger::init();
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     let host = "127.0.0.1";
     let port = 8080;
 
-    println!("Application is running on http://{}:{}", host, port);
+    log::info!("Starting server on http://{}:{}", host, port);
     println!("Available endpoints:");
     println!("  GET http://{}:{}/analyze", host, port);
     println!("  GET http://{}:{}/echo", host, port);
     println!("  GET http://{}:{}/health", host, port);
+    println!("  GET http://{}:{}/backtest", host, port);
+    log::info!("  POST /backtest");
 
     HttpServer::new(|| {
         let cors = Cors::default()
@@ -64,6 +67,7 @@ async fn main() -> std::io::Result<()> {
             .route("/analyze", web::get().to(detect::detect_patterns)) // Use detect module
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
+            .route("/backtest", web::post().to(backtest::run_backtest))
     })
     .bind((host, port))?
     .run()
