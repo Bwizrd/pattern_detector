@@ -51,6 +51,8 @@ pub struct ApiTradeSummary {
     pub lot_size: f64,
     pub stop_loss_pips: f64,
     pub take_profit_pips: f64,
+    pub winning_trades: usize,
+    pub losing_trades: usize,
 }
 
 // Updated From impl to accept params
@@ -80,6 +82,8 @@ impl From<(&TradeSummary, f64, f64, f64, f64, f64, f64)> for ApiTradeSummary {
             lot_size: lot_size,
             stop_loss_pips: sl_pips,
             take_profit_pips: tp_pips,
+            winning_trades: summary.winning_trades,
+            losing_trades: summary.losing_trades,
         }
     }
 }
