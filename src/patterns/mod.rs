@@ -53,6 +53,10 @@ mod rally;
 mod supply_demand;
 mod supply_demand_zone_simple;
 mod supply_zone; // Add new module
+mod ma_crossover; // Add new module
+mod specific_time_entry; // Add declaration
+// ... other modules ...
+
 
 use crate::trades::{Trade, TradeConfig, TradeSummary};
 use crate::trading::TradeExecutor;
@@ -72,7 +76,8 @@ pub use supply_demand_zone_simple::SimpleSupplyDemandZoneRecognizer;
 pub use supply_zone::SupplyZoneRecognizer;
 pub use FiftyPercentBeforeBigBar::FiftyPercentBeforeBigBarRecognizer;
 pub use FiftyPercentBodyCandle::FiftyPercentBodyCandleRecognizer;
-
+pub use ma_crossover::PriceSmaCrossRecognizer;
+pub use specific_time_entry::SpecificTimeEntryRecognizer; 
 // Array of all recognizers - use later when we combine patterns
 // pub const ALL_RECOGNIZERS: &[&dyn PatternRecognizer] = &[
 //     &DemandZoneRecognizer,

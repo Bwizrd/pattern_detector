@@ -9,11 +9,7 @@ use std::io::Cursor;
 
 // Import from crate root
 use crate::patterns::{
-    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer,
-    ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer,
-    EnhancedSupplyDemandZoneRecognizer, FiftyPercentBeforeBigBarRecognizer,
-    FiftyPercentBodyCandleRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer,
-    PinBarRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, SupplyZoneRecognizer,
+    BigBarRecognizer, BullishEngulfingRecognizer, CombinedDemandRecognizer, ConsolidationRecognizer, DemandMoveAwayRecognizer, DropBaseRallyRecognizer, EnhancedSupplyDemandZoneRecognizer, FiftyPercentBeforeBigBarRecognizer, FiftyPercentBodyCandleRecognizer, FlexibleDemandZoneRecognizer, PatternRecognizer, PinBarRecognizer, PriceSmaCrossRecognizer, RallyRecognizer, SimpleSupplyDemandZoneRecognizer, SpecificTimeEntryRecognizer, SupplyZoneRecognizer
 };
 
 // Import trading modules
@@ -244,6 +240,14 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
             } else {
                 pattern_result
             }
+        }
+        "price_sma_cross" => {
+            let recognizer = PriceSmaCrossRecognizer::default();
+            recognizer.detect(&candles) // Call detect() here
+        }
+        "specific_time_entry" => {
+            let recognizer = SpecificTimeEntryRecognizer::default();
+            recognizer.detect(&candles) // Call detect() here
         }
         "consolidation_zone" => {
             let recognizer = ConsolidationRecognizer::default();

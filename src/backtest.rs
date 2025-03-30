@@ -14,7 +14,10 @@ use std::io::Cursor;
 // --- Imports from your project ---
 // Adjust paths if necessary based on your module structure (`crate::` assumes they are accessible from the root)
 use crate::patterns::{
-    FiftyPercentBeforeBigBarRecognizer, // Example recognizer
+    FiftyPercentBeforeBigBarRecognizer,
+    PriceSmaCrossRecognizer,
+    SpecificTimeEntryRecognizer,
+     // Example recognizer
     PatternRecognizer,                  // The trait
                                         // Add imports for other recognizers you want to support here
 };
@@ -286,6 +289,11 @@ pub async fn run_backtest(
         "fifty_percent_before_big_bar" | "50% Body Before Big Bar" => {
             Box::new(FiftyPercentBeforeBigBarRecognizer::default())
         }
+        "price_sma_cross" => {
+            Box::new(PriceSmaCrossRecognizer::default())
+        },
+        "specific_time_entry" => Box::new(SpecificTimeEntryRecognizer::default()),
+        
         // Add other patterns here...
         _ => {
             let error_msg = format!("Unsupported pattern for backtesting: {}", pattern_name);
@@ -293,6 +301,7 @@ pub async fn run_backtest(
             return Err(ErrorBadRequest(error_msg));
         }
     };
+
     log::info!("Using pattern recognizer: {}", pattern_name);
 
     // --- 2. Run Pattern Detection ---
