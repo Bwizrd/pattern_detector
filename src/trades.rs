@@ -71,15 +71,12 @@ impl Trade {
         pattern_type: String,
         direction: TradeDirection,
         entry_candle: &CandleData,
+        entry_price: f64,
         lot_size: f64,
         stop_loss: f64,
         take_profit: f64,
         candlestick_idx: usize,
     ) -> Self {
-        let entry_price = match direction {
-            TradeDirection::Long => entry_candle.close,
-            TradeDirection::Short => entry_candle.close,
-        };
         
         let id = format!("{}-{}-{:?}", pattern_type, entry_candle.time, direction);
         
