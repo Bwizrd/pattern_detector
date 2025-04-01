@@ -1,3 +1,4 @@
+// src/patterns/FiftyPercentBeforeBigBar.rs
 use crate::detect::CandleData;
 use crate::patterns::PatternRecognizer;
 use crate::trading::TradeExecutor;
@@ -141,6 +142,8 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                     "zone_high": zone_high,
                     "zone_low": zone_low,
                     "fifty_percent_line": (zone_high + zone_low) / 2.0,
+                    "start_idx": i, // Add index i
+                    "end_idx": zone_end_index, // Add calculated end index
                     "detection_method": method_text,
                     "quality_score": 75.0,
                     "strength": "Strong",
@@ -193,6 +196,8 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                     "zone_low": zone_low_extended,
                     "fifty_percent_line": (zone_high + zone_low_extended) / 2.0,
                     "detection_method": method_text,
+                    "start_idx": i, // Add index i
+                    "end_idx": zone_end_index, // Add calculated end index
                     "quality_score": 75.0,
                     "strength": "Strong",
                     "extended": self.proximal_extension_percent > 0.0,
