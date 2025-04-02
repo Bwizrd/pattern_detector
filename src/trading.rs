@@ -119,247 +119,180 @@ impl TradeExecutor {
             self.process_trades_with_hourly_data(trades, hourly_candles);
         }
     }
+
     fn generate_fifty_percent_zone_trades(
         &self,
         pattern_data: &Value,
-        candles: &[CandleData], // Still using primary candles here
+        candles: &[CandleData], // Using primary candles
         initial_trades: &mut Vec<Trade>,
     ) {
-        log::info!("EXECUTOR: Generating FiftyPercent zone trades (Entry @ Proximal Line)..."); // Updated log
+        log::info!("EXECUTOR: Generating FiftyPercent zone trades (Entry @ Proximal Line, Corrected Loop Start)...");
         let mut zone_trade_counts: HashMap<String, usize> = HashMap::new();
-
-        // --- Helper to get pip size (assuming it exists or add it) ---
-        // TODO: Ensure get_pip_size() is available or implement it based on symbol/price
-        let get_pip_size = |price: f64| -> f64 {
-            if price > 20.0 {
-                0.01
-            } else {
-                0.0001
-            } // Basic assumption
-        };
-        // ---
+        let get_pip_size = |price: f64| -> f64 { if price > 20.0 { 0.01 } else { 0.0001 } };
 
         if let Some(price_data) = pattern_data.get("data").and_then(|d| d.get("price")) {
             // --- Process DEMAND zones ---
-            if let Some(zones_array) = price_data
-                .get("demand_zones")
-                .and_then(|dz| dz.get("zones"))
-                .and_then(|z| z.as_array())
-            {
+            if let Some(zones_array) = price_data.get("demand_zones").and_then(|dz| dz.get("zones")).and_then(|z| z.as_array()) {
                 for zone in zones_array {
+                    // Extract needed values, ignore the graphical end_idx for trade logic
                     if let (
                         Some(proximal_line), // zone_high for demand
                         Some(distal_line),   // zone_low for demand
-                        Some(start_idx_u64),
-                        Some(end_idx_u64),
-                        Some(detection_method),
+                        Some(start_idx_u64), // Index of the 50% candle
+                        Some(detection_method)
                     ) = (
                         zone["zone_high"].as_f64(),
                         zone["zone_low"].as_f64(),
                         zone["start_idx"].as_u64(),
-                        zone["end_idx"].as_u64(),
-                        zone["detection_method"].as_str(),
+                        zone["detection_method"].as_str()
                     ) {
-                        let end_idx_usize = end_idx_u64 as usize;
-                        if end_idx_usize >= candles.len() {
-                            continue;
+                        // Determine the STARTING index for the trade search loop
+                        let start_idx_usize = start_idx_u64 as usize;
+                        // The pattern consists of the 50% candle (start_idx_usize) and the big bar (start_idx_usize + 1).
+                        // Start searching for entry from the candle immediately AFTER the big bar.
+                        let loop_start_index = start_idx_usize + 2;
+
+                        // Check if the loop start index is valid
+                        if loop_start_index >= candles.len() {
+                            log::debug!("Demand Zone {}-{}: Loop start index {} is out of bounds ({} candles). Cannot check for entry.", detection_method, start_idx_u64, loop_start_index, candles.len());
+                            continue; // Skip this zone if no candles exist after pattern formation
                         }
 
-                        let zone_id = format!("demand-{}-{}", detection_method, start_idx_u64); // Prefix type
+                        let zone_id = format!("demand-{}-{}", detection_method, start_idx_u64);
                         let pattern_type = format!("fifty_percent_demand_{}", detection_method);
                         log::debug!(
-                            "Checking Demand Zone {} (ends idx {}), Proximal: {:.5}",
-                            zone_id,
-                            end_idx_usize,
-                            proximal_line
+                            "Checking Demand Zone {} (Pattern Start Idx {}), Proximal: {:.5}. Loop from index {}.",
+                            zone_id, start_idx_usize, proximal_line, loop_start_index
                         );
 
                         let mut entered_this_zone = false; // Track entry per specific zone instance
 
-                        for i in end_idx_usize..candles.len() {
-                            // Start loop from zone end
+                        // --- CORRECTED LOOP START ---
+                        for i in loop_start_index..candles.len() {
                             let current_candle = &candles[i];
-                            let current_zone_trades =
-                                zone_trade_counts.entry(zone_id.clone()).or_insert(0);
+                            let current_zone_trades = zone_trade_counts.entry(zone_id.clone()).or_insert(0);
 
-                            if *current_zone_trades >= self.config.max_trades_per_pattern {
-                                break;
-                            }
+                            if *current_zone_trades >= self.config.max_trades_per_pattern { break; }
 
                             // Entry condition: Low touches or crosses proximal line
                             if !entered_this_zone && current_candle.low <= proximal_line {
-                                log::info!(
-                                    "!!! DEMAND ZONE TOUCHED !!! Zone ID: {}, Candle Idx: {}",
-                                    zone_id,
-                                    i
-                                );
+                                log::info!("!!! DEMAND ZONE TOUCHED !!! Zone ID: {}, Candle Idx: {} ({})", zone_id, i, current_candle.time);
 
-                                // --- Set Entry Price to Proximal Line ---
-                                let entry_price = proximal_line;
+                                let entry_price = proximal_line; // Use proximal line for entry price
                                 let pip_size = get_pip_size(entry_price);
 
-                                // --- Calculate SL/TP based on entry_price (proximal_line) ---
-                                // // SL: Below distal line + buffer
-                                // let sl_buffer_pips = 2.0; // Example buffer
-                                // let stop_loss = distal_line - sl_buffer_pips * pip_size;
+                                // --- Calculate SL/TP using config pips from entry_price ---
+                                let stop_loss = entry_price - (self.config.default_stop_loss_pips * pip_size);
+                                let take_profit = entry_price + (self.config.default_take_profit_pips * pip_size);
+                                // --- End SL/TP Calc ---
 
-                                // // TP: Based on Risk:Reward
-                                // let risk_pips = (entry_price - stop_loss).abs() / pip_size;
-                                // if risk_pips <= 0.0 {
-                                //     log::warn!("Zone {}: Zero/negative risk (Entry: {:.5}, SL: {:.5}). Skipping trade.", zone_id, entry_price, stop_loss);
-                                //     entered_this_zone = true; // Prevent re-entry attempts on this touch
-                                //     continue; // Skip this iteration
-                                // }
-                                // let rr_ratio = self.config.default_take_profit_pips / self.config.default_stop_loss_pips; // Use config ratio
-                                // let reward_pips = risk_pips * rr_ratio;
-                                // let take_profit = entry_price + reward_pips * pip_size;
-                                // // --- End SL/TP Calc ---
-
-                                // --- CORRECTED SL/TP Calculation ---
-                                // Use pip values directly from config
-                                let stop_loss =
-                                    entry_price - (self.config.default_stop_loss_pips * pip_size);
-                                let take_profit =
-                                    entry_price + (self.config.default_take_profit_pips * pip_size);
-                                // --- End SL/TP ---
-
+                                // Create trade using data from the touching candle (current_candle)
                                 let trade = Trade::new(
                                     zone_id.clone(),
                                     pattern_type.clone(),
                                     TradeDirection::Long,
-                                    current_candle, // Candle that touched
-                                    entry_price,    // << Use proximal line price
+                                    current_candle, // Pass the candle itself
+                                    entry_price,    // Pass the calculated entry price (proximal line)
                                     self.config.lot_size,
                                     stop_loss,
                                     take_profit,
-                                    i, // Index of touching candle
+                                    i,              // Pass the index of the touching candle
                                 );
                                 log::info!(
-                                    "EXECUTOR (50% Demand): Generated Long Trade ID {} at index {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
-                                    trade.id, i, entry_price, stop_loss, take_profit
+                                    "EXECUTOR (50% Demand): Generated Long Trade ID {} at index {}, EntryTime: {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
+                                    trade.id, i, trade.entry_time, trade.entry_price, trade.stop_loss, trade.take_profit
                                 );
                                 initial_trades.push(trade);
-                                entered_this_zone = true; // Mark entered for this zone touch
-                                                          // Optional: break; // Use break if only ONE entry ever per zone instance is desired
+                                entered_this_zone = true; // Mark as entered for this touch
+                                break; // Stop after first touch for this zone check iteration
                             }
-                            // Optional: Logic to reset entered_this_zone if price moves far away?
                         } // End candle loop for zone
                     } else {
-                        log::warn!("Skipping demand zone due to missing data: {:?}", zone);
+                        log::warn!("Skipping demand zone due to missing critical data: {:?}", zone);
                     }
-                } // End loop through zones
+                } // End loop through zones array
             } // --- End Demand ---
 
-            // --- Process SUPPLY zones ---
-            if let Some(zones_array) = price_data
-                .get("supply_zones")
-                .and_then(|sz| sz.get("zones"))
-                .and_then(|z| z.as_array())
-            {
-                for zone in zones_array {
-                    if let (
-                        Some(proximal_line), // zone_low for supply
-                        Some(distal_line),   // zone_high for supply
-                        Some(start_idx_u64),
-                        Some(end_idx_u64),
-                        Some(detection_method),
-                    ) = (
-                        zone["zone_low"].as_f64(),
-                        zone["zone_high"].as_f64(),
-                        zone["start_idx"].as_u64(),
-                        zone["end_idx"].as_u64(),
-                        zone["detection_method"].as_str(),
-                    ) {
-                        let end_idx_usize = end_idx_u64 as usize;
-                        if end_idx_usize >= candles.len() {
+             // --- Process SUPPLY zones ---
+            if let Some(zones_array) = price_data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
+                 for zone in zones_array {
+                     // Extract needed values, ignore graphical end_idx
+                     if let (
+                         Some(proximal_line), // zone_low for supply
+                         Some(distal_line),   // zone_high for supply
+                         Some(start_idx_u64), // Index of the 50% candle
+                         Some(detection_method)
+                     ) = (
+                         zone["zone_low"].as_f64(),
+                         zone["zone_high"].as_f64(),
+                         zone["start_idx"].as_u64(),
+                         zone["detection_method"].as_str()
+                     ) {
+                         // Determine the STARTING index for the trade search loop
+                         let start_idx_usize = start_idx_u64 as usize;
+                         // Start searching for entry from the candle immediately AFTER the big bar (at start_idx_usize + 1).
+                         let loop_start_index = start_idx_usize + 2;
+
+                         if loop_start_index >= candles.len() {
+                            log::debug!("Supply Zone {}-{}: Loop start index {} is out of bounds ({} candles). Cannot check for entry.", detection_method, start_idx_u64, loop_start_index, candles.len());
                             continue;
-                        }
+                         }
 
-                        let zone_id = format!("supply-{}-{}", detection_method, start_idx_u64); // Prefix type
-                        let pattern_type = format!("fifty_percent_supply_{}", detection_method);
-                        log::debug!(
-                            "Checking Supply Zone {} (ends idx {}), Proximal: {:.5}",
-                            zone_id,
-                            end_idx_usize,
-                            proximal_line
-                        );
+                         let zone_id = format!("supply-{}-{}", detection_method, start_idx_u64);
+                         let pattern_type = format!("fifty_percent_supply_{}", detection_method);
+                         log::debug!(
+                             "Checking Supply Zone {} (Pattern Start Idx {}), Proximal: {:.5}. Loop from index {}.",
+                             zone_id, start_idx_usize, proximal_line, loop_start_index
+                         );
 
-                        let mut entered_this_zone = false;
+                         let mut entered_this_zone = false;
 
-                        for i in end_idx_usize..candles.len() {
-                            // Start loop from zone end
-                            let current_candle = &candles[i];
-                            let current_zone_trades =
-                                zone_trade_counts.entry(zone_id.clone()).or_insert(0);
+                         // --- CORRECTED LOOP START ---
+                         for i in loop_start_index..candles.len() {
+                              let current_candle = &candles[i];
+                              let current_zone_trades = zone_trade_counts.entry(zone_id.clone()).or_insert(0);
+                              if *current_zone_trades >= self.config.max_trades_per_pattern { break; }
 
-                            if *current_zone_trades >= self.config.max_trades_per_pattern {
-                                break;
-                            }
+                              // Entry condition: High touches or crosses proximal line
+                              if !entered_this_zone && current_candle.high >= proximal_line {
+                                   log::info!("!!! SUPPLY ZONE TOUCHED !!! Zone ID: {}, Candle Idx: {} ({})", zone_id, i, current_candle.time);
 
-                            // Entry condition: High touches or crosses proximal line
-                            if !entered_this_zone && current_candle.high >= proximal_line {
-                                log::info!(
-                                    "!!! SUPPLY ZONE TOUCHED !!! Zone ID: {}, Candle Idx: {}",
-                                    zone_id,
-                                    i
-                                );
+                                   let entry_price = proximal_line; // Use proximal line for entry price
+                                   let pip_size = get_pip_size(entry_price);
 
-                                // --- Set Entry Price to Proximal Line ---
-                                let entry_price = proximal_line;
-                                let pip_size = get_pip_size(entry_price);
+                                   // --- Calculate SL/TP using config pips ---
+                                   let stop_loss = entry_price + (self.config.default_stop_loss_pips * pip_size);
+                                   let take_profit = entry_price - (self.config.default_take_profit_pips * pip_size);
+                                   // --- End SL/TP Calc ---
 
-                                // --- Calculate SL/TP based on entry_price (proximal_line) ---
-                                // SL: Above distal line + buffer
-                                // let sl_buffer_pips = 2.0; // Example buffer
-                                // let stop_loss = distal_line + sl_buffer_pips * pip_size;
-
-                                // // TP: Based on Risk:Reward
-                                // let risk_pips = (stop_loss - entry_price).abs() / pip_size;
-                                // if risk_pips <= 0.0 {
-                                //     log::warn!("Zone {}: Zero/negative risk (Entry: {:.5}, SL: {:.5}). Skipping trade.", zone_id, entry_price, stop_loss);
-                                //     entered_this_zone = true; // Prevent re-entry attempts on this touch
-                                //     continue; // Skip this iteration
-                                // }
-                                // let rr_ratio = self.config.default_take_profit_pips
-                                //     / self.config.default_stop_loss_pips;
-                                // let reward_pips = risk_pips * rr_ratio;
-                                // let take_profit = entry_price - reward_pips * pip_size;
-                                // // --- End SL/TP Calc ---
-                                let entry_price = proximal_line;
-                                let pip_size = get_pip_size(entry_price);
-                        
-                                // --- CORRECTED SL/TP Calculation ---
-                                // Use pip values directly from config
-                                let stop_loss = entry_price + (self.config.default_stop_loss_pips * pip_size);
-                                let take_profit = entry_price - (self.config.default_take_profit_pips * pip_size);
-                                // --- End SL/TP ---
-
-                                let trade = Trade::new(
-                                    zone_id.clone(),
-                                    pattern_type.clone(),
-                                    TradeDirection::Short,
-                                    current_candle, // Candle that touched
-                                    entry_price,    // << Use proximal line price
-                                    self.config.lot_size,
-                                    stop_loss,
-                                    take_profit,
-                                    i, // Index of touching candle
-                                );
-                                log::info!(
-                                    "EXECUTOR (50% Supply): Generated Short Trade ID {} at index {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
-                                    trade.id, i, entry_price, stop_loss, take_profit
-                                );
-                                initial_trades.push(trade);
-                                entered_this_zone = true; // Mark entered for this zone touch
-                                                          // Optional: break; // Use break if only ONE entry ever per zone instance is desired
-                            }
-                            // Optional: Logic to reset entered_this_zone if price moves far away?
-                        } // End candle loop
-                    } else {
-                        log::warn!("Skipping supply zone due to missing data: {:?}", zone);
-                    }
-                } // End loop through zones
+                                   // Create trade using data from the touching candle (current_candle)
+                                   let trade = Trade::new(
+                                        zone_id.clone(),
+                                        pattern_type.clone(),
+                                        TradeDirection::Short,
+                                        current_candle, // Pass the candle itself
+                                        entry_price,    // Pass the calculated entry price (proximal line)
+                                        self.config.lot_size,
+                                        stop_loss,
+                                        take_profit,
+                                        i,              // Pass the index of the touching candle
+                                   );
+                                   log::info!(
+                                        "EXECUTOR (50% Supply): Generated Short Trade ID {} at index {}, EntryTime: {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
+                                        trade.id, i, trade.entry_time, trade.entry_price, trade.stop_loss, trade.take_profit
+                                   );
+                                   initial_trades.push(trade);
+                                   entered_this_zone = true; // Mark as entered for this touch
+                                   break; // Stop after first touch for this zone check iteration
+                              }
+                         } // End candle loop
+                     } else {
+                        log::warn!("Skipping supply zone due to missing critical data: {:?}", zone);
+                     }
+                 } // End loop through zones array
             } // --- End Supply ---
+        } else {
+            log::warn!("No 'price' data found in pattern data for fifty_percent_before_big_bar.");
         }
     }
 
