@@ -307,6 +307,7 @@ async fn run_optimization() -> Result<(), Box<dyn std::error::Error>> {
     generate_report(
         &results_vec, 
         &search_config,
+        &search_config.symbol, 
         start_datetime,
         end_datetime,
         total_days,

@@ -1,6 +1,5 @@
 // tests/optimization/multi_currency.rs
 use super::data_loader::load_candles;
-use super::html_reporter;
 use super::parameter_generator::generate_parameter_grid;
 use crate::OptimizationResult;
 use crate::ParameterSearchConfig;
@@ -328,6 +327,8 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                     let _ = task.await;
                 }
 
+                let symbol = search_config.symbol.clone();
+
                 // Generate individual currency report
                 let results_guard = currency_results.lock().await;
                 if !results_guard.is_empty() {
@@ -335,6 +336,7 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                     crate::html_reporter::generate_report(
                         &results_guard,
                         &search_config,
+                        &symbol,
                         start_datetime,
                         end_datetime,
                         total_days,

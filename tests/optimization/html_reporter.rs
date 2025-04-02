@@ -9,12 +9,13 @@ use crate::{OptimizationResult, ParameterSearchConfig};
 pub fn generate_report(
     results: &[OptimizationResult],
     config: &ParameterSearchConfig,
+    symbol: &str,  
     start_datetime: DateTime<Utc>,
     end_datetime: DateTime<Utc>,
     total_days: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if results.is_empty() {
-        println!("No results to report");
+        println!("No results to report for symbol: {}", symbol);
         return Ok(());
     }
 
@@ -35,8 +36,9 @@ pub fn generate_report(
 
     // Create CSV report
     let csv_filename = format!(
-        "{}/optimization_results_{}.csv",
+        "{}/optimization_results_{}_{}.csv", // <<< ADDED _{}_
         report_dir,
+        symbol.replace("_SB", ""), // Add symbol (optionally remove suffix)
         chrono::Utc::now().format("%H%M%S")
     );
     let mut csv_file = File::create(&csv_filename)?;
@@ -67,9 +69,10 @@ pub fn generate_report(
     std::fs::create_dir_all(&report_dir)?;
 
     let summary_filename = format!(
-        "{}/optimization_report_{}.html",
+        "{}/optimization_report_{}_{}.html", // <<< ADDED _{}_
         report_dir,
-        chrono::Utc::now().format("%H%M%S")
+        symbol.replace("_SB", ""), // Add symbol (optionally remove suffix)
+        chrono::Utc::now().format("%Y%m%d_%H%M%S")
     );
     let mut html_file = File::create(&summary_filename)?;
 
@@ -121,6 +124,7 @@ pub fn generate_report(
         &winrate_sorted,
         &csv_filename,
         &summary_filename,
+        symbol,
     );
 
     Ok(())
@@ -549,6 +553,7 @@ fn print_console_summary(
     winrate_sorted: &[OptimizationResult],
     csv_filename: &str,
     html_filename: &str,
+    symbol: &str,
 ) {
     println!("\nOptimization Complete");
     println!("Report files: {} and {}", csv_filename, html_filename);
