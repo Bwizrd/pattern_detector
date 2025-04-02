@@ -52,6 +52,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     let bucket = std::env::var("INFLUXDB_BUCKET").expect("INFLUXDB_BUCKET must be set");
     let start_time = std::env::var("START_TIME").expect("START_TIME must be set");
     let end_time = std::env::var("END_TIME").expect("END_TIME must be set");
+    let symbol = std::env::var("SYMBOL").unwrap_or("EURUSD_SB".to_string());
 
     // Date range for reporting
     let start_datetime = DateTime::parse_from_rfc3339(&start_time)
@@ -64,9 +65,17 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
 
     let total_days = (end_datetime - start_datetime).num_days();
 
+    let skip_1m_timeframe = std::env::var("SKIP_1M_TIMEFRAME")
+        .map(|val| val.eq_ignore_ascii_case("true")) // Check if string is "true" (case-insensitive)
+        .unwrap_or(false); // Default to false if not set or not "true"
+
+    if skip_1m_timeframe {
+        println!("SKIP_1M_TIMEFRAME=true detected. Skipping 1m timeframe for optimization.");
+    }
+
     // Define parameter search configuration - EURUSD only with fixed lot size
-    let search_config = ParameterSearchConfig {
-        symbol: "EURUSD_SB".to_string(),
+    let mut search_config = ParameterSearchConfig {
+        symbol: symbol.clone(),
         timeframes: vec![
             "1m".to_string(),
             "5m".to_string(),
@@ -82,6 +91,11 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
         max_iterations: 10,              // Maximum search iterations
     };
 
+    if skip_1m_timeframe {
+        search_config.timeframes.retain(|tf| tf != "1m");
+        println!("Removed '1m' from timeframes list.");
+    }
+
     // Create shared result storage using a tokio mutex
     let results = Arc::new(TokioMutex::new(Vec::<OptimizationResult>::new()));
     let mut tasks = Vec::new();
@@ -92,9 +106,10 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     println!(
-        "Starting optimization for {} across {} timeframes",
+        "Starting optimization for {} across {} timeframes: {:?}", // Log the actual list
         search_config.symbol,
-        search_config.timeframes.len()
+        search_config.timeframes.len(),
+        search_config.timeframes // Log the actual list being used
     );
 
     // Spawn tasks for each timeframe
@@ -111,6 +126,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
         let results = Arc::clone(&results);
         let candle_cache = Arc::clone(&candle_cache);
         let search_config = search_config.clone();
+
 
         // Spawn a task for this timeframe
         let task = task::spawn(async move {
@@ -351,7 +367,8 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate HTML report
     let html_filename = format!(
-        "optimization_report_{}.html",
+        "{}/optimization_report_{}.html",
+        report_dir,
         chrono::Utc::now().format("%Y%m%d_%H%M%S")
     );
     let mut html_file = File::create(&html_filename)?;
