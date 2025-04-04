@@ -9,6 +9,7 @@ mod patterns; // Declares patterns module
 pub mod trades; 
 pub mod trading;
 mod backtest;
+mod influx_fetcher; 
 
 // Echo endpoint structures
 #[derive(serde::Serialize)]
@@ -51,9 +52,18 @@ async fn main() -> std::io::Result<()> {
     println!("Available endpoints:");
     println!("  GET http://{}:{}/analyze", host, port);
     println!("  GET http://{}:{}/echo", host, port);
+    println!("  GET http://{}:{}/testDataRequest", host, port);
     println!("  GET http://{}:{}/health", host, port);
     println!("  GET http://{}:{}/backtest", host, port);
     log::info!("  POST /backtest");
+
+    // --- Optional: Call the direct test function once on startup ---
+    // This runs the fetcher outside of an HTTP request context for comparison
+    // You might remove this after initial testing.
+    // log::info!("--- Running direct data fetch test on startup ---");
+    // influx_fetcher::log_hardcoded_query_results().await;
+    // log::info!("--- Direct data fetch test complete ---");
+    // --- End Optional direct call ---
 
     HttpServer::new(|| {
         let cors = Cors::default()
@@ -65,6 +75,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(cors)
             .route("/analyze", web::get().to(detect::detect_patterns)) // Use detect module
+            .route("/testDataRequest", web::get().to(influx_fetcher::test_data_request_handler)) 
+            .route("/active-zones", web::get().to(detect::get_active_zones_handler)) 
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
             .route("/backtest", web::post().to(backtest::run_backtest))
