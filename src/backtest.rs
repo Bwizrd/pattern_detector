@@ -4,22 +4,21 @@ use crate::detect::CandleData; // Use CandleData defined in detect.rs
 use actix_web::{
     error::ErrorBadRequest, error::ErrorInternalServerError, web, HttpResponse, Responder,
 };
+// Import necessary chrono types
 use chrono::{DateTime, Utc};
 use csv::ReaderBuilder;
 use dotenv::dotenv;
 use reqwest;
 use serde::{Deserialize, Serialize};
+// Remove BTreeMap if no longer needed elsewhere in this file
+// use std::collections::BTreeMap;
 use std::io::Cursor;
 
 // --- Imports from your project ---
 // Adjust paths if necessary based on your module structure (`crate::` assumes they are accessible from the root)
 use crate::patterns::{
-    FiftyPercentBeforeBigBarRecognizer,
-    PriceSmaCrossRecognizer,
-    SpecificTimeEntryRecognizer,
-     // Example recognizer
-    PatternRecognizer,                  // The trait
-                                        // Add imports for other recognizers you want to support here
+    FiftyPercentBeforeBigBarRecognizer, PriceSmaCrossRecognizer, SpecificTimeEntryRecognizer,
+    PatternRecognizer, // The trait
 };
 use crate::trading::TradeExecutor; // Correct path for TradeExecutor
 use crate::trades::{Trade, TradeConfig, TradeSummary}; // Assuming these are in src/trades.rs
@@ -44,52 +43,74 @@ pub struct BacktestParams {
 pub struct ApiTradeSummary {
     pub total_trades: usize,
     pub win_rate: f64,
-    pub total_profit_loss: f64,
+    pub total_profit_loss: f64, // Represents net pips in this simplified version
     pub profit_factor: f64,
     pub net_pips: f64,
     pub avg_pips_per_trade: f64,
     pub total_winning_pips: f64,
     pub total_losing_pips: f64,
-    // Add parameters used
     pub lot_size: f64,
     pub stop_loss_pips: f64,
     pub take_profit_pips: f64,
     pub winning_trades: usize,
     pub losing_trades: usize,
+    // Added field for average pips per day
+    pub avg_pips_per_day: f64,
+    pub avg_total_pl_per_day: f64,
+    // Removed: daily_profit_loss_pips field
 }
 
-// Updated From impl to accept params
-impl From<(&TradeSummary, f64, f64, f64, f64, f64, f64)> for ApiTradeSummary {
-    fn from(data: (&TradeSummary, f64, f64, f64, f64, f64, f64)) -> Self {
-        let (summary, net_pips, total_winning_pips, total_losing_pips, lot_size, sl_pips, tp_pips) = data;
+// Updated From impl signature to accept total_days (i64)
+// Tuple now: (&TradeSummary, net_pips, win_pips, lose_pips, lot_size, sl_pips, tp_pips, total_days)
+impl From<(&TradeSummary, f64, f64, f64, f64, f64, f64, i64)> for ApiTradeSummary {
+    fn from(data: (&TradeSummary, f64, f64, f64, f64, f64, f64, i64)) -> Self {
+        // Destructure the tuple including total_days
+        let (summary, net_pips, total_winning_pips, total_losing_pips, lot_size, sl_pips, tp_pips, total_days) = data;
 
-        let avg_pips = if summary.total_trades > 0 {
+        let avg_pips_per_trade = if summary.total_trades > 0 {
             net_pips / summary.total_trades as f64
         } else {
             0.0
         };
-        let total_profit_loss_rounded = round_dp(summary.total_profit_loss, 2);
-        let win_rate_rounded = round_dp(summary.win_rate, 2);
-        let profit_factor_rounded = round_dp(summary.profit_factor, 2);
+
+        // Calculate average pips per day
+        let avg_pips_per_day = if total_days > 0 {
+            net_pips / total_days as f64
+        } else {
+            0.0 // Avoid division by zero if backtest is less than a day (or total_days is 0)
+        };
+
+        // *** CALCULATE AVERAGE BASED ON summary.total_profit_loss ***
+        // This uses the value directly from the TradeSummary struct, whatever it represents (pips or currency).
+        let avg_total_pl_per_day = if total_days > 0 {
+            // Use summary.total_profit_loss directly from the struct passed in
+           summary.total_profit_loss / total_days as f64
+       } else {
+           0.0
+       };
 
         ApiTradeSummary {
             total_trades: summary.total_trades,
-            win_rate: win_rate_rounded,
-            total_profit_loss: total_profit_loss_rounded,
-            profit_factor: profit_factor_rounded,
-            net_pips: net_pips,                        // Already rounded
-            avg_pips_per_trade: round_dp(avg_pips, 2), // Round avg pips
-            total_winning_pips: total_winning_pips,    // Already rounded
-            total_losing_pips: total_losing_pips,      // Already rounded
-            // Include params
+            win_rate: round_dp(summary.win_rate, 2),
+            // Setting total_profit_loss based on net_pips for consistency here
+            total_profit_loss: round_dp(net_pips, 2),
+            profit_factor: round_dp(summary.profit_factor, 2),
+            net_pips: net_pips, // Already rounded in calculate_pips
+            avg_pips_per_trade: round_dp(avg_pips_per_trade, 2),
+            total_winning_pips: total_winning_pips, // Already rounded
+            total_losing_pips: total_losing_pips, // Already rounded
             lot_size: lot_size,
             stop_loss_pips: sl_pips,
             take_profit_pips: tp_pips,
             winning_trades: summary.winning_trades,
             losing_trades: summary.losing_trades,
+            // Include the calculated average pips per day, rounded
+            avg_pips_per_day: round_dp(avg_pips_per_day, 2),
+            avg_total_pl_per_day: round_dp(avg_total_pl_per_day, 2), // Add the new field
         }
     }
 }
+
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -126,7 +147,7 @@ impl From<&Trade> for ApiTrade {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct BacktestResponse {
-    pub summary: ApiTradeSummary,
+    pub summary: ApiTradeSummary, // This struct now contains avg_pips_per_day
     pub trades: Vec<ApiTrade>,
     pub start_time: String,
     pub end_time: String,
@@ -161,7 +182,7 @@ pub async fn run_backtest(
     let start_time_str = &request_params.start_time;
     let end_time_str = &request_params.end_time;
 
-    // Validate times
+    // Validate times and calculate total_days
     let start_dt = DateTime::parse_from_rfc3339(start_time_str)
         .map_err(|e| ErrorBadRequest(format!("Invalid start_time format: {}", e)))?
         .with_timezone(&Utc);
@@ -171,6 +192,10 @@ pub async fn run_backtest(
     if start_dt >= end_dt {
         return Err(ErrorBadRequest("start_time must be before end_time"));
     }
+    // Calculate duration and ensure total_days is at least 1
+    let duration = end_dt - start_dt;
+    let total_days = duration.num_days().max(1); // Use .max(1) to prevent division by zero
+
     // Basic validation for trade params
     if request_params.lot_size <= 0.0
         || request_params.stop_loss_pips < 0.0
@@ -190,10 +215,9 @@ pub async fn run_backtest(
     );
 
     log::debug!("Executing Primary Flux query: {}", flux_query_primary);
-    let url = format!("{}/api/v2/query?org={}", host, org);
     let client = reqwest::Client::new(); // Create client once for reuse
     let response_text_primary = client
-        .post(&url)
+        .post(&format!("{}/api/v2/query?org={}", host, org)) // Use client with URL directly
         .bearer_auth(&token)
         .json(&serde_json::json!({"query": flux_query_primary, "type": "flux"}))
         .send()
@@ -210,41 +234,34 @@ pub async fn run_backtest(
         primary_candles.len()
     );
 
+    // --- Handle Case: No Primary Candles Found ---
     if primary_candles.is_empty() {
         log::warn!("No primary candle data found for the specified parameters.");
-        // Construct empty TradeSummary correctly
-        let empty_summary = TradeSummary {
-            total_trades: 0,
-            winning_trades: 0,
-            losing_trades: 0,
-            total_profit_loss: 0.0,
-            win_rate: 0.0,
-            average_win: 0.0,
-            average_loss: 0.0,
-            profit_factor: 0.0,
-            max_drawdown: 0.0,
-        };
+        // Construct empty TradeSummary
+        let empty_summary_struct = TradeSummary::default(); // Use the default impl from trades.rs
         let (net_pips, win_pips, lose_pips) = (0.0, 0.0, 0.0);
-        // Pass params to From impl
+        // Pass params and total_days (which is >= 1) to From impl
         let api_summary = ApiTradeSummary::from((
-            &empty_summary,
+            &empty_summary_struct,
             net_pips,
             win_pips,
             lose_pips,
             request_params.lot_size,
             request_params.stop_loss_pips,
             request_params.take_profit_pips,
+            total_days, // Pass total_days here
         ));
         let response = BacktestResponse {
             summary: api_summary,
             trades: vec![],
             start_time: start_dt.to_rfc3339(),
             end_time: end_dt.to_rfc3339(),
-            total_days: (end_dt - start_dt).num_days(),
+            total_days: total_days, // Include total_days in response
         };
         return Ok(HttpResponse::Ok().json(response));
     }
-    // --- End Primary Data Loading ---
+    // --- End Primary Data Loading & Empty Check ---
+
 
     // --- Load 1-Minute Candles ---
     let minute_timeframe = "1m";
@@ -260,17 +277,16 @@ pub async fn run_backtest(
     log::debug!("Executing Minute Flux query: {}", flux_query_minute);
     // Reuse the reqwest client
     let response_text_minute = client
-        .post(&url)
+        .post(&format!("{}/api/v2/query?org={}", host, org)) // Use client with URL directly
         .bearer_auth(&token)
         .json(&serde_json::json!({"query": flux_query_minute, "type": "flux"}))
         .send()
         .await
-        .map_err(|e| ErrorInternalServerError(format!("DB request failed (1m): {}", e)))? // Correct map_err
+        .map_err(|e| ErrorInternalServerError(format!("DB request failed (1m): {}", e)))?
         .text()
         .await
-        .map_err(|e| ErrorInternalServerError(format!("DB response read failed (1m): {}", e)))?; // Correct map_err
+        .map_err(|e| ErrorInternalServerError(format!("DB response read failed (1m): {}", e)))?;
 
-    // Use imported CandleData type
     let minute_candles: Vec<CandleData> = parse_influx_csv(&response_text_minute)?;
     log::info!(
         "Parsed {} minute candles successfully.",
@@ -290,11 +306,9 @@ pub async fn run_backtest(
             Box::new(FiftyPercentBeforeBigBarRecognizer::default())
         }
         "price_sma_cross" => {
-            Box::new(PriceSmaCrossRecognizer::default())
+            Box::new(PriceSmaCrossRecognizer::default()) // Assuming this exists
         },
-        "specific_time_entry" => Box::new(SpecificTimeEntryRecognizer::default()),
-        
-        // Add other patterns here...
+        "specific_time_entry" => Box::new(SpecificTimeEntryRecognizer::default()), // Assuming this exists
         _ => {
             let error_msg = format!("Unsupported pattern for backtesting: {}", pattern_name);
             log::error!("{}", error_msg);
@@ -305,7 +319,7 @@ pub async fn run_backtest(
     log::info!("Using pattern recognizer: {}", pattern_name);
 
     // --- 2. Run Pattern Detection ---
-    let pattern_data = recognizer.detect(&primary_candles); // Use primary_candles
+    let pattern_data = recognizer.detect(&primary_candles);
     log::debug!("Pattern detection complete.");
 
     // --- 3. Create TradeConfig ---
@@ -314,10 +328,10 @@ pub async fn run_backtest(
         lot_size: request_params.lot_size,
         default_stop_loss_pips: request_params.stop_loss_pips,
         default_take_profit_pips: request_params.take_profit_pips,
-        risk_percent: 1.0,           // Match test if relevant
-        max_trades_per_pattern: 2,   // Match test value
-        enable_trailing_stop: false, // Match test if relevant
-        ..Default::default()
+        risk_percent: 1.0,
+        max_trades_per_pattern: 2, // Example value, adjust as needed
+        enable_trailing_stop: false, // Example value, adjust as needed
+        ..Default::default() // Use default for other fields
     };
     log::info!(
         "Trade config created: MaxTrades={}, SL={} pips, TP={} pips, Lot={}",
@@ -329,8 +343,6 @@ pub async fn run_backtest(
 
     // --- 4. Instantiate and Execute Trades ---
     let mut trade_executor = TradeExecutor::new(trade_config);
-
-    // Set the minute candles if available
     if !minute_candles.is_empty() {
         trade_executor.set_minute_candles(minute_candles);
         log::info!("TradeExecutor configured with 1m data for precise execution.");
@@ -338,11 +350,10 @@ pub async fn run_backtest(
         log::warn!("Proceeding with trade execution based on primary timeframe ({}) candles due to missing 1m data.", primary_timeframe);
     }
 
-    // Execute trades using primary candles for signals
     let trades = trade_executor.execute_trades_for_pattern(
         pattern_name,
         &pattern_data,
-        &primary_candles, // Use primary_candles variable
+        &primary_candles,
     );
     log::info!(
         "Trade execution simulation complete. Found {} potential trades.",
@@ -350,34 +361,36 @@ pub async fn run_backtest(
     );
 
     // --- 5. Calculate Results ---
-    let summary = TradeSummary::from_trades(&trades);
-    let (net_pips, total_winning_pips, total_losing_pips) = calculate_pips(&trades);
+    let summary_struct = TradeSummary::from_trades(&trades); // Get the underlying summary struct
+    let (net_pips, total_winning_pips, total_losing_pips) = calculate_pips(&trades); // Calculate pip stats
 
     // --- 6. Format Response ---
+    // Pass the struct reference, pip stats, params, AND total_days to the From impl
     let api_summary = ApiTradeSummary::from((
-        &summary,
+        &summary_struct,
         net_pips,
         total_winning_pips,
         total_losing_pips,
-        request_params.lot_size, // Pass params to From impl
+        request_params.lot_size,
         request_params.stop_loss_pips,
         request_params.take_profit_pips,
+        total_days, // Pass the calculated total_days here
     ));
+
     let api_trades: Vec<ApiTrade> = trades.iter().map(ApiTrade::from).collect();
-    let duration = end_dt - start_dt;
-    let total_days = duration.num_days();
 
     let response = BacktestResponse {
-        summary: api_summary,
+        summary: api_summary, // This summary now includes avg_pips_per_day
         trades: api_trades,
         start_time: start_dt.to_rfc3339(),
         end_time: end_dt.to_rfc3339(),
-        total_days,
+        total_days: total_days, // Include total_days in response object as well
     };
     log::info!(
-        "Backtest results calculated: Trades={}, Net Pips={:.1}",
+        "Backtest results calculated: Trades={}, Net Pips={:.1}, Avg Pips/Day={:.2}",
         response.summary.total_trades,
-        response.summary.net_pips
+        response.summary.net_pips,
+        response.summary.avg_pips_per_day // Log the newly calculated value
     );
 
     // --- 7. Return Final Response ---
@@ -385,7 +398,6 @@ pub async fn run_backtest(
 }
 
 // --- Helper Function to Parse CSV ---
-// Ensures return type uses imported CandleData
 fn parse_influx_csv(response_text: &str) -> Result<Vec<CandleData>, actix_web::Error> {
     let mut candles = Vec::new();
     let cursor = Cursor::new(response_text);
@@ -429,8 +441,12 @@ fn parse_influx_csv(response_text: &str) -> Result<Vec<CandleData>, actix_web::E
             "Essential columns not found in InfluxDB response headers: {:?}",
             headers
         );
+        // Check if volume is also missing, log if so, but don't require it
+        if volume_idx.is_none() {
+             log::warn!("'volume' column not found in InfluxDB response headers. Volume will be 0.");
+        }
         return Err(ErrorInternalServerError(
-            "Unexpected data format (missing columns).",
+            "Unexpected data format (missing essential OHLC columns).",
         ));
     }
 
@@ -446,6 +462,7 @@ fn parse_influx_csv(response_text: &str) -> Result<Vec<CandleData>, actix_web::E
                     low_idx.and_then(|idx| record.get(idx).and_then(|v| v.parse::<f64>().ok()));
                 let close_val =
                     close_idx.and_then(|idx| record.get(idx).and_then(|v| v.parse::<f64>().ok()));
+                // Handle volume optionally - default to 0 if missing or parse fails
                 let volume_val = volume_idx
                     .and_then(|idx| record.get(idx).and_then(|v| v.parse::<u32>().ok()))
                     .unwrap_or(0);
@@ -453,7 +470,6 @@ fn parse_influx_csv(response_text: &str) -> Result<Vec<CandleData>, actix_web::E
                 if let (Some(time), Some(open), Some(high), Some(low), Some(close)) =
                     (time_val, open_val, high_val, low_val, close_val)
                 {
-                    // Construct using the imported CandleData type
                     candles.push(crate::detect::CandleData {
                         time: time.to_string(),
                         open,
@@ -464,13 +480,14 @@ fn parse_influx_csv(response_text: &str) -> Result<Vec<CandleData>, actix_web::E
                     });
                 } else {
                     log::warn!(
-                        "Skipping record due to missing fields/parse error: {:?}",
+                        "Skipping record due to missing essential OHLC fields or parse error: {:?}",
                         record
                     );
                 }
             }
             Err(e) => {
                 log::error!("Error parsing CSV record: {}", e);
+                // Consider whether to continue or return an error
             }
         }
     }
@@ -479,28 +496,38 @@ fn parse_influx_csv(response_text: &str) -> Result<Vec<CandleData>, actix_web::E
 
 // Helper function to round f64 to a specific number of decimal places
 fn round_dp(value: f64, dp: u32) -> f64 {
+    // Handle NaN and Infinity to prevent propagation
+    if value.is_nan() || value.is_infinite() {
+        return 0.0; // Or return the original value, or handle as needed
+    }
     let multiplier = 10f64.powi(dp as i32);
     (value * multiplier).round() / multiplier
 }
 
 // --- Helper Function to Calculate Pips ---
+// Calculates net pips, total winning pips, and total losing pips (absolute value)
 fn calculate_pips(trades: &[Trade]) -> (f64, f64, f64) {
-    // (net, winning, losing)
+    // Returns tuple: (net_pips, total_winning_pips, total_losing_pips)
     let mut total_winning_pips = 0.0;
-    let mut total_losing_pips = 0.0;
+    let mut total_losing_pips = 0.0; // Stores the sum of absolute losing pips
+
     for trade in trades {
         if let Some(pl_pips) = trade.profit_loss_pips {
             if pl_pips > 0.0 {
                 total_winning_pips += pl_pips;
-            } else {
+            } else if pl_pips < 0.0 {
+                // Add the absolute value of the loss
                 total_losing_pips += pl_pips.abs();
             }
+            // Trades with exactly 0.0 pips are ignored in win/loss sums
         }
     }
+
     let net_pips = total_winning_pips - total_losing_pips;
+
     (
-        round_dp(net_pips, 1),
-        round_dp(total_winning_pips, 1),
-        round_dp(total_losing_pips, 1),
+        round_dp(net_pips, 1),          // Round net pips
+        round_dp(total_winning_pips, 1), // Round total winning pips
+        round_dp(total_losing_pips, 1),  // Round total losing pips
     )
 }
