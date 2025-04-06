@@ -55,6 +55,7 @@ async fn main() -> std::io::Result<()> {
     println!("  GET http://{}:{}/testDataRequest", host, port);
     println!("  GET http://{}:{}/health", host, port);
     println!("  GET http://{}:{}/backtest", host, port);
+    println!("  GET http://{}:{}/active-zones", host, port);
     log::info!("  POST /backtest");
 
     // --- Optional: Call the direct test function once on startup ---

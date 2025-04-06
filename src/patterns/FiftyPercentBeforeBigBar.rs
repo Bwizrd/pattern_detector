@@ -1,14 +1,14 @@
 // src/patterns/FiftyPercentBeforeBigBar.rs
 use crate::detect::CandleData;
 use crate::patterns::PatternRecognizer;
-use crate::trading::TradeExecutor;
 use crate::trades::{Trade, TradeConfig, TradeSummary};
+use crate::trading::TradeExecutor;
 use serde_json::json;
 
 pub struct FiftyPercentBeforeBigBarRecognizer {
     // Configuration parameters
-    max_body_size_percent: f64,    // For 50% body candles (default 50%)
-    min_big_bar_body_percent: f64, // For big bars (default 65%)
+    max_body_size_percent: f64,      // For 50% body candles (default 50%)
+    min_big_bar_body_percent: f64,   // For big bars (default 65%)
     proximal_extension_percent: f64, // How much to extend the proximal side (0.0 = no extension)
 }
 
@@ -25,7 +25,7 @@ impl Default for FiftyPercentBeforeBigBarRecognizer {
 impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
     fn detect(&self, candles: &[CandleData]) -> serde_json::Value {
         let total_bars = candles.len();
-        
+
         // Need at least 2 candles for the pattern (50% body + big bar)
         if candles.len() < 2 {
             return json!({
@@ -55,7 +55,7 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 }
             });
         }
-        
+
         // Calculate average candle range for big bar detection
         let mut total_range = 0.0;
         for candle in candles {
@@ -63,54 +63,86 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
         }
         let avg_range = total_range / candles.len() as f64;
         let big_bar_threshold = avg_range * 2.0;
-        
+
         let mut supply_zones = Vec::new();
         let mut demand_zones = Vec::new();
-        
+
         // Scan for pattern: 50% body candle followed directly by a big bar
         for i in 0..candles.len().saturating_sub(1) {
             let fifty_candle = &candles[i];
             let big_candle = &candles[i + 1];
-            
+
             // Check if first candle is a 50% body candle
             let fifty_body_size = (fifty_candle.close - fifty_candle.open).abs();
             let fifty_range = fifty_candle.high - fifty_candle.low;
-            let is_fifty_body = fifty_range > 0.0 && 
-                                fifty_body_size <= (fifty_range * self.max_body_size_percent / 100.0);
-            
+            let is_fifty_body = fifty_range > 0.0
+                && fifty_body_size <= (fifty_range * self.max_body_size_percent / 100.0);
+
             if !is_fifty_body {
                 continue; // Skip if not a 50% body candle
             }
-            
+
             // Check if second candle is a big bar with substantial body
             let big_range = big_candle.high - big_candle.low;
             let big_body_size = (big_candle.close - big_candle.open).abs();
-            let big_body_percentage = if big_range > 0.0 { big_body_size / big_range } else { 0.0 };
-            
-            let is_big_bar = big_range > big_bar_threshold && 
-                             big_body_percentage >= self.min_big_bar_body_percent;
-            
+            let big_body_percentage = if big_range > 0.0 {
+                big_body_size / big_range
+            } else {
+                0.0
+            };
+
+            let is_big_bar = big_range > big_bar_threshold
+                && big_body_percentage >= self.min_big_bar_body_percent;
+
             if !is_big_bar {
                 continue; // Skip if not a big bar
             }
-            
+
+            // --- START LOGGING HERE ---
+            // This code is only reached if both is_fifty_body and is_big_bar were true.
+            log::info!(
+        "Pattern candidate FOUND at i={}: fifty_time={}, big_time={}, big_open={}, big_close={}, big_high={}, big_low={}",
+        i,
+        fifty_candle.time,
+        big_candle.time,
+        big_candle.open,
+        big_candle.close,
+        big_candle.high,
+        big_candle.low
+    );
+
             // We found a pattern! Now determine if it's a supply or demand zone based on the big bar direction
             let is_bullish_big_bar = big_candle.close > big_candle.open;
-            
+
+            // Log the decision
+            log::info!(
+                " -> Decision: is_bullish_big_bar = {}. Creating {} zone.",
+                is_bullish_big_bar,
+                if is_bullish_big_bar {
+                    "DEMAND"
+                } else {
+                    "SUPPLY"
+                }
+            );
+            // --- END LOGGING -
+
+            // We found a pattern! Now determine if it's a supply or demand zone based on the big bar direction
+            let is_bullish_big_bar = big_candle.close > big_candle.open;
+
             // Create zone using the 50% body candle's range with potential extension
             if is_bullish_big_bar {
                 // Bullish big bar = demand zone
                 let zone_low = fifty_candle.low;
-                
+
                 // For demand zones, extend the upper boundary (proximal side)
                 let extension_amount = if self.proximal_extension_percent > 0.0 {
                     fifty_candle.high * (self.proximal_extension_percent / 100.0)
                 } else {
                     0.0
                 };
-                
+
                 let zone_high = fifty_candle.high + extension_amount;
-                
+
                 // Find how far to extend the zone (until price touches or breaks the zone)
                 let mut zone_end_index = i + 1;
                 for j in (i + 2)..candles.len() {
@@ -121,17 +153,20 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                     }
                     zone_end_index = j;
                 }
-                
+
                 // Calculate relative size for display
                 let relative_size = (big_range / avg_range * 100.0).round() as i32;
                 let body_percent = (big_body_percentage * 100.0).round() as i32;
-                
-                // Include extension information in detection method
+
+                zone_end_index = zone_end_index.max(i + 1);
+
+
+                // --- MODIFIED detection_method ---
                 let method_text = if self.proximal_extension_percent > 0.0 {
-                    format!("50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body, {:.2}% extended)", 
+                    format!("(i={i}) 50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body, {:.2}% extended)",
                             self.proximal_extension_percent)
                 } else {
-                    format!("50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body)")
+                    format!("(i={i}) 50% Candle → Bullish Big Bar ({relative_size}% size, {body_percent}% body)")
                 };
 
                 demand_zones.push(json!({
@@ -153,17 +188,17 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             } else {
                 // Bearish big bar = supply zone
                 let zone_low = fifty_candle.low;
-                
+
                 // For supply zones, extend the lower boundary (proximal side)
                 let extension_amount = if self.proximal_extension_percent > 0.0 {
                     fifty_candle.low * (self.proximal_extension_percent / 100.0)
                 } else {
                     0.0
                 };
-                
+
                 let zone_high = fifty_candle.high;
                 let zone_low_extended = zone_low - extension_amount;
-                
+
                 // Find how far to extend the zone (until price touches or breaks the zone)
                 let mut zone_end_index = i + 1;
                 for j in (i + 2)..candles.len() {
@@ -174,19 +209,21 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                     }
                     zone_end_index = j;
                 }
-                
+
                 // Calculate relative size for display
                 let relative_size = (big_range / avg_range * 100.0).round() as i32;
                 let body_percent = (big_body_percentage * 100.0).round() as i32;
-                
-                // Include extension information in detection method
+
+                zone_end_index = zone_end_index.max(i + 1);
+
+                // --- MODIFIED detection_method ---
                 let method_text = if self.proximal_extension_percent > 0.0 {
-                    format!("50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body, {:.1}% extended)", 
+                    format!("(i={i}) 50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body, {:.1}% extended)", // Note: precision change from original code
                             self.proximal_extension_percent)
                 } else {
-                    format!("50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body)")
+                    format!("(i={i}) 50% Candle → Bearish Big Bar ({relative_size}% size, {body_percent}% body)")
                 };
-                
+
                 supply_zones.push(json!({
                     "category": "Price",
                     "type": "supply_zone",
@@ -205,7 +242,7 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 }));
             }
         }
-        
+
         // Construct the response
         json!({
             "pattern": "fifty_percent_before_big_bar",
@@ -215,7 +252,7 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             "big_bar_threshold": big_bar_threshold,
             "proximal_extension_percent": self.proximal_extension_percent,
             "datasets": {
-                "price": 2, 
+                "price": 2,
                 "oscillators": 0,
                 "lines": 0
             },
@@ -239,16 +276,20 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
     fn trade(&self, candles: &[CandleData], config: TradeConfig) -> (Vec<Trade>, TradeSummary) {
         // Get the pattern data
         let pattern_data = self.detect(candles);
-        
+
         // Create a trade executor with the provided config
         let executor = TradeExecutor::new(config);
-        
+
         // Execute trades based on the pattern
-        let trades = executor.execute_trades_for_pattern("fifty_percent_before_big_bar", &pattern_data, candles);
-        
+        let trades = executor.execute_trades_for_pattern(
+            "fifty_percent_before_big_bar",
+            &pattern_data,
+            candles,
+        );
+
         // Generate summary
         let summary = TradeSummary::from_trades(&trades);
-        
+
         (trades, summary)
     }
 }
