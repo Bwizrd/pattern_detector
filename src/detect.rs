@@ -1,14 +1,13 @@
 // PASTE THIS ENTIRE BLOCK INTO: src/detect.rs
 // This version uses a shared internal function `_fetch_and_detect_core`.
 
-
+use log::{info, warn, debug, error}; // Add info and debug levels
 use crate::patterns::{PatternRecognizer, /* Add specific recognizer types needed */ FiftyPercentBeforeBigBarRecognizer, EnhancedSupplyDemandZoneRecognizer /* etc */};
 use crate::trades::{TradeConfig, Trade, TradeSummary}; // Needed for detect_patterns
 use crate::trading::TradeExecutor; // Needed for detect_patterns
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use log::{error, info, warn};
 use dotenv::dotenv;
 use reqwest;
 use csv::ReaderBuilder;
@@ -197,7 +196,90 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
 
 // --- Helper function to check zone activity (Keep as is) ---
 fn is_zone_still_active(zone: &Value, candles: &[CandleData], is_supply: bool) -> bool {
-    let start_idx=match zone.get("start_idx").and_then(|v|v.as_u64()){Some(idx)=>idx as usize,None=>{warn!("is_zone_still_active: Missing start_idx");return false;}};let zone_high=match zone.get("zone_high").and_then(|v|v.as_f64()){Some(val)=>val,None=>{warn!("is_zone_still_active: Missing zone_high");return false;}};let zone_low=match zone.get("zone_low").and_then(|v|v.as_f64()){Some(val)=>val,None=>{warn!("is_zone_still_active: Missing zone_low");return false;}};let check_start_idx=start_idx+2;if check_start_idx>=candles.len(){return true;}for i in check_start_idx..candles.len(){let candle=&candles[i];if is_supply{if candle.close>zone_high{return false;}}else{if candle.close<zone_low{return false;}}}true
+    // 1. Safely extract zone details
+    let start_idx = match zone.get("start_idx").and_then(|v| v.as_u64()) {
+        Some(idx) => idx as usize,
+        None => { warn!("is_zone_still_active: Missing 'start_idx'"); return false; }
+    };
+    let zone_high = match zone.get("zone_high").and_then(|v| v.as_f64()) {
+        Some(val) if val.is_finite() => val,
+        _ => { warn!("is_zone_still_active: Missing/invalid 'zone_high' for start_idx {}", start_idx); return false; }
+    };
+    let zone_low = match zone.get("zone_low").and_then(|v| v.as_f64()) {
+        Some(val) if val.is_finite() => val,
+        _ => { warn!("is_zone_still_active: Missing/invalid 'zone_low' for start_idx {}", start_idx); return false; }
+    };
+    // --- Log Zone Details ---
+    debug!(
+        "is_zone_still_active: Checking zone start_idx={}, type={}, zone_low={:.5}, zone_high={:.5}",
+        start_idx, if is_supply { "Supply" } else { "Demand" }, zone_low, zone_high
+    );
+    // ---
+
+    // 2. Determine where to start checking
+    let check_start_idx = start_idx.saturating_add(2);
+
+    // 3. Handle edge case
+    if check_start_idx >= candles.len() {
+        debug!("is_zone_still_active: Zone start_idx={} ACTIVE (no candles after formation: check_start_idx={}, len={})", start_idx, check_start_idx, candles.len());
+        return true;
+    }
+
+    // 4. Iterate through subsequent candles
+    debug!("is_zone_still_active: Zone start_idx={} - Checking candles from index {} to {}", start_idx, check_start_idx, candles.len() - 1);
+    for i in check_start_idx..candles.len() {
+        let candle = &candles[i];
+
+        if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+             warn!("is_zone_still_active: Invalid candle data at index {}", i);
+             continue;
+        }
+
+        // --- Log Candle Details Being Checked ---
+        debug!(
+            "  - Checking candle idx={}: low={:.5}, high={:.5}, close={:.5}",
+            i, candle.low, candle.high, candle.close
+        );
+        // ---
+
+        if is_supply {
+            // --- Check Supply Invalidation ---
+            if candle.high > zone_high {
+                info!( // Use INFO for invalidation events
+                    "is_zone_still_active: Supply zone start_idx={} INACTIVE at candle_idx={} (candle_high {:.5} > zone_high {:.5})",
+                    start_idx, i, candle.high, zone_high
+                );
+                return false; // Zone broken
+            } else {
+                 // debug!("    Supply condition met: candle_high {:.5} <= zone_high {:.5}", candle.high, zone_high);
+            }
+        } else { // is_demand
+            // --- Check Demand Invalidation ---
+            if candle.low < zone_low {
+                 info!( // Use INFO for invalidation events
+                    "is_zone_still_active: Demand zone start_idx={} INACTIVE at candle_idx={} (candle_low {:.5} < zone_low {:.5})",
+                    start_idx, i, candle.low, zone_low
+                 );
+                return false; // Zone broken
+            } else {
+                 // Optional: Log why it *didn't* invalidate if needed for deep debugging
+                 // debug!(
+                 //    "    Demand condition met: candle_low {:.5} >= zone_low {:.5}",
+                 //    candle.low, zone_low
+                 // );
+            }
+             // --- Add check for close below low as well? ---
+             // You mentioned it closed below too. While low < zone_low should be sufficient,
+             // we can add an explicit check for close if the low check fails unexpectedly.
+             // Generally, if low < zone_low doesn't trigger, close < zone_low won't either,
+             // unless zone_low is somehow *between* the candle's low and close (which is impossible).
+             // Sticking to `candle.low < zone_low` is standard.
+        }
+    }
+
+    // 5. If loop completes, zone is active
+    debug!("is_zone_still_active: Zone start_idx={} ACTIVE (loop completed without invalidation)", start_idx);
+    true
 }
 
 
