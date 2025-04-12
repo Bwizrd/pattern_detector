@@ -3,3 +3,4 @@ pub mod detect;
 pub mod patterns;
 pub mod trades;
 pub mod trading;
+pub mod types;

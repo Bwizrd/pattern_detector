@@ -10,6 +10,7 @@ pub mod trades;
 pub mod trading;
 mod backtest;
 mod influx_fetcher; 
+mod types;
 
 // Echo endpoint structures
 #[derive(serde::Serialize)]
@@ -56,6 +57,7 @@ async fn main() -> std::io::Result<()> {
     println!("  GET http://{}:{}/health", host, port);
     println!("  GET http://{}:{}/backtest", host, port);
     println!("  GET http://{}:{}/active-zones", host, port);
+    println!("  POST http://{}:{}/bulk-multi-tf-active-zones", host, port); 
     log::info!("  POST /backtest");
 
     // --- Optional: Call the direct test function once on startup ---
@@ -77,7 +79,8 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .route("/analyze", web::get().to(detect::detect_patterns)) // Use detect module
             .route("/testDataRequest", web::get().to(influx_fetcher::test_data_request_handler)) 
-            .route("/active-zones", web::get().to(detect::get_active_zones_handler)) 
+            .route("/active-zones", web::get().to(detect::get_active_zones_handler))
+            .route("/bulk-multi-tf-active-zones", web::post().to(detect::get_bulk_multi_tf_active_zones_handler)) 
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
             .route("/backtest", web::post().to(backtest::run_backtest))
