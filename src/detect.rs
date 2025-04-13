@@ -292,7 +292,9 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
 }
 
 
-// --- NEW BULK HANDLER (Filters for active zones, syntax corrected) ---
+// PASTE THIS FUNCTION BLOCK TO REPLACE THE EXISTING get_bulk_multi_tf_active_zones_handler
+// This version filters active, calculates bars_active, and removes candles array from response.
+
 pub async fn get_bulk_multi_tf_active_zones_handler(
     global_query: web::Query<ChartQuery>,
     items: web::Json<Vec<BulkSymbolTimeframesRequestItem>>,
@@ -316,8 +318,8 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                 enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
             };
 
-            // Optional: Early check if pattern is supported
-             if current_query.pattern != "fifty_percent_before_big_bar" /* && current_query.pattern != "supply_demand_zone" // Add other allowed patterns here */ {
+             // Optional: Early check if pattern is supported
+             if current_query.pattern != "fifty_percent_before_big_bar" /* && other allowed patterns */ {
                  warn!("[get_bulk_multi_tf] Skipping task for unsupported pattern '{}' for {}/{}",
                     current_query.pattern, current_symbol, current_timeframe);
                  tasks.push(tokio::spawn(async move {
@@ -347,32 +349,51 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                         let mut final_supply_zones: Vec<EnrichedZone> = Vec::new();
                         let mut final_demand_zones: Vec<EnrichedZone> = Vec::new();
                         let mut enrichment_error: Option<String> = None;
+                        let candle_count = candles.len(); // Get total candle count for duration calculation
 
+                        // Closure using is_zone_still_active and deserialize_raw_zone_value
                         let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
                             let mut processed_zones: Vec<EnrichedZone> = Vec::new();
                             if let Some(zones) = zones_option {
                                 for zone_json in zones.iter() {
                                     let is_active = is_zone_still_active(zone_json, &candles, is_supply);
-                                    let zone_candles: Vec<CandleData> = match zone_json.get("start_idx").and_then(|v| v.as_u64()) {
-                                        Some(start_idx) => candles.get(start_idx as usize ..).unwrap_or(&[]).to_vec(),
-                                        None => { warn!("[Task {}/{}] Zone missing 'start_idx'", current_symbol, current_timeframe); Vec::new() }
+
+                                    // Calculate bars_active IF the zone is active
+                                    let bars_active_duration: Option<u64> = if is_active {
+                                        zone_json.get("start_idx").and_then(|v| v.as_u64())
+                                            .and_then(|start_idx| {
+                                                if candle_count > start_idx as usize {
+                                                    Some(candle_count as u64 - start_idx)
+                                                } else {
+                                                    warn!("[Task {}/{}] Invalid start_idx {} >= candle_count {}", current_symbol, current_timeframe, start_idx, candle_count);
+                                                    None
+                                                }
+                                            })
+                                    } else {
+                                        None // Not active, duration not calculated
                                     };
-                                    match deserialize_raw_zone_value(zone_json) {
+
+                                    // --- REMOVED CANDLE EXTRACTION ---
+                                    // let zone_candles: Vec<CandleData> = ...
+
+                                    match deserialize_raw_zone_value(zone_json) { // Use helper from types.rs
                                         Ok(mut enriched_zone_struct) => {
                                             enriched_zone_struct.is_active = is_active;
-                                            enriched_zone_struct.candles = zone_candles; // Still include candles for active zones
+                                            enriched_zone_struct.bars_active = bars_active_duration; // Assign calculated duration
+                                            // enriched_zone_struct.candles = zone_candles; // <-- CANDLES REMOVED
                                             processed_zones.push(enriched_zone_struct);
                                         }
                                         Err(e) => {
                                             error!("[Task {}/{}] Deserialize failed: {}. Value: {:?}", current_symbol, current_timeframe, e, zone_json);
-                                            return Err(format!("Deserialize failed: {}", e));
+                                            return Err(format!("Deserialize failed: {}", e)); // Return error from closure
                                         }
                                     }
                                 }
                             }
-                            Ok(processed_zones)
+                            Ok(processed_zones) // Return Ok containing the zones
                         };
 
+                        // Navigate results JSON
                         if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
                             // Process Supply Zones
                             match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
@@ -425,7 +446,7 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                             // Return value for success case, using FILTERED zones
                              BulkResultItem {
                                 symbol: current_symbol, timeframe: current_timeframe, status: "Success".to_string(),
-                                data: Some(BulkResultData {
+                                data: Some(BulkResultData { // Use the filtered vectors
                                     supply_zones: active_supply_zones,
                                     demand_zones: active_demand_zones
                                 }),
@@ -436,7 +457,7 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                     Err(core_err) => { // Handle CoreError
                         error!("[Task {}/{}] Core error: {}", current_symbol, current_timeframe, core_err);
                         let (status, msg) = match core_err {
-                             CoreError::Config(e) => ("Error: Config Failed".to_string(), e),
+                             CoreError::Config(e) => ("Error: Config Failed".to_string(), e), // Catches unsupported pattern
                              CoreError::Request(e) => ("Error: Fetch Failed".to_string(), e.to_string()),
                              CoreError::Csv(e) => ("Error: Parse Failed".to_string(), e.to_string()),
                              CoreError::EnvVar(e) => ("Error: Server Config Failed".to_string(), e),

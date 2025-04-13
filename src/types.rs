@@ -30,8 +30,8 @@ pub struct EnrichedZone {
     // Added fields
     #[serde(default)]
     pub is_active: bool,
-    #[serde(default)]
-    pub candles: Vec<CandleData>,
+    #[serde(skip_serializing_if = "Option::is_none")] // Don't serialize if None
+    pub bars_active: Option<u64>, // <-- ADD THIS FIELD (Duration in bars)
 }
 
 #[derive(Serialize, Debug, Default)]
