@@ -1,15 +1,15 @@
 // src/main.rs
 use actix_cors::Cors;
-use actix_web::{middleware::Logger, web, App, HttpServer, HttpResponse, Responder};
+use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use dotenv::dotenv;
-use env_logger;
+// use env_logger;
 
-mod detect; // Declares detect module
-mod patterns; // Declares patterns module
-pub mod trades; 
-pub mod trading;
 mod backtest;
-mod influx_fetcher; 
+mod detect; // Declares detect module
+mod influx_fetcher;
+mod patterns; // Declares patterns module
+pub mod trades;
+pub mod trading;
 mod types;
 
 // Echo endpoint structures
@@ -45,7 +45,11 @@ async fn health_check() -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("pattern_detector=debug,info"));
+    // --- Initialize log4rs ---
+    log4rs::init_file("log4rs.yaml", Default::default()).expect("Failed to initialize log4rs");
+    // Note: Using expect for simplicity during setup. Use proper error handling in production.
+    // --- Remove env_logger init ---
+    // env_logger::init_from_env(env_logger::Env::new().default_filter_or("pattern_detector=debug,info"));
     let host = "127.0.0.1";
     let port = 8080;
 
@@ -57,7 +61,7 @@ async fn main() -> std::io::Result<()> {
     println!("  GET http://{}:{}/health", host, port);
     println!("  GET http://{}:{}/backtest", host, port);
     println!("  GET http://{}:{}/active-zones", host, port);
-    println!("  POST http://{}:{}/bulk-multi-tf-active-zones", host, port); 
+    println!("  POST http://{}:{}/bulk-multi-tf-active-zones", host, port);
     log::info!("  POST /backtest");
 
     // --- Optional: Call the direct test function once on startup ---
@@ -78,9 +82,18 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(cors)
             .route("/analyze", web::get().to(detect::detect_patterns)) // Use detect module
-            .route("/testDataRequest", web::get().to(influx_fetcher::test_data_request_handler)) 
-            .route("/active-zones", web::get().to(detect::get_active_zones_handler))
-            .route("/bulk-multi-tf-active-zones", web::post().to(detect::get_bulk_multi_tf_active_zones_handler)) 
+            .route(
+                "/testDataRequest",
+                web::get().to(influx_fetcher::test_data_request_handler),
+            )
+            .route(
+                "/active-zones",
+                web::get().to(detect::get_active_zones_handler),
+            )
+            .route(
+                "/bulk-multi-tf-active-zones",
+                web::post().to(detect::get_bulk_multi_tf_active_zones_handler),
+            )
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
             .route("/backtest", web::post().to(backtest::run_backtest))

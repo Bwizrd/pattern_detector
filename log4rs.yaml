@@ -1,0 +1,47 @@
+# log4rs.yaml
+
+# Refresh rate for checking configuration file changes (optional)
+refresh_rate: 30 seconds
+
+appenders:
+  # An appender named "logfile" that writes to a file
+  logfile:
+    kind: file
+    path: "logs/backend.log" # Log file path (ensure 'logs' directory exists or use an appender that creates it)
+    encoder:
+      # Format: Time(UTC) Level [Target] Message {NewLine}
+      pattern: "{d(%Y-%m-%dT%H:%M:%SZ)(utc)} {h({l})} [{t}] - {m}{n}"
+    # Example policy: Rolling file based on size
+    # policy:
+    #   kind: compound
+    #   trigger:
+    #     kind: size
+    #     limit: 10 mb
+    #   roller:
+    #     kind: fixed_window
+    #     base: 1
+    #     count: 5
+    #     pattern: "logs/backend.{}.log" # Pattern for rolled files
+
+  # An appender named "stdout" that writes to standard output
+  stdout:
+    kind: console
+    encoder:
+      pattern: "{d(%H:%M:%S %Z)(local)} - {h({l})} - {m}{n}" # Simpler pattern for console
+
+# Root logger configuration
+root:
+  # Set the minimum log level (trace, debug, info, warn, error)
+  level: debug
+  # List of appenders to use
+  appenders:
+    - logfile # Log to file
+    - stdout  # Also log to console (optional, remove if you ONLY want file)
+
+# You can optionally configure specific loggers (targets) here
+# loggers:
+#   pattern_detector::detect: # Example: Only log 'info' level and above for detect module
+#     level: info
+#     appenders:
+#       - logfile
+#     additive: false # Prevents messages from propagating to the root logger
