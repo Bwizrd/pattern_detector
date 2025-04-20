@@ -379,10 +379,13 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
     HttpResponse::Ok().json(response)
 }
 
-// New handler for debugging single symbol/timeframe using bulk logic approach
+// PASTE THIS ENTIRE FUNCTION AT THE END OF src/detect.rs
+
+// New handler for debugging single symbol/timeframe using duplicated logic approach
 pub async fn debug_bulk_zones_handler(
     query: web::Query<SingleZoneQueryParams>,
 ) -> impl Responder {
+    // Extract query parameters
     let symbol = query.symbol.clone();
     let timeframe = query.timeframe.clone();
     let pattern = query.pattern.clone().unwrap_or_else(|| "fifty_percent_before_big_bar".to_string());
@@ -392,14 +395,20 @@ pub async fn debug_bulk_zones_handler(
     info!("[debug_bulk_zones_handler] Debug request for Symbol: {}, Timeframe: {}, Pattern: {}, Start: {}, End: {}",
         symbol, timeframe, pattern, start_time, end_time);
 
+    // Create the ChartQuery needed for _fetch_and_detect_core
     let core_query = ChartQuery {
-        symbol: symbol.clone(), timeframe: timeframe.clone(),
-        start_time, end_time, pattern,
-        enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
+        symbol: symbol.clone(),
+        timeframe: timeframe.clone(),
+        start_time,
+        end_time,
+        pattern,
+        enable_trading: None, lot_size: None, stop_loss_pips: None,
+        take_profit_pips: None, enable_trailing_stop: None,
     };
 
     let caller_id = format!("debug_task_{}/{}", symbol, timeframe);
 
+    // --- Call the PRIVATE _fetch_and_detect_core (defined above in this file) ---
     match _fetch_and_detect_core(&core_query, &caller_id).await {
         Ok((candles, _recognizer, detection_results_json)) => {
             if candles.is_empty() {
@@ -409,19 +418,23 @@ pub async fn debug_bulk_zones_handler(
                 });
             }
 
+            // --- DUPLICATED Enrichment Logic ---
             info!("[debug_bulk_zones_handler] Enriching results for {}/{} ({} candles)...", symbol, timeframe, candles.len());
-            let mut final_supply_zones: Vec<EnrichedZone> = Vec::new();
-            let mut final_demand_zones: Vec<EnrichedZone> = Vec::new();
+            let mut final_supply_zones: Vec<EnrichedZone> = Vec::new(); // Use crate::types:: path if needed
+            let mut final_demand_zones: Vec<EnrichedZone> = Vec::new(); // Use crate::types:: path if needed
             let mut enrichment_error: Option<String> = None;
             let candle_count = candles.len();
 
-            let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
+            // This closure uses the PRIVATE is_zone_still_active (defined above in this file)
+             let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
                  let mut processed_zones: Vec<EnrichedZone> = Vec::new();
                  if let Some(zones) = zones_option {
                      for zone_json in zones.iter() {
+                         // CALL THE PRIVATE FUNCTION: is_zone_still_active
                          let is_active = is_zone_still_active(zone_json, &candles, is_supply);
                          let bars_active_duration: Option<u64> = if is_active { zone_json.get("start_idx").and_then(|v| v.as_u64()).and_then(|start_idx| { if candle_count > start_idx as usize { Some(candle_count as u64 - start_idx) } else { warn!("[debug] Invalid start_idx {} >= candle_count {}", start_idx, candle_count); None } }) } else { None };
-                         match deserialize_raw_zone_value(zone_json) {
+                         // Call public function from types module
+                         match crate::types::deserialize_raw_zone_value(zone_json) {
                              Ok(mut enriched_zone_struct) => {
                                  enriched_zone_struct.is_active = is_active;
                                  enriched_zone_struct.bars_active = bars_active_duration;
@@ -434,6 +447,7 @@ pub async fn debug_bulk_zones_handler(
                  Ok(processed_zones)
             };
 
+            // Navigate results JSON
             if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
                  match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
                     Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), true) { Ok(zones) => final_supply_zones = zones, Err(e) => enrichment_error = Some(e), } }
@@ -447,6 +461,7 @@ pub async fn debug_bulk_zones_handler(
                  }
             } else { warn!("[debug] Missing 'data.price' path in results for {}/{}: {:?}", symbol, timeframe, detection_results_json); enrichment_error = Some("Missing 'data.price' structure.".to_string()); }
 
+            // --- Package Result (FILTERING HERE) ---
             if let Some(err_msg) = enrichment_error {
                 error!("[debug_bulk_zones_handler] Enrichment failed for {}/{}: {}", symbol, timeframe, err_msg);
                 HttpResponse::InternalServerError().json(ErrorResponse {
@@ -458,31 +473,31 @@ pub async fn debug_bulk_zones_handler(
                  let active_demand_zones = final_demand_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
                  info!("[debug_bulk_zones_handler] Found {} active supply, {} active demand zones for {}/{}.", active_supply_zones.len(), active_demand_zones.len(), symbol, timeframe);
 
-                let timeframe_data = TimeframeZoneResponse {
+                // Use structs from types.rs
+                let timeframe_data = crate::types::TimeframeZoneResponse {
                     supply_zones: active_supply_zones,
                     demand_zones: active_demand_zones,
                 };
-                let symbol_data = SymbolZoneResponse {
+                let symbol_data = crate::types::SymbolZoneResponse {
                     timeframes: HashMap::from([(timeframe.clone(), timeframe_data)]),
                 };
-                let mut response = BulkActiveZonesResponse::default();
+                let mut response = crate::types::BulkActiveZonesResponse::default(); // Assumes Default derive
                 response.symbols.insert(symbol.clone(), symbol_data);
 
                 HttpResponse::Ok().json(response)
             }
         }
-        Err(core_err) => {
+        Err(core_err) => { // Handle CoreError from this file's _fetch_and_detect_core
             error!("[debug_bulk_zones_handler] Core error for {}/{}: {}", symbol, timeframe, core_err);
-            // Make status_code mutable
+            // Use local CoreError variants directly
             let (mut status_code, error_message) = match core_err {
                 CoreError::Config(e) if e.starts_with("Pattern") => (HttpResponse::BadRequest(), e),
                 CoreError::Config(e) => (HttpResponse::InternalServerError(), format!("Configuration Error: {}", e)),
                 CoreError::Request(e) => (HttpResponse::InternalServerError(), format!("Data Fetch Error: {}", e)),
                 CoreError::Csv(e) => (HttpResponse::InternalServerError(), format!("Data Parse Error: {}", e)),
                 CoreError::EnvVar(e) => (HttpResponse::InternalServerError(), format!("Server Config Error: {}", e)),
-                 CoreError::Processing(e) => (HttpResponse::InternalServerError(), format!("Processing Error: {}", e)),
+                CoreError::Processing(e) => (HttpResponse::InternalServerError(), format!("Processing Error: {}", e)),
             };
-            // Now .json() can borrow mutably
             status_code.json(ErrorResponse { error: error_message })
         }
     }
