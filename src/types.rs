@@ -108,7 +108,7 @@ pub fn deserialize_raw_zone_value(zone_value: &serde_json::Value) -> Result<Enri
 
 // --- StoredZone (Keep this here if you added it previously for the generator) ---
 // --- If you are ONLY restoring the debug endpoint, you can COMMENT OUT or REMOVE this struct ---
-/*
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct StoredZone {
     // Base fields from detection
@@ -125,9 +125,9 @@ pub struct StoredZone {
     pub extended: Option<bool>,
     pub extension_percent: Option<f64>,
     // Status determined by the generator run
+    #[serde(default)]
     pub is_active: bool, // As of the end_time of the generator run
     // Specific candles forming the zone
     #[serde(default)]
     pub formation_candles: Vec<CandleData>,
 }
-*/

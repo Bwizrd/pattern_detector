@@ -89,7 +89,7 @@ impl From<csv::Error> for CoreError {
 }
 
 // --- INTERNAL CORE Logic Function ---
-async fn _fetch_and_detect_core(
+pub async fn _fetch_and_detect_core(
     query: &ChartQuery,
     caller_id: &str
 ) -> Result<(Vec<CandleData>, Box<dyn PatternRecognizer>, Value), CoreError> {
@@ -205,7 +205,7 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
 }
 
 // --- Helper function to check zone activity ---
-fn is_zone_still_active(zone: &Value, candles: &[CandleData], is_supply: bool) -> bool {
+pub fn is_zone_still_active(zone: &Value, candles: &[CandleData], is_supply: bool) -> bool {
     let start_idx = match zone.get("start_idx").and_then(|v| v.as_u64()) { Some(idx) => idx as usize, None => { warn!("is_zone_still_active: Missing 'start_idx'"); return false; } };
     let zone_high = match zone.get("zone_high").and_then(|v| v.as_f64()) { Some(val) if val.is_finite() => val, _ => { warn!("is_zone_still_active: Missing/invalid 'zone_high'"); return false; } };
     let zone_low = match zone.get("zone_low").and_then(|v| v.as_f64()) { Some(val) if val.is_finite() => val, _ => { warn!("is_zone_still_active: Missing/invalid 'zone_low'"); return false; } };
