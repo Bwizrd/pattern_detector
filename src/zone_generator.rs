@@ -3,13 +3,13 @@ use crate::detect::{self, CandleData, ChartQuery, CoreError}; // Reuses detect m
 use crate::types::StoredZone; // Uses the StoredZone struct which includes formation_candles
                               // Note: PatternRecognizer trait itself is not directly used here, as _fetch_and_detect_core handles recognizer creation
 use csv::ReaderBuilder; // For parsing CSV responses from InfluxDB
+use dotenv::dotenv;
 use futures::future::join_all; // Used for waiting on tasks if concurrency is re-added later
 use log::{debug, error, info, warn};
 use reqwest::Client; // HTTP client for InfluxDB communication
 use serde_json::json;
 use std::env; // For reading environment variables
 use std::error::Error; // For building JSON request bodies
-use dotenv::dotenv;
 
 type BoxedError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -122,27 +122,32 @@ async fn fetch_distinct_tag_values(
 
 // --- Helper to extract formation candles ---
 // Extracts the specific candles (based on start/end index) that formed the zone.
-fn extract_formation_candles(candles: &[CandleData], start_idx: Option<u64>, end_idx: Option<u64>) -> Vec<CandleData> {
+fn extract_formation_candles(
+    candles: &[CandleData],
+    start_idx: Option<u64>,
+    end_idx: Option<u64>,
+) -> Vec<CandleData> {
     match (start_idx, end_idx) {
         (Some(start), Some(end)) => {
             let start_usize = start as usize;
             let end_usize = end as usize;
-            
-            if start_usize < candles.len() && end_usize < candles.len() && start_usize <= end_usize {
+
+            if start_usize < candles.len() && end_usize < candles.len() && start_usize <= end_usize
+            {
                 let mut key_candles = Vec::new();
-                
+
                 // Always include the 50% candle (usually at start_idx)
                 if let Some(candle) = candles.get(start_usize) {
                     key_candles.push(candle.clone());
                 }
-                
+
                 // Always include the big bar candle (usually at start_idx + 1)
                 if start_usize + 1 < candles.len() {
                     if let Some(candle) = candles.get(start_usize + 1) {
                         key_candles.push(candle.clone());
                     }
                 }
-                
+
                 // For longer zones, include price extremes (highest/lowest)
                 if end_usize > start_usize + 2 {
                     // Find highest and lowest candles in the range
@@ -150,7 +155,7 @@ fn extract_formation_candles(candles: &[CandleData], start_idx: Option<u64>, end
                     let mut lowest_idx = start_usize;
                     let mut highest_price = candles[start_usize].high;
                     let mut lowest_price = candles[start_usize].low;
-                    
+
                     for i in (start_usize + 1)..=end_usize {
                         if i < candles.len() {
                             if candles[i].high > highest_price {
@@ -163,7 +168,7 @@ fn extract_formation_candles(candles: &[CandleData], start_idx: Option<u64>, end
                             }
                         }
                     }
-                    
+
                     // Add highest and lowest candles if they're not already included
                     if highest_idx > start_usize + 1 && highest_idx != lowest_idx {
                         key_candles.push(candles[highest_idx].clone());
@@ -172,7 +177,7 @@ fn extract_formation_candles(candles: &[CandleData], start_idx: Option<u64>, end
                         key_candles.push(candles[lowest_idx].clone());
                     }
                 }
-                
+
                 // Always include the last candle in the zone
                 if end_usize > start_usize + 1 {
                     if let Some(candle) = candles.get(end_usize) {
@@ -182,16 +187,21 @@ fn extract_formation_candles(candles: &[CandleData], start_idx: Option<u64>, end
                         }
                     }
                 }
-                
+
                 // Ensure candles are sorted by time
                 key_candles.sort_by(|a, b| a.time.cmp(&b.time));
-                
+
                 key_candles
             } else {
-                warn!("Invalid start/end indices ({:?}, {:?}) for candle slice (len {})", start_idx, end_idx, candles.len());
+                warn!(
+                    "Invalid start/end indices ({:?}, {:?}) for candle slice (len {})",
+                    start_idx,
+                    end_idx,
+                    candles.len()
+                );
                 vec![]
             }
-        },
+        }
         _ => {
             warn!("Missing start_idx or end_idx for extracting formation candles");
             vec![]
@@ -517,6 +527,7 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
     }
 
     // 2. Discover Timeframes and filter for supported ones
+
     let all_timeframes = fetch_distinct_tag_values(
         &http_client,
         &host,
@@ -527,9 +538,24 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
         "timeframe",
     )
     .await?;
+
+    let excluded_timeframes_str = env::var("GENERATOR_EXCLUDE_TIMEFRAMES").unwrap_or_default();
+    let excluded_timeframes: Vec<String> = excluded_timeframes_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    info!("Excluded timeframes: {:?}", excluded_timeframes);
+    
     let allowed_timeframes: Vec<String> = all_timeframes
         .into_iter()
         .filter(|tf| {
+            // First, check if it's in the excluded list
+            if excluded_timeframes.contains(tf) {
+                return false;
+            }
+            // Then apply the original supported timeframe filter
             matches!(
                 tf.as_str(),
                 "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d"
@@ -690,10 +716,11 @@ async fn process_symbol_timeframe_pattern(
                     );
                     return Ok(()); // Skip unsupported patterns gracefully
                 }
-                 CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
-                    info!( // Log as info, not error, as empty data is expected sometimes
+                CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
+                    info!(
+                        // Log as info, not error, as empty data is expected sometimes
                         "No candle data returned by query for {}/{}/{}. Skipping.",
-                         symbol, timeframe, pattern_name
+                        symbol, timeframe, pattern_name
                     );
                     return Ok(()); // Skip processing if no data fetched
                 }
@@ -713,7 +740,7 @@ async fn process_symbol_timeframe_pattern(
                         "CSV parsing error for {}/{}: {}",
                         symbol, timeframe, csv_err
                     );
-                     // This is a more critical error, return it
+                    // This is a more critical error, return it
                     return Err(Box::new(csv_err) as BoxedError);
                 }
                 // REMOVED CoreError::Json arm as it doesn't exist in the definition
@@ -777,7 +804,10 @@ async fn process_symbol_timeframe_pattern(
                     Ok(mut base_zone) => {
                         // Ensure required fields for processing are present
                         if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
-                            warn!("Skipping zone due to missing start_idx or end_idx: {:?}", zone_json);
+                            warn!(
+                                "Skipping zone due to missing start_idx or end_idx: {:?}",
+                                zone_json
+                            );
                             continue; // Skip this zone if essential indices are missing
                         }
 
@@ -797,9 +827,10 @@ async fn process_symbol_timeframe_pattern(
                         // The number of bars forming the zone is end_idx - start_idx + 1 (inclusive)
                         // We already checked start_idx and end_idx are Some above
                         let start = base_zone.start_idx.unwrap(); // Safe to unwrap here
-                        let end = base_zone.end_idx.unwrap();     // Safe to unwrap here
+                        let end = base_zone.end_idx.unwrap(); // Safe to unwrap here
 
-                        if end >= start { // Basic sanity check
+                        if end >= start {
+                            // Basic sanity check
                             base_zone.bars_active = Some(end - start + 1);
                             debug!(
                                 "Calculated bars_active: {} for zone starting at idx {}",
@@ -831,7 +862,7 @@ async fn process_symbol_timeframe_pattern(
                 }
             }
         } else {
-             debug!(
+            debug!(
                 "No '{}' key found or it's not an array in detection results for {}/{}/{}.",
                 zone_type_key, symbol, timeframe, pattern_name
             );
@@ -862,12 +893,19 @@ async fn process_symbol_timeframe_pattern(
             pattern_name,
             &zones_to_store,
         )
-        .await {
-            Ok(_) => info!("Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
+        .await
+        {
+            Ok(_) => info!(
+                "Successfully wrote zones for {}/{}/{}",
+                symbol, timeframe, pattern_name
+            ),
             Err(e) => {
-                 error!("Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
-                 // Decide if a write error should stop the entire process or just this combo
-                 return Err(e); // Propagate write errors
+                error!(
+                    "Failed to write zones batch for {}/{}/{}: {}",
+                    symbol, timeframe, pattern_name, e
+                );
+                // Decide if a write error should stop the entire process or just this combo
+                return Err(e); // Propagate write errors
             }
         }
     } else {

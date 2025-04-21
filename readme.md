@@ -1,5 +1,7 @@
 tree -I "reports|target|.git|node_modules"
 
+cd usr/local/var/lib/influxdb2 influxd
+
 cargo test --test backtest -- --nocapture
 cargo test --test multithreaded_optimization -- --nocapture
 cargo test --test optimization/main -- --nocapture
