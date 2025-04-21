@@ -1,0 +1,32 @@
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["is_active"] == "true") |> group() |> count() |> yield(name: "total_active_zones")'
+
+INFLUXDB_ORG='PansHouse'
+INFLUXDB_BUCKET=market_data
+INFLUXDB_TOKEN=VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q==
+
+
+
+grep "After active filtering:" backend.log
+
+grep "FINAL SUMMARY:" backend.log
+
+# Get summary of zones processed by the zone generator
+grep "\[ZONE_GENERATOR\].*TOTAL ZONES" backend.log
+
+# Get counts per symbol/timeframe
+grep "\[ZONE_GENERATOR\].*stored" backend.log
+
+# Count the total number of active zones detected
+grep "\[ZONE_GENERATOR\].*active" backend.log | wc -l
+
+# If there's a final summary line for the whole process
+grep "zone generation process finished" backend.log
+
+
+
+grep "\[ZONE_GENERATOR\].*stored" backend.log | head -20
+# Look for any completion or summary messages
+grep -i "zone generation.*finished\|completed" backend.log
+
+# Check for any error messages
+grep -i "zone generation.*error\|failed" backend.log

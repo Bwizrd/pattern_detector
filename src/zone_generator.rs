@@ -547,7 +547,7 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
         .collect();
 
     info!("Excluded timeframes: {:?}", excluded_timeframes);
-    
+
     let allowed_timeframes: Vec<String> = all_timeframes
         .into_iter()
         .filter(|tf| {
@@ -716,11 +716,10 @@ async fn process_symbol_timeframe_pattern(
                     );
                     return Ok(()); // Skip unsupported patterns gracefully
                 }
-                CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
-                    info!(
-                        // Log as info, not error, as empty data is expected sometimes
+                 CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
+                    info!( // Log as info, not error, as empty data is expected sometimes
                         "No candle data returned by query for {}/{}/{}. Skipping.",
-                        symbol, timeframe, pattern_name
+                         symbol, timeframe, pattern_name
                     );
                     return Ok(()); // Skip processing if no data fetched
                 }
@@ -740,7 +739,7 @@ async fn process_symbol_timeframe_pattern(
                         "CSV parsing error for {}/{}: {}",
                         symbol, timeframe, csv_err
                     );
-                    // This is a more critical error, return it
+                     // This is a more critical error, return it
                     return Err(Box::new(csv_err) as BoxedError);
                 }
                 // REMOVED CoreError::Json arm as it doesn't exist in the definition
@@ -783,6 +782,10 @@ async fn process_symbol_timeframe_pattern(
     // Navigate the JSON structure returned by the detector
     let price_data = detection_results.get("data").and_then(|d| d.get("price"));
 
+    let mut total_zones = 0;
+    let mut active_zones = 0;
+    let mut inactive_zones = 0;
+
     // Process both supply and demand zones found in the results
     for (zone_type_key, is_supply_flag) in [("supply_zones", true), ("demand_zones", false)] {
         if let Some(zones_array) = price_data
@@ -790,13 +793,21 @@ async fn process_symbol_timeframe_pattern(
             .and_then(|zt| zt.get("zones"))
             .and_then(|z| z.as_array())
         {
+            let zone_count = zones_array.len();
+            total_zones += zone_count;
             debug!(
                 "Processing {} raw {} zones for {}/{}.",
-                zones_array.len(),
+                zone_count,
                 zone_type_key,
                 symbol,
                 timeframe
             );
+            
+            // Track zone counts by active status
+            let mut active_count = 0;
+            let mut inactive_count = 0;
+            let mut deser_failed = 0;
+            
             // Iterate through each raw zone detected
             for zone_json in zones_array {
                 // Attempt to deserialize the raw JSON into the StoredZone struct
@@ -804,16 +815,22 @@ async fn process_symbol_timeframe_pattern(
                     Ok(mut base_zone) => {
                         // Ensure required fields for processing are present
                         if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
-                            warn!(
-                                "Skipping zone due to missing start_idx or end_idx: {:?}",
-                                zone_json
-                            );
+                            warn!("Skipping zone due to missing start_idx or end_idx: {:?}", zone_json);
+                            deser_failed += 1;
                             continue; // Skip this zone if essential indices are missing
                         }
 
                         // Determine if the zone is still active based on ALL candles fetched for this run
-                        base_zone.is_active =
-                            detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
+                        base_zone.is_active = detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
+                        
+                        // Count active vs inactive
+                        if base_zone.is_active {
+                            active_count += 1;
+                            active_zones += 1;
+                        } else {
+                            inactive_count += 1;
+                            inactive_zones += 1;
+                        }
 
                         // Extract the specific candles that formed this zone
                         // NOTE: Ensure extract_formation_candles is defined elsewhere in this file or imported
@@ -827,10 +844,9 @@ async fn process_symbol_timeframe_pattern(
                         // The number of bars forming the zone is end_idx - start_idx + 1 (inclusive)
                         // We already checked start_idx and end_idx are Some above
                         let start = base_zone.start_idx.unwrap(); // Safe to unwrap here
-                        let end = base_zone.end_idx.unwrap(); // Safe to unwrap here
+                        let end = base_zone.end_idx.unwrap();     // Safe to unwrap here
 
-                        if end >= start {
-                            // Basic sanity check
+                        if end >= start { // Basic sanity check
                             base_zone.bars_active = Some(end - start + 1);
                             debug!(
                                 "Calculated bars_active: {} for zone starting at idx {}",
@@ -849,18 +865,22 @@ async fn process_symbol_timeframe_pattern(
 
                         // Add the fully processed zone to the list
                         zones_to_store.push(base_zone);
-                    }
+                    },
                     Err(e) => {
                         // Log errors if deserialization fails (e.g., structure mismatch)
                         error!(
                             "Failed to deserialize zone into StoredZone for {}/{}: {}. JSON: {}",
                             symbol, timeframe, e, zone_json
                         );
-                        // Optionally continue to next zone or return error depending on severity
-                        // continue;
+                        deser_failed += 1;
                     }
                 }
             }
+            
+            info!(
+                "[ZONE_GENERATOR] {}/{}/{}: {} {} zones - {} active, {} inactive, {} failed deserialization",
+                symbol, timeframe, zone_type_key, zone_count, zone_type_key, active_count, inactive_count, deser_failed
+            );
         } else {
             debug!(
                 "No '{}' key found or it's not an array in detection results for {}/{}/{}.",
@@ -868,6 +888,11 @@ async fn process_symbol_timeframe_pattern(
             );
         }
     }
+
+    info!(
+        "[ZONE_GENERATOR] {}/{}: TOTAL ZONES: {} - {} active, {} inactive, {} stored",
+        symbol, timeframe, total_zones, active_zones, inactive_zones, zones_to_store.len()
+    );
 
     // If any zones were processed, write them to InfluxDB
     if !zones_to_store.is_empty() {
@@ -893,19 +918,12 @@ async fn process_symbol_timeframe_pattern(
             pattern_name,
             &zones_to_store,
         )
-        .await
-        {
-            Ok(_) => info!(
-                "Successfully wrote zones for {}/{}/{}",
-                symbol, timeframe, pattern_name
-            ),
+        .await {
+            Ok(_) => info!("Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
             Err(e) => {
-                error!(
-                    "Failed to write zones batch for {}/{}/{}: {}",
-                    symbol, timeframe, pattern_name, e
-                );
-                // Decide if a write error should stop the entire process or just this combo
-                return Err(e); // Propagate write errors
+                 error!("Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
+                 // Decide if a write error should stop the entire process or just this combo
+                 return Err(e); // Propagate write errors
             }
         }
     } else {

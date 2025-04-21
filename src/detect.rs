@@ -313,43 +313,113 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                         let mut final_demand_zones: Vec<EnrichedZone> = Vec::new();
                         let mut enrichment_error: Option<String> = None;
                         let candle_count = candles.len();
-                        let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
-                             let mut processed_zones: Vec<EnrichedZone> = Vec::new();
-                             if let Some(zones) = zones_option {
-                                 for zone_json in zones.iter() {
-                                     let is_active = is_zone_still_active(zone_json, &candles, is_supply);
-                                     let bars_active_duration: Option<u64> = if is_active { zone_json.get("start_idx").and_then(|v| v.as_u64()).and_then(|start_idx| { if candle_count > start_idx as usize { Some(candle_count as u64 - start_idx) } else { warn!("[Task {}/{}] Invalid start_idx {} >= candle_count {}", current_symbol, current_timeframe, start_idx, candle_count); None } }) } else { None };
-                                     match deserialize_raw_zone_value(zone_json) {
-                                         Ok(mut enriched_zone_struct) => {
-                                             enriched_zone_struct.is_active = is_active;
-                                             enriched_zone_struct.bars_active = bars_active_duration;
-                                             processed_zones.push(enriched_zone_struct);
-                                         }
-                                         Err(e) => { error!("[Task {}/{}] Deserialize failed: {}. Value: {:?}", current_symbol, current_timeframe, e, zone_json); return Err(format!("Deserialize failed: {}", e)); }
-                                     }
-                                 }
-                             }
-                             Ok(processed_zones)
+                        
+                        let mut total_zones = 0;
+                        let mut active_zones_count = 0;
+                        let mut failed_deser_count = 0;
+                        let mut invalid_index_count = 0;
+                        
+                        let mut process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
+                            let mut processed_zones: Vec<EnrichedZone> = Vec::new();
+                            let zone_type = if is_supply { "supply_zones" } else { "demand_zones" };
+                            
+                            if let Some(zones) = zones_option {
+                                let zone_count = zones.len();
+                                total_zones += zone_count;
+                                info!("[API] [Task {}/{}] Processing {} {} zones", current_symbol, current_timeframe, zone_count, zone_type);
+                                
+                                let mut local_active = 0;
+                                let mut local_inactive = 0;
+                                let mut local_deser_fail = 0;
+                                let mut local_idx_invalid = 0;
+                                
+                                for zone_json in zones.iter() {
+                                    let is_active = is_zone_still_active(zone_json, &candles, is_supply);
+                                    
+                                    if is_active {
+                                        local_active += 1;
+                                    } else {
+                                        local_inactive += 1;
+                                    }
+                                    
+                                    // Validate index
+                                    let valid_index = zone_json.get("start_idx").and_then(|v| v.as_u64()).map(|start_idx| {
+                                        if candle_count > start_idx as usize {
+                                            true
+                                        } else {
+                                            local_idx_invalid += 1;
+                                            invalid_index_count += 1;
+                                            warn!("[API] [Task {}/{}] Invalid start_idx {} >= candle_count {}", 
+                                                current_symbol, current_timeframe, start_idx, candle_count);
+                                            false
+                                        }
+                                    }).unwrap_or(false);
+                                    
+                                    // Calculate bars_active only if index is valid
+                                    let bars_active_duration: Option<u64> = if is_active && valid_index {
+                                        zone_json.get("start_idx").and_then(|v| v.as_u64()).map(|start_idx| {
+                                            candle_count as u64 - start_idx
+                                        })
+                                    } else { 
+                                        None 
+                                    };
+                                    
+                                    match deserialize_raw_zone_value(zone_json) {
+                                        Ok(mut enriched_zone_struct) => {
+                                            enriched_zone_struct.is_active = is_active;
+                                            enriched_zone_struct.bars_active = bars_active_duration;
+                                            processed_zones.push(enriched_zone_struct);
+                                        }
+                                        Err(e) => { 
+                                            local_deser_fail += 1;
+                                            failed_deser_count += 1;
+                                            error!("[API] [Task {}/{}] Deserialize failed: {}. Value: {:?}", 
+                                                current_symbol, current_timeframe, e, zone_json); 
+                                            // Don't return an error, just log it
+                                        }
+                                    }
+                                }
+                                
+                                info!("[API] [Task {}/{}] {} zones - {} active, {} inactive, {} failed deser, {} invalid idx", 
+                                    current_symbol, current_timeframe, zone_type, local_active, local_inactive, 
+                                    local_deser_fail, local_idx_invalid);
+                                active_zones_count += local_active;
+                            }
+                            
+                            Ok(processed_zones)
                         };
                         if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
-                            match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
+                             match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
                                 Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), true) { Ok(zones) => final_supply_zones = zones, Err(e) => enrichment_error = Some(e), } }
                                 None => debug!("[Task {}/{}] No supply zones path.", current_symbol, current_timeframe),
-                            }
-                            if enrichment_error.is_none() {
+                             }
+                             if enrichment_error.is_none() {
                                 match data.get("demand_zones").and_then(|dz| dz.get("zones")).and_then(|z| z.as_array()) {
                                     Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), false) { Ok(zones) => final_demand_zones = zones, Err(e) => enrichment_error = Some(e), } }
                                     None => debug!("[Task {}/{}] No demand zones path.", current_symbol, current_timeframe),
                                 }
-                            }
-                        } else { warn!("[Task {}/{}] Missing 'data.price' path in results: {:?}", current_symbol, current_timeframe, detection_results_json); enrichment_error = Some("Missing 'data.price' structure.".to_string()); }
+                             }
+                        } else { 
+                            warn!("[Task {}/{}] Missing 'data.price' path in results: {:?}", current_symbol, current_timeframe, detection_results_json); 
+                            enrichment_error = Some("Missing 'data.price' structure.".to_string()); 
+                        }
+                        
+                        // After processing both types of zones:
+                        info!("[API] [Task {}/{}] SUMMARY: {} total zones, {} active zones, {} failed deserialization, {} invalid indices",
+                            current_symbol, current_timeframe, total_zones, active_zones_count, failed_deser_count, invalid_index_count);
+                        
                         if let Some(err_msg) = enrichment_error {
                              BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "Error: Enrichment Failed".to_string(), data: None, error_message: Some(err_msg), }
                         } else {
-                            info!("[Task {}/{}] Filtering for active zones...", current_symbol, current_timeframe);
+                            info!("[API] [Task {}/{}] Before filtering: {} supply zones, {} demand zones", 
+                                current_symbol, current_timeframe, final_supply_zones.len(), final_demand_zones.len());
+                            
                             let active_supply_zones = final_supply_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
                             let active_demand_zones = final_demand_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-                            info!("[Task {}/{}] Found {} active supply, {} active demand zones.", current_symbol, current_timeframe, active_supply_zones.len(), active_demand_zones.len());
+                            
+                            info!("[API] [Task {}/{}] After active filtering: {} active supply, {} active demand zones.", 
+                                current_symbol, current_timeframe, active_supply_zones.len(), active_demand_zones.len());
+                            
                             BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "Success".to_string(), data: Some(BulkResultData { supply_zones: active_supply_zones, demand_zones: active_demand_zones, }), error_message: None, }
                         }
                     }
@@ -374,7 +444,15 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
         Ok(item) => item,
         Err(e) => BulkResultItem { symbol: "Unknown".into(), timeframe: "Unknown".into(), status: "Error: Task Panic".into(), data: None, error_message: Some(format!("Task panicked: {}", e)), },
     }).collect();
-    info!("[get_bulk_multi_tf] Completed processing {} combinations.", results.len());
+    
+    // Add a summary count of all zones
+    let total_active_zones: usize = results.iter()
+        .filter_map(|item| item.data.as_ref().map(|data| data.supply_zones.len() + data.demand_zones.len()))
+        .sum();
+    
+    info!("[API] FINAL SUMMARY: Completed processing {} combinations with {} total active zones returned.", 
+        results.len(), total_active_zones);
+    
     let response = BulkActiveZonesResponse { results, query_params: Some(global_query.into_inner()), symbols: HashMap::new() };
     HttpResponse::Ok().json(response)
 }
