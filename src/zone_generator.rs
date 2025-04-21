@@ -323,6 +323,12 @@ async fn write_zones_batch(
             fields.push(format!("fifty_percent_line={}", v));
         }
 
+        // --- ADD bars_active FIELD (as integer) ---
+        if let Some(v) = zone.bars_active {
+            fields.push(format!("bars_active={}i", v)); // Append 'i' for integer type in line protocol
+        }
+        // --- End Add bars_active ---
+
         // Serialize formation candles array into a JSON string field
         let candles_json = match serde_json::to_string(&zone.formation_candles) {
             Ok(s) => s,
@@ -673,7 +679,7 @@ async fn process_symbol_timeframe_pattern(
                         "InfluxDB request failed for {}/{}: {}. Skipping.",
                         symbol, timeframe, rq_err
                     );
-                    return Ok(());
+                    return Ok(()); // Treat request errors as skippable for this combo
                 }
                 CoreError::Config(cfg_err)
                     if cfg_err.contains("Pattern") && cfg_err.contains("not supported") =>
@@ -682,26 +688,37 @@ async fn process_symbol_timeframe_pattern(
                         "Pattern '{}' not supported. Skipping combo {}/{}/{}.",
                         pattern_name, symbol, timeframe, pattern_name
                     );
-                    return Ok(());
+                    return Ok(()); // Skip unsupported patterns gracefully
+                }
+                 CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
+                    info!( // Log as info, not error, as empty data is expected sometimes
+                        "No candle data returned by query for {}/{}/{}. Skipping.",
+                         symbol, timeframe, pattern_name
+                    );
+                    return Ok(()); // Skip processing if no data fetched
                 }
                 CoreError::Config(cfg_err) if cfg_err.contains("CSV header mismatch") => {
                     error!(
                         "CSV header mismatch for {}/{}: {}",
                         symbol, timeframe, cfg_err
                     );
+                    // This is a more critical error, return it
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         cfg_err,
-                    )) as Box<dyn Error + Send + Sync>);
+                    )) as BoxedError);
                 }
                 CoreError::Csv(csv_err) => {
                     error!(
                         "CSV parsing error for {}/{}: {}",
                         symbol, timeframe, csv_err
                     );
-                    return Err(Box::new(csv_err) as Box<dyn Error + Send + Sync>);
+                     // This is a more critical error, return it
+                    return Err(Box::new(csv_err) as BoxedError);
                 }
+                // REMOVED CoreError::Json arm as it doesn't exist in the definition
                 _ => {
+                    // Catch-all for other CoreErrors or wrapped errors
                     error!(
                         "Core fetch/detect error for {}/{}: {}",
                         symbol, timeframe, e
@@ -709,18 +726,17 @@ async fn process_symbol_timeframe_pattern(
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         e.to_string(),
-                    )) as Box<dyn Error + Send + Sync>);
+                    )) as BoxedError);
                 }
             }
         }
     };
 
-    // Rest of the function continues as before...
-    // If no candle data was retrieved, skip further processing for this combination
+    // If no candle data was retrieved (handled above, but good safety check)
     if candles.is_empty() {
         info!(
-            "No candle data fetched for {}/{}. Skipping zone processing.",
-            symbol, timeframe
+            "No candle data available for {}/{}/{}. Skipping zone processing.",
+            symbol, timeframe, pattern_name
         );
         return Ok(());
     }
@@ -759,15 +775,47 @@ async fn process_symbol_timeframe_pattern(
                 // Attempt to deserialize the raw JSON into the StoredZone struct
                 match serde_json::from_value::<StoredZone>(zone_json.clone()) {
                     Ok(mut base_zone) => {
+                        // Ensure required fields for processing are present
+                        if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
+                            warn!("Skipping zone due to missing start_idx or end_idx: {:?}", zone_json);
+                            continue; // Skip this zone if essential indices are missing
+                        }
+
                         // Determine if the zone is still active based on ALL candles fetched for this run
                         base_zone.is_active =
                             detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
+
                         // Extract the specific candles that formed this zone
+                        // NOTE: Ensure extract_formation_candles is defined elsewhere in this file or imported
                         base_zone.formation_candles = extract_formation_candles(
                             &candles,
                             base_zone.start_idx,
                             base_zone.end_idx,
                         );
+
+                        // --- Calculate and assign bars_active ---
+                        // The number of bars forming the zone is end_idx - start_idx + 1 (inclusive)
+                        // We already checked start_idx and end_idx are Some above
+                        let start = base_zone.start_idx.unwrap(); // Safe to unwrap here
+                        let end = base_zone.end_idx.unwrap();     // Safe to unwrap here
+
+                        if end >= start { // Basic sanity check
+                            base_zone.bars_active = Some(end - start + 1);
+                            debug!(
+                                "Calculated bars_active: {} for zone starting at idx {}",
+                                base_zone.bars_active.unwrap_or(0), // Use unwrap_or for logging clarity
+                                start
+                            );
+                        } else {
+                            warn!(
+                                "Invalid indices for bars_active calculation: start={}, end={}. Setting bars_active to None.",
+                                start, end
+                            );
+                            // Reset to None if calculation is invalid
+                            base_zone.bars_active = None;
+                        }
+                        // --- End calculation ---
+
                         // Add the fully processed zone to the list
                         zones_to_store.push(base_zone);
                     }
@@ -777,9 +825,16 @@ async fn process_symbol_timeframe_pattern(
                             "Failed to deserialize zone into StoredZone for {}/{}: {}. JSON: {}",
                             symbol, timeframe, e, zone_json
                         );
+                        // Optionally continue to next zone or return error depending on severity
+                        // continue;
                     }
                 }
             }
+        } else {
+             debug!(
+                "No '{}' key found or it's not an array in detection results for {}/{}/{}.",
+                zone_type_key, symbol, timeframe, pattern_name
+            );
         }
     }
 
@@ -793,7 +848,9 @@ async fn process_symbol_timeframe_pattern(
             pattern_name
         );
         // Call the batch write function, passing necessary details
-        write_zones_batch(
+        // The write_zones_batch function already handles the 'bars_active' field correctly
+        // NOTE: Ensure write_zones_batch is defined elsewhere in this file or imported
+        match write_zones_batch(
             http_client,
             influx_host,
             influx_org,
@@ -805,7 +862,14 @@ async fn process_symbol_timeframe_pattern(
             pattern_name,
             &zones_to_store,
         )
-        .await?; // Propagate write errors
+        .await {
+            Ok(_) => info!("Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
+            Err(e) => {
+                 error!("Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
+                 // Decide if a write error should stop the entire process or just this combo
+                 return Err(e); // Propagate write errors
+            }
+        }
     } else {
         info!(
             "No zones detected or processed to store for {}/{}/{}.",

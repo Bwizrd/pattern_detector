@@ -128,6 +128,9 @@ pub struct StoredZone {
     #[serde(default)]
     pub is_active: bool, // As of the end_time of the generator run
     // Specific candles forming the zone
+    #[serde(skip_serializing_if = "Option::is_none")] // Keep Option for flexibility
+    pub bars_active: Option<u64>, // <<< Ensure this exists
+    
     #[serde(default)]
     pub formation_candles: Vec<CandleData>,
 }
