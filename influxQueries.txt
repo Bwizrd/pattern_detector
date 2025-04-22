@@ -1,9 +1,41 @@
-influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["is_active"] == "true") |> group() |> count() |> yield(name: "total_active_zones")'
+influx delete --bucket market_data --predicate '_measurement="zones"' --start 2023-01-01T00:00:00Z --stop 2030-01-01T00:00:00Z
+
+    influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["is_active"] == "true") |> group() |> count() |> yield(name: "total_active_zones")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD_SB") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> group() |> count() |> yield(name: "eurusd_5m_total_count")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD_SB") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> filter(fn: (r) => r["is_active"] == "true") |> count() |> yield(name: "eurusd_5m_active_count")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> filter(fn: (r) => r["is_active"] == "T") |> group() |> count() |> yield(name: "eurusd_5m_active_T_count")'
+
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> filter(fn: (r) => r["is_active"] == true) |> group() |> count() |> yield(name: "eurusd_5m_active_bool_count")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> filter(fn: (r) => r["is_active"] == "T") |> group() |> count() |> yield(name: "eurusd_5m_active_T_count_no_candles")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> filter(fn: (r) => r["_field"] == "is_active") |> filter(fn: (r) => r["_value"] == 1) |> group() |> count() |> yield(name: "eurusd_5m_active_field_count")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse --raw 'from(bucket: "market_data")
+  |> range(start: timestamp("2025-03-04T15:35:00Z"), stop: timestamp("2025-03-04T15:35:01Z"))
+  |> filter(fn: (r) => r["_measurement"] == "zones")
+  |> filter(fn: (r) => r["symbol"] == "EURUSD_SB")
+  |> filter(fn: (r) => r["timeframe"] == "5m")
+  |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar")
+  |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")'
+
+  influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q==
+ -o PansHouse --raw 'from(bucket: "market_data")
+  |> range(start: 2025-03-04T15:35:00Z, stop: 2025-03-04T15:35:01Z) // Use RFC3339 directly
+  |> filter(fn: (r) => r["_measurement"] == "zones")
+  |> filter(fn: (r) => r["symbol"] == "EURUSD_SB")
+  |> filter(fn: (r) => r["timeframe"] == "5m")
+  |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar")
+  |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")'
 
 INFLUXDB_ORG='PansHouse'
 INFLUXDB_BUCKET=market_data
 INFLUXDB_TOKEN=VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q==
-
+VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q==
 
 
 grep "After active filtering:" backend.log
