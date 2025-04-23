@@ -225,6 +225,7 @@ async fn write_zones_batch(
 ) -> Result<(), BoxedError> {
     // Return generic Box<dyn Error>
     if zones_to_store.is_empty() {
+        info!("No zones provided to write_zones_batch for {}/{}", symbol, timeframe); // Added context
         return Ok(());
     }
 
@@ -253,31 +254,9 @@ async fn write_zones_batch(
         }
 
         // Determine zone type heuristically from detection method string
-        let zone_type = if zone
-            .detection_method
-            .as_deref()
-            .unwrap_or("")
-            .contains("Bullish")
-            || zone
-                .detection_method
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("demand")
-        {
+        let zone_type = if zone.detection_method.as_deref().unwrap_or("").contains("Bullish") || zone.detection_method.as_deref().unwrap_or("").to_lowercase().contains("demand") {
             "demand"
-        } else if zone
-            .detection_method
-            .as_deref()
-            .unwrap_or("")
-            .contains("Bearish")
-            || zone
-                .detection_method
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("supply")
-        {
+        } else if zone.detection_method.as_deref().unwrap_or("").contains("Bearish") || zone.detection_method.as_deref().unwrap_or("").to_lowercase().contains("supply") {
             "supply"
         } else {
             "unknown"
@@ -286,72 +265,43 @@ async fn write_zones_batch(
         // Start line protocol: measurement,tag_set field_set timestamp
         line_protocol_body.push_str(measurement_name);
 
-        // Add tags (escape tag keys/values if they contain special chars like space, comma, equals)
+        // Add tags (escape tag keys/values) - WITHOUT is_active
         line_protocol_body.push_str(&format!(
             ",symbol={}",
-            symbol
-                .replace(' ', "\\ ")
-                .replace(',', "\\,")
-                .replace('=', "\\=")
+            symbol.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")
         ));
         line_protocol_body.push_str(&format!(",timeframe={}", timeframe));
         line_protocol_body.push_str(&format!(
             ",pattern={}",
-            pattern
-                .replace(' ', "\\ ")
-                .replace(',', "\\,")
-                .replace('=', "\\=")
+            pattern.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")
         ));
         line_protocol_body.push_str(&format!(",zone_type={}", zone_type));
-        line_protocol_body.push_str(&format!(",is_active={}", zone.is_active)); // Boolean T/F
+        // *** REMOVED is_active TAG LINE ***
+        // line_protocol_body.push_str(&format!(",is_active={}", zone.is_active));
 
         // Add fields
         let mut fields = Vec::new();
-        if let Some(v) = zone.zone_low {
-            fields.push(format!("zone_low={}", v));
-        }
-        if let Some(v) = zone.zone_high {
-            fields.push(format!("zone_high={}", v));
-        }
-        // String fields need to be double-quoted and internal quotes escaped
-        if let Some(v) = &zone.start_time {
-            fields.push(format!("start_time_rfc3339=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = &zone.end_time {
-            fields.push(format!("end_time_rfc3339=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = &zone.detection_method {
-            fields.push(format!("detection_method=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = zone.quality_score {
-            fields.push(format!("quality_score={}", v));
-        }
-        if let Some(v) = &zone.strength {
-            fields.push(format!("strength=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = zone.fifty_percent_line {
-            fields.push(format!("fifty_percent_line={}", v));
-        }
+        if let Some(v) = zone.zone_low { fields.push(format!("zone_low={}", v)); }
+        if let Some(v) = zone.zone_high { fields.push(format!("zone_high={}", v)); }
+        if let Some(v) = &zone.start_time { fields.push(format!("start_time_rfc3339=\"{}\"", v.escape_default())); }
+        if let Some(v) = &zone.end_time { fields.push(format!("end_time_rfc3339=\"{}\"", v.escape_default())); }
+        if let Some(v) = &zone.detection_method { fields.push(format!("detection_method=\"{}\"", v.escape_default())); }
+        if let Some(v) = zone.quality_score { fields.push(format!("quality_score={}", v)); }
+        if let Some(v) = &zone.strength { fields.push(format!("strength=\"{}\"", v.escape_default())); }
+        if let Some(v) = zone.fifty_percent_line { fields.push(format!("fifty_percent_line={}", v)); }
+        if let Some(v) = zone.bars_active { fields.push(format!("bars_active={}i", v)); }
 
-        // --- ADD bars_active FIELD (as integer) ---
-        if let Some(v) = zone.bars_active {
-            fields.push(format!("bars_active={}i", v)); // Append 'i' for integer type in line protocol
-        }
-        // --- End Add bars_active ---
+        // *** ADD is_active as INTEGER FIELD ***
+        let is_active_int = if zone.is_active { 1 } else { 0 };
+        fields.push(format!("is_active={}i", is_active_int)); // Note the 'i' suffix
+        // *** END ADDED FIELD ***
 
         // Serialize formation candles array into a JSON string field
         let candles_json = match serde_json::to_string(&zone.formation_candles) {
             Ok(s) => s,
-            Err(e) => {
-                error!("Failed to serialize formation candles: {}", e);
-                "[]".to_string()
-            }
+            Err(e) => { error!("Failed to serialize formation candles: {}", e); "[]".to_string() }
         };
-        // Escape double quotes within the JSON string for line protocol
-        fields.push(format!(
-            "formation_candles_json=\"{}\"",
-            candles_json.replace('"', "\\\"")
-        ));
+        fields.push(format!("formation_candles_json=\"{}\"", candles_json.replace('"', "\\\"")));
 
         // Combine fields and add timestamp if any fields were added
         if !fields.is_empty() {
@@ -363,26 +313,19 @@ async fn write_zones_batch(
         } else {
             warn!("Skipping zone point with no fields: {:?}", zone);
         }
-    }
+    } // End of loop through zones
 
     // If no valid points were generated, return early
     if line_protocol_body.is_empty() {
-        info!("No valid points generated for batch write.");
+        info!("No valid points generated for batch write for {}/{}.", symbol, timeframe); // Added context
         return Ok(());
     }
 
     // Prepare and send the HTTP POST request to the InfluxDB write API
-    let write_url = format!(
-        "{}/api/v2/write?org={}&bucket={}&precision=ns",
-        influx_host, influx_org, write_bucket
-    );
+    let write_url = format!("{}/api/v2/write?org={}&bucket={}&precision=ns", influx_host, influx_org, write_bucket);
     info!(
         "Writing batch of ~{} points ({} bytes) for {}/{} to bucket '{}'",
-        line_protocol_body.lines().count(),
-        line_protocol_body.len(),
-        symbol,
-        timeframe,
-        write_bucket
+        line_protocol_body.lines().count(), line_protocol_body.len(), symbol, timeframe, write_bucket
     );
 
     // Retry logic for writing
@@ -400,47 +343,27 @@ async fn write_zones_batch(
         match response {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    info!("Batch write successful.");
+                    info!("Batch write successful for {}/{}.", symbol, timeframe); // Added context
                     return Ok(()); // Success
                 } else {
-                    // Handle HTTP errors from InfluxDB
                     let status = resp.status();
-                    let body = resp
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "Failed to read error body".to_string());
+                    let body = resp.text().await.unwrap_or_else(|_| "Failed to read error body".to_string());
                     attempts += 1;
-                    error!(
-                        "InfluxDB write attempt {}/{} failed with status {}: {}",
-                        attempts, max_attempts, status, body
-                    );
-                    if attempts >= max_attempts {
-                        return Err(format!(
-                            "InfluxDB write failed after {} attempts (status {}): {}",
-                            max_attempts, status, body
-                        )
-                        .into());
-                    }
-                    // Exponential backoff delay before retrying
+                    error!("InfluxDB write attempt {}/{} for {}/{} failed with status {}: {}", attempts, max_attempts, symbol, timeframe, status, body);
+                    if attempts >= max_attempts { return Err(format!("InfluxDB write failed after {} attempts for {}/{} (status {}): {}", max_attempts, symbol, timeframe, status, body).into()); }
                     tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(attempts))).await;
                 }
             }
             Err(e) => {
-                // Handle reqwest network errors
                 attempts += 1;
-                error!(
-                    "HTTP request error during write attempt {}/{}: {}",
-                    attempts, max_attempts, e
-                );
-                if attempts >= max_attempts {
-                    return Err(Box::new(e)); // Return the reqwest error
-                }
+                error!("HTTP request error during write attempt {}/{} for {}/{}: {}", attempts, max_attempts, symbol, timeframe, e);
+                if attempts >= max_attempts { return Err(Box::new(e)); }
                 tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(attempts))).await;
             }
         }
     }
     // Should not be reached if retry logic is correct
-    Err("Max write attempts exceeded (logic error)".into())
+    Err(format!("Max write attempts exceeded for {}/{} (logic error)", symbol, timeframe).into())
 }
 
 // --- Main Processing Function for the Generator with Concurrency ---
