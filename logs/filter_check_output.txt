@@ -1,0 +1,54 @@
+--- Checking: AUDCAD/30m | StartTime: 2025-04-03T14:30:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: AUDJPY/1h | StartTime: 2025-04-04T01:00:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: AUDJPY/5m | StartTime: 2025-04-16T17:25:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: AUDNZD/15m | StartTime: 2025-04-10T00:00:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: AUDNZD/30m | StartTime: 2025-04-09T23:30:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: AUDUSD/5m | StartTime: 2025-04-11T08:40:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: CADJPY/15m | StartTime: 2025-04-10T07:15:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: CHFJPY/15m | StartTime: 2025-04-15T12:00:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: CHFJPY/5m | StartTime: 2025-04-11T17:40:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: EURAUD/1h | StartTime: 2025-04-09T00:00:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: EURCAD/15m | StartTime: 2025-03-05T07:15:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: EURNZD/15m | StartTime: 2025-04-14T12:00:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: GBPCAD/15m | StartTime: 2025-04-11T00:15:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: GBPJPY/15m | StartTime: 2025-04-04T07:15:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: GBPNZD/5m | StartTime: 2025-04-09T12:05:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: GBPUSD/15m | StartTime: 2025-03-04T08:00:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: USDCHF/15m | StartTime: 2025-04-10T14:30:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+
+--- Checking: USDJPY/15m | StartTime: 2025-04-16T17:15:00Z ---
+  (No matching API_FILTER_CHECK log line found for this zone)
+

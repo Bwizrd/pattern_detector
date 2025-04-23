@@ -15,6 +15,16 @@ influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdj
 
 influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["symbol"] == "EURUSD") |> filter(fn: (r) => r["timeframe"] == "5m") |> filter(fn: (r) => r["pattern"] == "fifty_percent_before_big_bar") |> filter(fn: (r) => r["_field"] == "is_active") |> filter(fn: (r) => r["_value"] == 1) |> group() |> count() |> yield(name: "eurusd_5m_active_field_count")'
 
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["_field"] == "is_active") |> filter(fn: (r) => r["_value"] == 1) |> group() |> count() |> yield(name: "total_active_zones_field")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["_field"] == "is_active") |> filter(fn: (r) => r["_value"] == 1) |> group() |> count() |> yield(name: "total_active_zones_count")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => r["_field"] == "is_active") |> filter(fn: (r) => r["_value"] == 1) |> group() |> count() |> yield(name: "total_active_zones_count")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => exists r.is_active) |> filter(fn: (r) => r["is_active"] == "true") |> group(columns: ["_measurement"]) |> count() |> group() |> sum(column: "_value")'
+
+influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse 'from(bucket: "market_data") |> range(start: -180d) |> filter(fn: (r) => r["_measurement"] == "zones") |> filter(fn: (r) => exists r.is_active) |> filter(fn: (r) => r["is_active"] == "true") |> group(columns: ["_measurement"]) |> count() |> group() |> sum(column: "_value") |> yield(name: "total_active_zones_tag_count")'
+
 influx query -t VNC3xnPXodbpC3yJ_riWrBpN0lCA0k-mPiFsocR-Wu9K8kFHQ3JUp32bOCQaNOdjVI6zfGuxoZpgGZl-ZiXP-Q== -o PansHouse --raw 'from(bucket: "market_data")
   |> range(start: timestamp("2025-03-04T15:35:00Z"), stop: timestamp("2025-03-04T15:35:01Z"))
   |> filter(fn: (r) => r["_measurement"] == "zones")

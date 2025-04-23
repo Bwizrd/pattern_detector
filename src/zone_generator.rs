@@ -211,6 +211,8 @@ fn extract_formation_candles(
 
 // --- InfluxDB Writing Logic using reqwest ---
 // Writes a batch of StoredZone data points using InfluxDB Line Protocol via HTTP API.
+// --- InfluxDB Writing Logic using reqwest ---
+// Writes a batch of StoredZone data points using InfluxDB Line Protocol via HTTP API.
 async fn write_zones_batch(
     http_client: &Client,
     influx_host: &str,
@@ -303,7 +305,7 @@ async fn write_zones_batch(
                 .replace('=', "\\=")
         ));
         line_protocol_body.push_str(&format!(",zone_type={}", zone_type));
-        line_protocol_body.push_str(&format!(",is_active={}", zone.is_active)); // Boolean T/F
+        // Removed tag-based is_active
 
         // Add fields
         let mut fields = Vec::new();
@@ -332,6 +334,10 @@ async fn write_zones_batch(
         if let Some(v) = zone.fifty_percent_line {
             fields.push(format!("fifty_percent_line={}", v));
         }
+
+        // Add is_active as integer field (MOVED HERE)
+        let is_active_val = if zone.is_active { 1 } else { 0 };
+        fields.push(format!("is_active={}i", is_active_val));
 
         // --- ADD bars_active FIELD (as integer) ---
         if let Some(v) = zone.bars_active {
@@ -672,9 +678,6 @@ async fn process_symbol_timeframe_pattern(
     influx_org: &str,
     influx_token: &str,
 ) -> Result<(), BoxedError> {
-    // Add Send + Sync bounds to ensure thread safety
-
-    // Prepare query parameters for the detection function
     let query = ChartQuery {
         symbol: symbol.to_string(),
         timeframe: timeframe.to_string(),
@@ -688,80 +691,66 @@ async fn process_symbol_timeframe_pattern(
         enable_trailing_stop: None,
     };
 
-    // Call the shared detection function from detect.rs
-    // Process the result immediately to avoid moving non-Send types across await points
     let fetch_result =
         detect::_fetch_and_detect_core(&query, &format!("generator_{}/{}", symbol, timeframe))
             .await;
 
-    // Process the result of the detection core function - immediately process data to avoid Send issues
     let (candles, detection_results) = match fetch_result {
-        Ok((c, _recognizer, d)) => (c, d), // Extract candles and JSON results, drop non-Send recognizer
-        Err(e) => {
-            // Handle errors from detection core
-            match e {
-                CoreError::Request(rq_err) => {
-                    warn!(
-                        "InfluxDB request failed for {}/{}: {}. Skipping.",
-                        symbol, timeframe, rq_err
-                    );
-                    return Ok(()); // Treat request errors as skippable for this combo
-                }
-                CoreError::Config(cfg_err)
-                    if cfg_err.contains("Pattern") && cfg_err.contains("not supported") =>
-                {
-                    warn!(
-                        "Pattern '{}' not supported. Skipping combo {}/{}/{}.",
-                        pattern_name, symbol, timeframe, pattern_name
-                    );
-                    return Ok(()); // Skip unsupported patterns gracefully
-                }
-                 CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
-                    info!( // Log as info, not error, as empty data is expected sometimes
-                        "No candle data returned by query for {}/{}/{}. Skipping.",
-                         symbol, timeframe, pattern_name
-                    );
-                    return Ok(()); // Skip processing if no data fetched
-                }
-                CoreError::Config(cfg_err) if cfg_err.contains("CSV header mismatch") => {
-                    error!(
-                        "CSV header mismatch for {}/{}: {}",
-                        symbol, timeframe, cfg_err
-                    );
-                    // This is a more critical error, return it
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        cfg_err,
-                    )) as BoxedError);
-                }
-                CoreError::Csv(csv_err) => {
-                    error!(
-                        "CSV parsing error for {}/{}: {}",
-                        symbol, timeframe, csv_err
-                    );
-                     // This is a more critical error, return it
-                    return Err(Box::new(csv_err) as BoxedError);
-                }
-                // REMOVED CoreError::Json arm as it doesn't exist in the definition
-                _ => {
-                    // Catch-all for other CoreErrors or wrapped errors
-                    error!(
-                        "Core fetch/detect error for {}/{}: {}",
-                        symbol, timeframe, e
-                    );
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )) as BoxedError);
-                }
+        Ok((c, _, d)) => (c, d),
+        Err(e) => match e {
+            CoreError::Request(rq_err) => {
+                warn!(
+                    "InfluxDB request failed for {}/{}: {}. Skipping.",
+                    symbol, timeframe, rq_err
+                );
+                return Ok(());
             }
-        }
+            CoreError::Config(cfg_err)
+                if cfg_err.contains("Pattern") && cfg_err.contains("not supported") =>
+            {
+                warn!("Pattern '{}' not supported. Skipping...", pattern_name);
+                return Ok(());
+            }
+            CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
+                info!(
+                    "No candle data for {}/{}/{}. Skipping.",
+                    symbol, timeframe, pattern_name
+                );
+                return Ok(());
+            }
+            CoreError::Config(cfg_err) if cfg_err.contains("CSV header mismatch") => {
+                error!(
+                    "CSV header mismatch for {}/{}: {}",
+                    symbol, timeframe, cfg_err
+                );
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    cfg_err,
+                )) as BoxedError);
+            }
+            CoreError::Csv(csv_err) => {
+                error!(
+                    "CSV parsing error for {}/{}: {}",
+                    symbol, timeframe, csv_err
+                );
+                return Err(Box::new(csv_err) as BoxedError);
+            }
+            _ => {
+                error!(
+                    "Core fetch/detect error for {}/{}: {}",
+                    symbol, timeframe, e
+                );
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                )) as BoxedError);
+            }
+        },
     };
 
-    // If no candle data was retrieved (handled above, but good safety check)
     if candles.is_empty() {
         info!(
-            "No candle data available for {}/{}/{}. Skipping zone processing.",
+            "No candle data for {}/{}/{}. Skipping.",
             symbol, timeframe, pattern_name
         );
         return Ok(());
@@ -777,16 +766,25 @@ async fn process_symbol_timeframe_pattern(
         symbol, timeframe, pattern_name
     );
 
-    // Prepare to store processed zones
-    let mut zones_to_store: Vec<StoredZone> = Vec::new();
-    // Navigate the JSON structure returned by the detector
-    let price_data = detection_results.get("data").and_then(|d| d.get("price"));
+    // Log RAW JSON
+    if let Ok(results_str) = serde_json::to_string_pretty(&detection_results) {
+        info!(
+            "[RAW_DETECTION_RESULTS] {}/{}: \n{}",
+            symbol, timeframe, results_str
+        );
+    } else {
+        warn!(
+            "[RAW_DETECTION_RESULTS] {}/{}: Failed to serialize detection results.",
+            symbol, timeframe
+        );
+    }
 
+    let mut zones_to_store: Vec<StoredZone> = Vec::new();
+    let price_data = detection_results.get("data").and_then(|d| d.get("price"));
     let mut total_zones = 0;
     let mut active_zones = 0;
     let mut inactive_zones = 0;
 
-    // Process both supply and demand zones found in the results
     for (zone_type_key, is_supply_flag) in [("supply_zones", true), ("demand_zones", false)] {
         if let Some(zones_array) = price_data
             .and_then(|p| p.get(zone_type_key))
@@ -797,33 +795,35 @@ async fn process_symbol_timeframe_pattern(
             total_zones += zone_count;
             debug!(
                 "Processing {} raw {} zones for {}/{}.",
-                zone_count,
-                zone_type_key,
-                symbol,
-                timeframe
+                zone_count, zone_type_key, symbol, timeframe
             );
-            
-            // Track zone counts by active status
             let mut active_count = 0;
             let mut inactive_count = 0;
             let mut deser_failed = 0;
-            
-            // Iterate through each raw zone detected
+
             for zone_json in zones_array {
-                // Attempt to deserialize the raw JSON into the StoredZone struct
+                // **** Extract start_idx HERE for logging ****
+                let current_start_idx = zone_json.get("start_idx").and_then(|v| v.as_u64());
+
                 match serde_json::from_value::<StoredZone>(zone_json.clone()) {
                     Ok(mut base_zone) => {
-                        // Ensure required fields for processing are present
                         if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
-                            warn!("Skipping zone due to missing start_idx or end_idx: {:?}", zone_json);
+                            warn!("Skipping zone missing indices...");
                             deser_failed += 1;
-                            continue; // Skip this zone if essential indices are missing
+                            continue;
                         }
 
-                        // Determine if the zone is still active based on ALL candles fetched for this run
-                        base_zone.is_active = detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
-                        
-                        // Count active vs inactive
+                        // Check activity
+                        base_zone.is_active =
+                            detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
+
+                        // **** Log activity check result ****
+                        info!("[GENERATOR_ACTIVITY_CHECK] {}/{}: Zone start_idx {:?}, is_active result: {}",
+                              symbol, timeframe,
+                              current_start_idx, // Use variable defined above
+                              base_zone.is_active);
+                        // **** END Log ****
+
                         if base_zone.is_active {
                             active_count += 1;
                             active_zones += 1;
@@ -832,81 +832,85 @@ async fn process_symbol_timeframe_pattern(
                             inactive_zones += 1;
                         }
 
-                        // Extract the specific candles that formed this zone
-                        // NOTE: Ensure extract_formation_candles is defined elsewhere in this file or imported
                         base_zone.formation_candles = extract_formation_candles(
                             &candles,
                             base_zone.start_idx,
                             base_zone.end_idx,
                         );
-
-                        // --- Calculate and assign bars_active ---
-                        // The number of bars forming the zone is end_idx - start_idx + 1 (inclusive)
-                        // We already checked start_idx and end_idx are Some above
-                        let start = base_zone.start_idx.unwrap(); // Safe to unwrap here
-                        let end = base_zone.end_idx.unwrap();     // Safe to unwrap here
-
-                        if end >= start { // Basic sanity check
-                            base_zone.bars_active = Some(end - start + 1);
-                            debug!(
-                                "Calculated bars_active: {} for zone starting at idx {}",
-                                base_zone.bars_active.unwrap_or(0), // Use unwrap_or for logging clarity
-                                start
-                            );
+                        if let (Some(start), Some(end)) = (base_zone.start_idx, base_zone.end_idx) {
+                            if end >= start {
+                                base_zone.bars_active = Some(end - start + 1); /* debug log */
+                            } else {                                /* warn log */
+                                base_zone.bars_active = None;
+                            }
                         } else {
-                            warn!(
-                                "Invalid indices for bars_active calculation: start={}, end={}. Setting bars_active to None.",
-                                start, end
-                            );
-                            // Reset to None if calculation is invalid
                             base_zone.bars_active = None;
                         }
-                        // --- End calculation ---
 
-                        // Add the fully processed zone to the list
+                        let was_active = base_zone.is_active;
                         zones_to_store.push(base_zone);
-                    },
+                        debug!(
+                            "[PUSH_CHECK] Pushed zone (active: {}). zones_to_store size is now: {}",
+                            was_active,
+                            zones_to_store.len()
+                        );
+                    }
                     Err(e) => {
-                        // Log errors if deserialization fails (e.g., structure mismatch)
                         error!(
-                            "Failed to deserialize zone into StoredZone for {}/{}: {}. JSON: {}",
+                            "Failed to deserialize zone for {}/{}: {}. JSON: {}",
                             symbol, timeframe, e, zone_json
                         );
                         deser_failed += 1;
                     }
                 }
             }
-            
-            info!(
-                "[ZONE_GENERATOR] {}/{}/{}: {} {} zones - {} active, {} inactive, {} failed deserialization",
-                symbol, timeframe, zone_type_key, zone_count, zone_type_key, active_count, inactive_count, deser_failed
-            );
+            info!("[ZONE_GENERATOR] {}/{}/{}: {} {} zones - {} active, {} inactive, {} failed deserialization", symbol, timeframe, zone_type_key, zone_count, zone_type_key, active_count, inactive_count, deser_failed);
         } else {
             debug!(
-                "No '{}' key found or it's not an array in detection results for {}/{}/{}.",
+                "No '{}' key found or not an array for {}/{}/{}",
                 zone_type_key, symbol, timeframe, pattern_name
             );
         }
     }
 
     info!(
-        "[ZONE_GENERATOR] {}/{}: TOTAL ZONES: {} - {} active, {} inactive, {} stored",
-        symbol, timeframe, total_zones, active_zones, inactive_zones, zones_to_store.len()
+        "[ZONE_GENERATOR] {}/{}: TOTAL ZONES: {} - {} active, {} inactive, {} to be stored",
+        symbol,
+        timeframe,
+        total_zones,
+        active_zones,
+        inactive_zones,
+        zones_to_store.len()
     );
 
-    // If any zones were processed, write them to InfluxDB
+    // Log active start times before write
+    let active_zone_start_times: Vec<String> = zones_to_store
+        .iter()
+        .filter(|z| z.is_active)
+        .filter_map(|z| z.start_time.clone())
+        .collect();
+    info!(
+        "[GENERATOR_ACTIVE_LIST] {}/{}: Found {} active zones with start_times: {:?}",
+        symbol,
+        timeframe,
+        active_zone_start_times.len(),
+        active_zone_start_times
+    );
+
+    // PRE-WRITE check log
+    let final_stored_count = zones_to_store.len();
+    let final_active_stored_count = zones_to_store.iter().filter(|z| z.is_active).count();
+    let final_inactive_stored_count = final_stored_count - final_active_stored_count;
+    info!("[ZONE_GENERATOR] {}/{}: PRE-WRITE CHECK: zones_to_store contains {} total zones ({} active, {} inactive).", symbol, timeframe, final_stored_count, final_active_stored_count, final_inactive_stored_count);
+
+    // Call write_zones_batch
     if !zones_to_store.is_empty() {
         info!(
             "Storing {} processed zones for {}/{}/{}.",
-            zones_to_store.len(),
-            symbol,
-            timeframe,
-            pattern_name
+            final_stored_count, symbol, timeframe, pattern_name
         );
-        // Call the batch write function, passing necessary details
-        // The write_zones_batch function already handles the 'bars_active' field correctly
-        // NOTE: Ensure write_zones_batch is defined elsewhere in this file or imported
         match write_zones_batch(
+            // Use the correct version (writing tag is_active="true" or integer field is_active=1i)
             http_client,
             influx_host,
             influx_org,
@@ -918,12 +922,18 @@ async fn process_symbol_timeframe_pattern(
             pattern_name,
             &zones_to_store,
         )
-        .await {
-            Ok(_) => info!("Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
+        .await
+        {
+            Ok(_) => info!(
+                "Successfully wrote zones for {}/{}/{}",
+                symbol, timeframe, pattern_name
+            ),
             Err(e) => {
-                 error!("Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
-                 // Decide if a write error should stop the entire process or just this combo
-                 return Err(e); // Propagate write errors
+                error!(
+                    "Failed to write zones batch for {}/{}/{}: {}",
+                    symbol, timeframe, pattern_name, e
+                );
+                return Err(e);
             }
         }
     } else {
@@ -933,5 +943,5 @@ async fn process_symbol_timeframe_pattern(
         );
     }
 
-    Ok(()) // Indicate successful processing for this combination
+    Ok(())
 }

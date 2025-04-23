@@ -1,8 +1,4 @@
-use log::{debug, error, info, warn};
-use crate::patterns::{
-    FiftyPercentBeforeBigBarRecognizer,
-    PatternRecognizer,
-};
+use crate::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
 use crate::types::{
     deserialize_raw_zone_value,
     BulkActiveZonesResponse,
@@ -17,6 +13,7 @@ use actix_web::{web, HttpResponse, Responder};
 use csv::ReaderBuilder;
 use dotenv::dotenv;
 use futures::future::join_all;
+use log::{debug, error, info, warn};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -73,34 +70,51 @@ pub enum CoreError {
     Processing(String),
 }
 impl std::fmt::Display for CoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{:?}", self) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 impl Error for CoreError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> { None }
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
 }
 impl From<std::env::VarError> for CoreError {
-    fn from(err: std::env::VarError) -> Self { CoreError::EnvVar(err.to_string()) }
+    fn from(err: std::env::VarError) -> Self {
+        CoreError::EnvVar(err.to_string())
+    }
 }
 impl From<reqwest::Error> for CoreError {
-    fn from(err: reqwest::Error) -> Self { CoreError::Request(err) }
+    fn from(err: reqwest::Error) -> Self {
+        CoreError::Request(err)
+    }
 }
 impl From<csv::Error> for CoreError {
-    fn from(err: csv::Error) -> Self { CoreError::Csv(err) }
+    fn from(err: csv::Error) -> Self {
+        CoreError::Csv(err)
+    }
 }
 
 // --- INTERNAL CORE Logic Function ---
 pub async fn _fetch_and_detect_core(
     query: &ChartQuery,
-    caller_id: &str
+    caller_id: &str,
 ) -> Result<(Vec<CandleData>, Box<dyn PatternRecognizer>, Value), CoreError> {
-    info!("[{}] -> Called _fetch_and_detect_core for: {}/{} (Pattern: {})", caller_id, query.symbol, query.timeframe, query.pattern);
+    info!(
+        "[{}] -> Called _fetch_and_detect_core for: {}/{} (Pattern: {})",
+        caller_id, query.symbol, query.timeframe, query.pattern
+    );
     dotenv().ok();
 
     let host = std::env::var("INFLUXDB_HOST").unwrap_or("http://localhost:8086".to_string());
     let org = std::env::var("INFLUXDB_ORG")?;
     let token = std::env::var("INFLUXDB_TOKEN")?;
     let bucket = std::env::var("INFLUXDB_BUCKET")?;
-    let symbol = if query.symbol.ends_with("_SB") { query.symbol.clone() } else { format!("{}_SB", query.symbol) };
+    let symbol = if query.symbol.ends_with("_SB") {
+        query.symbol.clone()
+    } else {
+        format!("{}_SB", query.symbol)
+    };
     let timeframe = query.timeframe.to_lowercase();
     let flux_query = format!(
         r#"from(bucket: "{}") |> range(start: {}, stop: {}) |> filter(fn: (r) => r["_measurement"] == "trendbar") |> filter(fn: (r) => r["symbol"] == "{}") |> filter(fn: (r) => r["timeframe"] == "{}") |> toFloat() |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value") |> sort(columns: ["_time"])"#,
@@ -108,41 +122,88 @@ pub async fn _fetch_and_detect_core(
     );
     let url = format!("{}/api/v2/query?org={}", host, org);
     let client = reqwest::Client::new();
-    let response_text = client.post(&url).bearer_auth(&token).json(&serde_json::json!({"query": flux_query, "type": "flux"})).send().await?.text().await?;
+    let response_text = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"query": flux_query, "type": "flux"}))
+        .send()
+        .await?
+        .text()
+        .await?;
     let mut candles = Vec::<CandleData>::new();
     if !response_text.trim().is_empty() {
         let cursor = Cursor::new(response_text.as_bytes());
-        let mut rdr = ReaderBuilder::new().has_headers(true).flexible(true).from_reader(cursor);
+        let mut rdr = ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(cursor);
         let headers = rdr.headers()?.clone();
         let get_idx = |name: &str| headers.iter().position(|h| h == name);
-        if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx), Some(v_idx)) = ( get_idx("_time"), get_idx("open"), get_idx("high"), get_idx("low"), get_idx("close"), get_idx("volume")) {
+        if let (Some(t_idx), Some(o_idx), Some(h_idx), Some(l_idx), Some(c_idx), Some(v_idx)) = (
+            get_idx("_time"),
+            get_idx("open"),
+            get_idx("high"),
+            get_idx("low"),
+            get_idx("close"),
+            get_idx("volume"),
+        ) {
             for result in rdr.records() {
                 match result {
                     Ok(record) => {
-                        let parse_f64 = |idx: usize| record.get(idx).and_then(|v| v.parse::<f64>().ok());
-                        let parse_u32 = |idx: usize| record.get(idx).and_then(|v| v.parse::<u32>().ok());
-                        if record.len() > t_idx && record.len() > o_idx && record.len() > h_idx && record.len() > l_idx && record.len() > c_idx && record.len() > v_idx {
+                        let parse_f64 =
+                            |idx: usize| record.get(idx).and_then(|v| v.parse::<f64>().ok());
+                        let parse_u32 =
+                            |idx: usize| record.get(idx).and_then(|v| v.parse::<u32>().ok());
+                        if record.len() > t_idx
+                            && record.len() > o_idx
+                            && record.len() > h_idx
+                            && record.len() > l_idx
+                            && record.len() > c_idx
+                            && record.len() > v_idx
+                        {
                             let time = record.get(t_idx).unwrap_or("").to_string();
                             if !time.is_empty() {
-                                candles.push(CandleData { time, open: parse_f64(o_idx).unwrap_or(0.0), high: parse_f64(h_idx).unwrap_or(0.0), low: parse_f64(l_idx).unwrap_or(0.0), close: parse_f64(c_idx).unwrap_or(0.0), volume: parse_u32(v_idx).unwrap_or(0), });
+                                candles.push(CandleData {
+                                    time,
+                                    open: parse_f64(o_idx).unwrap_or(0.0),
+                                    high: parse_f64(h_idx).unwrap_or(0.0),
+                                    low: parse_f64(l_idx).unwrap_or(0.0),
+                                    close: parse_f64(c_idx).unwrap_or(0.0),
+                                    volume: parse_u32(v_idx).unwrap_or(0),
+                                });
                             }
-                        } else { warn!("Skipping record with unexpected length: {}", record.len()); }
+                        } else {
+                            warn!("Skipping record with unexpected length: {}", record.len());
+                        }
                     }
                     Err(e) => warn!("[_fetch_and_detect_core] CSV record error: {}", e),
                 }
             }
-        } else { return Err(CoreError::Config("CSV header mismatch".to_string())); }
+        } else {
+            return Err(CoreError::Config("CSV header mismatch".to_string()));
+        }
     }
-    info!("[_fetch_and_detect_core] Parsed {} candles for {}/{}", candles.len(), query.symbol, query.timeframe);
+    info!(
+        "[_fetch_and_detect_core] Parsed {} candles for {}/{}",
+        candles.len(),
+        query.symbol,
+        query.timeframe
+    );
 
     let recognizer: Box<dyn PatternRecognizer> = match query.pattern.as_str() {
         "fifty_percent_before_big_bar" => Box::new(FiftyPercentBeforeBigBarRecognizer::default()),
         other_pattern => {
             warn!("Pattern '{}' is not currently configured in _fetch_and_detect_core match statement.", other_pattern);
-            return Err(CoreError::Config(format!("Pattern '{}' is not supported by this endpoint.", other_pattern)));
+            return Err(CoreError::Config(format!(
+                "Pattern '{}' is not supported by this endpoint.",
+                other_pattern
+            )));
         }
     };
-    info!("[_fetch_and_detect_core] Using recognizer: {}", query.pattern);
+    info!(
+        "[_fetch_and_detect_core] Using recognizer: {}",
+        query.pattern
+    );
 
     let detection_results = recognizer.detect(&candles);
     info!("[_fetch_and_detect_core] Detection complete.");
@@ -192,13 +253,34 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
         }
         Err(e) => {
             error!("[detect_patterns] Core error: {}", e);
-             match e {
-                CoreError::Config(msg) if msg.starts_with("Pattern") && msg.ends_with("not supported by this endpoint.") => HttpResponse::BadRequest().json(ErrorResponse { error: msg }),
-                CoreError::Config(msg) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Configuration error: {}", msg) }),
-                CoreError::Request(rq_e) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Data source request error: {}", rq_e) }),
-                CoreError::Csv(csv_e) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Data parsing error: {}", csv_e) }),
-                CoreError::EnvVar(env_e) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Server configuration error: {}", env_e) }),
-                CoreError::Processing(msg) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Processing error: {}", msg) }),
+            match e {
+                CoreError::Config(msg)
+                    if msg.starts_with("Pattern")
+                        && msg.ends_with("not supported by this endpoint.") =>
+                {
+                    HttpResponse::BadRequest().json(ErrorResponse { error: msg })
+                }
+                CoreError::Config(msg) => HttpResponse::InternalServerError().json(ErrorResponse {
+                    error: format!("Configuration error: {}", msg),
+                }),
+                CoreError::Request(rq_e) => {
+                    HttpResponse::InternalServerError().json(ErrorResponse {
+                        error: format!("Data source request error: {}", rq_e),
+                    })
+                }
+                CoreError::Csv(csv_e) => HttpResponse::InternalServerError().json(ErrorResponse {
+                    error: format!("Data parsing error: {}", csv_e),
+                }),
+                CoreError::EnvVar(env_e) => {
+                    HttpResponse::InternalServerError().json(ErrorResponse {
+                        error: format!("Server configuration error: {}", env_e),
+                    })
+                }
+                CoreError::Processing(msg) => {
+                    HttpResponse::InternalServerError().json(ErrorResponse {
+                        error: format!("Processing error: {}", msg),
+                    })
+                }
             }
         }
     }
@@ -206,22 +288,56 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
 
 // --- Helper function to check zone activity ---
 pub fn is_zone_still_active(zone: &Value, candles: &[CandleData], is_supply: bool) -> bool {
-    let start_idx = match zone.get("start_idx").and_then(|v| v.as_u64()) { Some(idx) => idx as usize, None => { warn!("is_zone_still_active: Missing 'start_idx'"); return false; } };
-    let zone_high = match zone.get("zone_high").and_then(|v| v.as_f64()) { Some(val) if val.is_finite() => val, _ => { warn!("is_zone_still_active: Missing/invalid 'zone_high'"); return false; } };
-    let zone_low = match zone.get("zone_low").and_then(|v| v.as_f64()) { Some(val) if val.is_finite() => val, _ => { warn!("is_zone_still_active: Missing/invalid 'zone_low'"); return false; } };
-    let check_start_idx = start_idx.saturating_add(2);
-    if check_start_idx >= candles.len() { return true; }
-    for i in check_start_idx..candles.len() {
-        let candle = &candles[i];
-        if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() { continue; }
-        if is_supply { if candle.high > zone_high { return false; } } else { if candle.low < zone_low { return false; } }
-    }
-    true
+    return true;
+//     let start_idx = match zone.get("start_idx").and_then(|v| v.as_u64()) {
+//         Some(idx) => idx as usize,
+//         None => {
+//             warn!("is_zone_still_active: Missing 'start_idx'");
+//             return false;
+//         }
+//     };
+//     let zone_high = match zone.get("zone_high").and_then(|v| v.as_f64()) {
+//         Some(val) if val.is_finite() => val,
+//         _ => {
+//             warn!("is_zone_still_active: Missing/invalid 'zone_high'");
+//             return false;
+//         }
+//     };
+//     let zone_low = match zone.get("zone_low").and_then(|v| v.as_f64()) {
+//         Some(val) if val.is_finite() => val,
+//         _ => {
+//             warn!("is_zone_still_active: Missing/invalid 'zone_low'");
+//             return false;
+//         }
+//     };
+//     let check_start_idx = start_idx.saturating_add(2);
+//     if check_start_idx >= candles.len() {
+//         return true;
+//     }
+//     for i in check_start_idx..candles.len() {
+//         let candle = &candles[i];
+//         if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+//             continue;
+//         }
+//         if is_supply {
+//             if candle.high > zone_high {
+//                 return false;
+//             }
+//         } else {
+//             if candle.low < zone_low {
+//                 return false;
+//             }
+//         }
+//     }
+//     true
 }
 
 // --- get_active_zones_handler ---
 pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Responder {
-    info!("[get_active_zones] Handling /active-zones request: {:?}", query);
+    info!(
+        "[get_active_zones] Handling /active-zones request: {:?}",
+        query
+    );
     match _fetch_and_detect_core(&query, "get_active_zones_handler").await {
         Ok((candles, _recognizer, mut detection_results)) => {
             debug!("[get_active_zones] Result from _fetch_and_detect_core (before enrichment): Candles: {}, Results JSON: {}", candles.len(), serde_json::to_string(&detection_results).unwrap_or_else(|e| format!("Error serializing: {}", e)));
@@ -239,220 +355,364 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
                 }));
             }
 
-            info!("[get_active_zones] Enriching detection results ({} candles)...", candles.len());
+            info!(
+                "[get_active_zones] Enriching detection results ({} candles)...",
+                candles.len()
+            );
             let process_zones = |zones_option: Option<&mut Vec<Value>>, is_supply: bool| {
-                 if let Some(zones) = zones_option {
+                if let Some(zones) = zones_option {
                     for zone_json in zones.iter_mut() {
                         let is_active = is_zone_still_active(zone_json, &candles, is_supply);
                         if let Some(obj) = zone_json.as_object_mut() {
                             obj.insert("is_active".to_string(), json!(is_active));
                             if let Some(start_idx) = obj.get("start_idx").and_then(|v| v.as_u64()) {
-                                let zone_candles = candles.get(start_idx as usize..).unwrap_or(&[]).to_vec();
+                                let zone_candles =
+                                    candles.get(start_idx as usize..).unwrap_or(&[]).to_vec();
                                 obj.insert("candles".to_string(), json!(zone_candles));
                             }
                         }
                     }
                 }
             };
-            if let Some(data) = detection_results.get_mut("data").and_then(|d| d.get_mut("price")) {
-                process_zones(data.get_mut("supply_zones").and_then(|sz| sz.get_mut("zones")).and_then(|z| z.as_array_mut()), true);
-                process_zones(data.get_mut("demand_zones").and_then(|dz| dz.get_mut("zones")).and_then(|z| z.as_array_mut()), false);
-            } else { warn!("[get_active_zones] Could not find 'data.price...zones' to enrich in {:?}", detection_results); }
+            if let Some(data) = detection_results
+                .get_mut("data")
+                .and_then(|d| d.get_mut("price"))
+            {
+                process_zones(
+                    data.get_mut("supply_zones")
+                        .and_then(|sz| sz.get_mut("zones"))
+                        .and_then(|z| z.as_array_mut()),
+                    true,
+                );
+                process_zones(
+                    data.get_mut("demand_zones")
+                        .and_then(|dz| dz.get_mut("zones"))
+                        .and_then(|z| z.as_array_mut()),
+                    false,
+                );
+            } else {
+                warn!(
+                    "[get_active_zones] Could not find 'data.price...zones' to enrich in {:?}",
+                    detection_results
+                );
+            }
             info!("[get_active_zones] Enrichment complete.");
             HttpResponse::Ok().json(detection_results)
         }
         Err(e) => {
             error!("[get_active_zones] Core error: {}", e);
-             match e {
-                 CoreError::Config(msg) if msg.starts_with("Pattern") && msg.ends_with("not supported by this endpoint.") => HttpResponse::BadRequest().json(ErrorResponse { error: msg }),
-                CoreError::Config(msg) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Configuration error: {}", msg) }),
-                CoreError::Request(rq_e) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Data source request error: {}", rq_e) }),
-                CoreError::Csv(csv_e) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Data parsing error: {}", csv_e) }),
-                CoreError::EnvVar(env_e) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Server configuration error: {}", env_e) }),
-                CoreError::Processing(msg) => HttpResponse::InternalServerError().json(ErrorResponse { error: format!("Processing error: {}", msg) }),
+            match e {
+                CoreError::Config(msg)
+                    if msg.starts_with("Pattern")
+                        && msg.ends_with("not supported by this endpoint.") =>
+                {
+                    HttpResponse::BadRequest().json(ErrorResponse { error: msg })
+                }
+                CoreError::Config(msg) => HttpResponse::InternalServerError().json(ErrorResponse {
+                    error: format!("Configuration error: {}", msg),
+                }),
+                CoreError::Request(rq_e) => {
+                    HttpResponse::InternalServerError().json(ErrorResponse {
+                        error: format!("Data source request error: {}", rq_e),
+                    })
+                }
+                CoreError::Csv(csv_e) => HttpResponse::InternalServerError().json(ErrorResponse {
+                    error: format!("Data parsing error: {}", csv_e),
+                }),
+                CoreError::EnvVar(env_e) => {
+                    HttpResponse::InternalServerError().json(ErrorResponse {
+                        error: format!("Server configuration error: {}", env_e),
+                    })
+                }
+                CoreError::Processing(msg) => {
+                    HttpResponse::InternalServerError().json(ErrorResponse {
+                        error: format!("Processing error: {}", msg),
+                    })
+                }
             }
         }
     }
 }
 
 // --- get_bulk_multi_tf_active_zones_handler (Unchanged) ---
+// --- get_bulk_multi_tf_active_zones_handler (with detailed logging) ---
 pub async fn get_bulk_multi_tf_active_zones_handler(
     global_query: web::Query<ChartQuery>,
     items: web::Json<Vec<BulkSymbolTimeframesRequestItem>>,
 ) -> impl Responder {
     let request_items = items.into_inner();
-    info!("[get_bulk_multi_tf] Handling request for {} symbol entries. Query: {:?}", request_items.len(), global_query);
+    info!(
+        "[get_bulk_multi_tf] Handling request for {} symbol entries. Query: {:?}",
+        request_items.len(),
+        global_query
+    );
+    
+    // Create shared counters
+    let total_before_filter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let total_after_filter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let total_deser_failures = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     let mut tasks = Vec::new();
+
     for item in request_items {
         let symbol_for_tasks = item.symbol.clone();
         for timeframe in item.timeframes {
+            // Clone necessary variables for the async move block
             let current_symbol = symbol_for_tasks.clone();
             let current_timeframe = timeframe.clone();
             let current_query = ChartQuery {
-                symbol: current_symbol.clone(), timeframe: current_timeframe.clone(),
-                start_time: global_query.start_time.clone(), end_time: global_query.end_time.clone(),
+                symbol: current_symbol.clone(),
+                timeframe: current_timeframe.clone(),
+                start_time: global_query.start_time.clone(),
+                end_time: global_query.end_time.clone(),
                 pattern: global_query.pattern.clone(),
-                enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
+                enable_trading: None, lot_size: None, stop_loss_pips: None,
+                take_profit_pips: None, enable_trailing_stop: None,
             };
+
+            // Clone counters for this specific task
+            let task_before_filter = total_before_filter.clone();
+            let task_after_filter = total_after_filter.clone();
+            let task_deser_failures = total_deser_failures.clone();
+
             if current_query.pattern != "fifty_percent_before_big_bar" {
                 warn!("[get_bulk_multi_tf] Skipping task for unsupported pattern '{}' for {}/{}", current_query.pattern, current_symbol, current_timeframe);
-                tasks.push(tokio::spawn(async move { BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "Error: Pattern Not Supported".to_string(), data: None, error_message: Some(format!("Pattern '{}' not supported by this endpoint configuration.", current_query.pattern)), } }));
+                tasks.push(tokio::spawn(async move { BulkResultItem {
+                    symbol: current_symbol, timeframe: current_timeframe,
+                    status: "Error: Pattern Not Supported".to_string(), data: None,
+                    error_message: Some(format!("Pattern '{}' not supported by this endpoint.", current_query.pattern)),
+                 } }));
                 continue;
             }
+
+            // Spawn the processing task
             let task = tokio::spawn(async move {
                 let caller_task_id = format!("bulk_task_{}/{}", current_symbol, current_timeframe);
-                info!("[Task {}/{}] Processing pattern '{}'...", current_symbol, current_timeframe, current_query.pattern);
+                info!( "[Task {}/{}] Processing pattern '{}'...", current_symbol, current_timeframe, current_query.pattern );
+
                 match _fetch_and_detect_core(&current_query, &caller_task_id).await {
                     Ok((candles, _recognizer, detection_results_json)) => {
+
+                        // Log raw JSON
+                        match serde_json::to_string_pretty(&detection_results_json) {
+                            Ok(json_str) => { info!("[API_RAW_JSON] [Task {}/{}] Received detection results JSON:\n{}", current_symbol, current_timeframe, json_str); }
+                            Err(e) => { warn!("[API_RAW_JSON] [Task {}/{}] Failed to serialize: {}", current_symbol, current_timeframe, e); }
+                        }
+
                         if candles.is_empty() {
                             info!("[Task {}/{}] No candle data found.", current_symbol, current_timeframe);
-                            return BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "No Data".to_string(), data: None, error_message: Some("No candle data found.".to_string()), };
+                            return BulkResultItem {
+                                symbol: current_symbol, timeframe: current_timeframe,
+                                status: "No Data".to_string(), data: None,
+                                error_message: Some("No candle data found.".to_string()),
+                             };
                         }
-                        info!("[Task {}/{}] Enriching results ({} candles)...", current_symbol, current_timeframe, candles.len());
-                        let mut final_supply_zones: Vec<EnrichedZone> = Vec::new();
-                        let mut final_demand_zones: Vec<EnrichedZone> = Vec::new();
+
+                        // Count raw zones before processing
+                        let supply_count = detection_results_json.get("data")
+                            .and_then(|d| d.get("price"))
+                            .and_then(|p| p.get("supply_zones"))
+                            .and_then(|sz| sz.get("zones"))
+                            .and_then(|z| z.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        
+                        let demand_count = detection_results_json.get("data")
+                            .and_then(|d| d.get("price"))
+                            .and_then(|p| p.get("demand_zones"))
+                            .and_then(|dz| dz.get("zones"))
+                            .and_then(|z| z.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        
+                        info!("[API_COUNTS] [Task {}/{}] Raw zone counts - Supply: {}, Demand: {}, Total: {}",
+                            current_symbol, current_timeframe, supply_count, demand_count, supply_count + demand_count);
+
+                        info!( "[Task {}/{}] Deserializing zones ({} candles)...", current_symbol, current_timeframe, candles.len());
+                        let mut deserialized_supply_zones: Vec<EnrichedZone> = Vec::new();
+                        let mut deserialized_demand_zones: Vec<EnrichedZone> = Vec::new();
                         let mut enrichment_error: Option<String> = None;
-                        let candle_count = candles.len();
-                        
-                        let mut total_zones = 0;
-                        let mut active_zones_count = 0;
-                        let mut failed_deser_count = 0;
-                        let mut invalid_index_count = 0;
-                        
-                        let mut process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
+                        let mut deser_failed_count = 0;
+
+
+                        // --- Define the SIMPLIFIED closure (only deserialize) ---
+                        let mut deserialize_zones = |zones_option: Option<&Vec<Value>>| -> Result<Vec<EnrichedZone>, String> {
                             let mut processed_zones: Vec<EnrichedZone> = Vec::new();
-                            let zone_type = if is_supply { "supply_zones" } else { "demand_zones" };
-                            
                             if let Some(zones) = zones_option {
-                                let zone_count = zones.len();
-                                total_zones += zone_count;
-                                info!("[API] [Task {}/{}] Processing {} {} zones", current_symbol, current_timeframe, zone_count, zone_type);
-                                
-                                let mut local_active = 0;
-                                let mut local_inactive = 0;
-                                let mut local_deser_fail = 0;
-                                let mut local_idx_invalid = 0;
-                                
                                 for zone_json in zones.iter() {
-                                    let is_active = is_zone_still_active(zone_json, &candles, is_supply);
-                                    
-                                    if is_active {
-                                        local_active += 1;
-                                    } else {
-                                        local_inactive += 1;
-                                    }
-                                    
-                                    // Validate index
-                                    let valid_index = zone_json.get("start_idx").and_then(|v| v.as_u64()).map(|start_idx| {
-                                        if candle_count > start_idx as usize {
-                                            true
-                                        } else {
-                                            local_idx_invalid += 1;
-                                            invalid_index_count += 1;
-                                            warn!("[API] [Task {}/{}] Invalid start_idx {} >= candle_count {}", 
-                                                current_symbol, current_timeframe, start_idx, candle_count);
-                                            false
-                                        }
-                                    }).unwrap_or(false);
-                                    
-                                    // Calculate bars_active only if index is valid
-                                    let bars_active_duration: Option<u64> = if is_active && valid_index {
-                                        zone_json.get("start_idx").and_then(|v| v.as_u64()).map(|start_idx| {
-                                            candle_count as u64 - start_idx
-                                        })
-                                    } else { 
-                                        None 
-                                    };
-                                    
                                     match deserialize_raw_zone_value(zone_json) {
-                                        Ok(mut enriched_zone_struct) => {
-                                            enriched_zone_struct.is_active = is_active;
-                                            enriched_zone_struct.bars_active = bars_active_duration;
+                                        Ok(enriched_zone_struct) => {
                                             processed_zones.push(enriched_zone_struct);
                                         }
-                                        Err(e) => { 
-                                            local_deser_fail += 1;
-                                            failed_deser_count += 1;
-                                            error!("[API] [Task {}/{}] Deserialize failed: {}. Value: {:?}", 
-                                                current_symbol, current_timeframe, e, zone_json); 
-                                            // Don't return an error, just log it
+                                        Err(e) => {
+                                             error!("[API] [Task {}/{}] Deserialize failed (in closure): {}. Value: {:?}", current_symbol, current_timeframe, e, zone_json);
+                                             deser_failed_count += 1; // Use outer counter
+                                             
+                                             // Update global counter
+                                             task_deser_failures.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                             
+                                             // Optionally: return Err(format!("Deserialize failed: {}", e));
                                         }
                                     }
                                 }
-                                
-                                info!("[API] [Task {}/{}] {} zones - {} active, {} inactive, {} failed deser, {} invalid idx", 
-                                    current_symbol, current_timeframe, zone_type, local_active, local_inactive, 
-                                    local_deser_fail, local_idx_invalid);
-                                active_zones_count += local_active;
                             }
-                            
                             Ok(processed_zones)
                         };
-                        if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
-                             match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
-                                Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), true) { Ok(zones) => final_supply_zones = zones, Err(e) => enrichment_error = Some(e), } }
-                                None => debug!("[Task {}/{}] No supply zones path.", current_symbol, current_timeframe),
-                             }
-                             if enrichment_error.is_none() {
+                        // --- End simplified closure ---
+
+
+                        // Process using the simplified closure
+                         if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
+                            match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
+                                Some(raw_zones) => { match deserialize_zones(Some(raw_zones)) { Ok(zones) => deserialized_supply_zones = zones, Err(e) => enrichment_error = Some(e), } }
+                                None => { /* debug log */ }
+                            }
+                            if enrichment_error.is_none() {
                                 match data.get("demand_zones").and_then(|dz| dz.get("zones")).and_then(|z| z.as_array()) {
-                                    Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), false) { Ok(zones) => final_demand_zones = zones, Err(e) => enrichment_error = Some(e), } }
-                                    None => debug!("[Task {}/{}] No demand zones path.", current_symbol, current_timeframe),
+                                    Some(raw_zones) => { match deserialize_zones(Some(raw_zones)) { Ok(zones) => deserialized_demand_zones = zones, Err(e) => enrichment_error = Some(e), } }
+                                    None => { /* debug log */ }
                                 }
-                             }
-                        } else { 
-                            warn!("[Task {}/{}] Missing 'data.price' path in results: {:?}", current_symbol, current_timeframe, detection_results_json); 
-                            enrichment_error = Some("Missing 'data.price' structure.".to_string()); 
-                        }
-                        
-                        // After processing both types of zones:
-                        info!("[API] [Task {}/{}] SUMMARY: {} total zones, {} active zones, {} failed deserialization, {} invalid indices",
-                            current_symbol, current_timeframe, total_zones, active_zones_count, failed_deser_count, invalid_index_count);
-                        
+                            }
+                        } else { /* handle missing data.price */ enrichment_error = Some("Missing 'data.price' structure.".to_string()); }
+
+                        // Log deserialization results with failure count
+                        info!("[API_DESER_COUNT] [Task {}/{}] Deserialization results - Supply: {}, Demand: {}, Failed: {}",
+                            current_symbol, current_timeframe, 
+                            deserialized_supply_zones.len(), 
+                            deserialized_demand_zones.len(),
+                            deser_failed_count);
+
                         if let Some(err_msg) = enrichment_error {
-                             BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "Error: Enrichment Failed".to_string(), data: None, error_message: Some(err_msg), }
-                        } else {
-                            info!("[API] [Task {}/{}] Before filtering: {} supply zones, {} demand zones", 
-                                current_symbol, current_timeframe, final_supply_zones.len(), final_demand_zones.len());
-                            
-                            let active_supply_zones = final_supply_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-                            let active_demand_zones = final_demand_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-                            
-                            info!("[API] [Task {}/{}] After active filtering: {} active supply, {} active demand zones.", 
-                                current_symbol, current_timeframe, active_supply_zones.len(), active_demand_zones.len());
-                            
-                            BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "Success".to_string(), data: Some(BulkResultData { supply_zones: active_supply_zones, demand_zones: active_demand_zones, }), error_message: None, }
+                           return BulkResultItem { symbol: current_symbol, timeframe: current_timeframe, status: "Error: Deserialization Failed".to_string(), data: None, error_message: Some(err_msg) };
                         }
-                    }
-                    Err(core_err) => {
+
+                        info!("[API] [Task {}/{}] Post-Deser Check: Supply Zones: {}, Demand Zones: {}, Failed Deser: {}",
+                              current_symbol, current_timeframe, deserialized_supply_zones.len(), deserialized_demand_zones.len(), deser_failed_count);
+
+                        // Add this counter update:
+                        let before_count = deserialized_supply_zones.len() + deserialized_demand_zones.len();
+                        task_before_filter.fetch_add(before_count, std::sync::atomic::Ordering::SeqCst);
+      
+                        // --- **** NOW check activity and filter **** ---
+                        let mut active_supply_zones_final = Vec::new();
+                        let mut active_demand_zones_final = Vec::new();
+                        let candle_count = candles.len(); // Needed for bars_active calculation
+
+                        // Re-fetch raw JSON arrays for activity check (inefficient but isolates logic)
+                         let raw_supply_zones_array = detection_results_json.get("data").and_then(|d| d.get("price"))
+                                                        .and_then(|p| p.get("supply_zones")).and_then(|sz| sz.get("zones"))
+                                                        .and_then(|z| z.as_array());
+                        let raw_demand_zones_array = detection_results_json.get("data").and_then(|d| d.get("price"))
+                                                        .and_then(|p| p.get("demand_zones")).and_then(|dz| dz.get("zones"))
+                                                        .and_then(|z| z.as_array());
+
+                        // Helper to find raw JSON matching an EnrichedZone's start_time
+                        let find_raw_json = |zone_list: Option<&Vec<Value>>, target_start_time: &Option<String>| -> Option<Value> {
+                             target_start_time.as_ref().and_then(|tst| {
+                                 zone_list?.iter().find(|raw_zone| {
+                                     raw_zone.get("start_time").and_then(|v| v.as_str()) == Some(tst.as_str())
+                                 }).cloned() // Clone the found Value
+                             })
+                        };
+
+                        // Process Supply Zones
+                        for mut zone in deserialized_supply_zones { // Takes ownership of elements
+                            if let Some(raw_json) = find_raw_json(raw_supply_zones_array, &zone.start_time) {
+                                zone.is_active = is_zone_still_active(&raw_json, &candles, true); // Set activity status
+                                let valid_index = zone.start_idx.map(|si| candle_count > si as usize).unwrap_or(false);
+                                zone.bars_active = if zone.is_active && valid_index { zone.start_idx.map(|si| candle_count as u64 - si) } else { None };
+
+                                // Log activity check result for this zone
+                                info!("[API_ACTIVITY_CHECK] [Task {}/{}] Supply Zone start_idx {:?}, is_active result: {}",
+                                        current_symbol, current_timeframe, zone.start_idx, zone.is_active);
+
+                                if zone.is_active {
+                                    active_supply_zones_final.push(zone); // Add to final active list
+                                }
+                            } else { warn!("[API] [Task {}/{}] Couldn't find raw JSON for supply zone start_time: {:?}", current_symbol, current_timeframe, zone.start_time); }
+                        }
+
+                        // Process Demand Zones
+                        for mut zone in deserialized_demand_zones {
+                             if let Some(raw_json) = find_raw_json(raw_demand_zones_array, &zone.start_time) {
+                                zone.is_active = is_zone_still_active(&raw_json, &candles, false); // Set activity status
+                                let valid_index = zone.start_idx.map(|si| candle_count > si as usize).unwrap_or(false);
+                                zone.bars_active = if zone.is_active && valid_index { zone.start_idx.map(|si| candle_count as u64 - si) } else { None };
+
+                                // Log activity check result for this zone
+                                info!("[API_ACTIVITY_CHECK] [Task {}/{}] Demand Zone start_idx {:?}, is_active result: {}",
+                                        current_symbol, current_timeframe, zone.start_idx, zone.is_active);
+
+                                if zone.is_active {
+                                    active_demand_zones_final.push(zone); // Add to final active list
+                                }
+                             } else { warn!("[API] [Task {}/{}] Couldn't find raw JSON for demand zone start_time: {:?}", current_symbol, current_timeframe, zone.start_time); }
+                        }
+                        // --- **** End activity check and filter **** ---
+
+                        info!("[API] [Task {}/{}] After separate active filtering: {} active supply, {} active demand zones.",
+                              current_symbol, current_timeframe,
+                              active_supply_zones_final.len(), active_demand_zones_final.len());
+
+                        let after_count = active_supply_zones_final.len() + active_demand_zones_final.len();
+                        task_after_filter.fetch_add(after_count, std::sync::atomic::Ordering::SeqCst);
+                        info!("[ZONE_FILTER_DEBUG] [Task {}/{}] Before filter: {}, After filter: {}, Difference: {}",
+                                current_symbol, current_timeframe, before_count, after_count, before_count - after_count);
+
+                        // Return the filtered lists
+                        BulkResultItem {
+                            symbol: current_symbol, timeframe: current_timeframe,
+                            status: "Success".to_string(),
+                            data: Some(BulkResultData {
+                                supply_zones: active_supply_zones_final,
+                                demand_zones: active_demand_zones_final,
+                            }),
+                            error_message: None,
+                        }
+                    } // End Ok case from _fetch_and_detect_core
+                    Err(core_err) => { // Handle CoreError from _fetch_and_detect_core
                         error!("[Task {}/{}] Core error: {}", current_symbol, current_timeframe, core_err);
                         let (status, msg) = match core_err {
                             CoreError::Config(e) => ("Error: Config Failed".to_string(), e),
-                            CoreError::Request(e) => { ("Error: Fetch Failed".to_string(), e.to_string()) }
+                            CoreError::Request(e) => ("Error: Fetch Failed".to_string(), e.to_string()),
                             CoreError::Csv(e) => ("Error: Parse Failed".to_string(), e.to_string()),
                             CoreError::EnvVar(e) => ("Error: Server Config Failed".to_string(), e),
                             CoreError::Processing(e) => ("Error: Processing Failed".to_string(), e),
                         };
                         BulkResultItem { status, data: None, error_message: Some(msg), symbol: current_symbol, timeframe: current_timeframe, }
                     }
-                }
-            });
+                } // End match _fetch_and_detect_core
+            }); // End tokio::spawn
             tasks.push(task);
-        }
-    }
+        } // End loop timeframe
+    } // End loop items
+
     let task_results = join_all(tasks).await;
+    
+    // Get the final counts after all tasks complete
+    let final_before = total_before_filter.load(std::sync::atomic::Ordering::SeqCst);
+    let final_after = total_after_filter.load(std::sync::atomic::Ordering::SeqCst);
+    let filter_diff = final_before - final_after;
+
+    info!("[API] FILTER STATS: Total zones before activity filtering: {}, after: {}, difference: {}",
+          final_before, final_after, filter_diff);
+    
     let results: Vec<BulkResultItem> = task_results.into_iter().map(|res| match res {
         Ok(item) => item,
         Err(e) => BulkResultItem { symbol: "Unknown".into(), timeframe: "Unknown".into(), status: "Error: Task Panic".into(), data: None, error_message: Some(format!("Task panicked: {}", e)), },
     }).collect();
-    
-    // Add a summary count of all zones
-    let total_active_zones: usize = results.iter()
+
+    let total_active_zones_returned: usize = results.iter()
         .filter_map(|item| item.data.as_ref().map(|data| data.supply_zones.len() + data.demand_zones.len()))
         .sum();
+
+    // Get the final deserialization failure count
+    let final_deser_failures = total_deser_failures.load(std::sync::atomic::Ordering::SeqCst);
     
-    info!("[API] FINAL SUMMARY: Completed processing {} combinations with {} total active zones returned.", 
-        results.len(), total_active_zones);
-    
+    // More detailed final summary
+    info!("[API] FINAL SUMMARY: Completed processing {} combinations with {} total active zones returned. Total deserialization failures: {}. Filtered out: {}",
+          results.len(), total_active_zones_returned, final_deser_failures, filter_diff);
+
     let response = BulkActiveZonesResponse { results, query_params: Some(global_query.into_inner()), symbols: HashMap::new() };
     HttpResponse::Ok().json(response)
 }
@@ -460,13 +720,14 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
 // PASTE THIS ENTIRE FUNCTION AT THE END OF src/detect.rs
 
 // New handler for debugging single symbol/timeframe using duplicated logic approach
-pub async fn debug_bulk_zones_handler(
-    query: web::Query<SingleZoneQueryParams>,
-) -> impl Responder {
+pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) -> impl Responder {
     // Extract query parameters
     let symbol = query.symbol.clone();
     let timeframe = query.timeframe.clone();
-    let pattern = query.pattern.clone().unwrap_or_else(|| "fifty_percent_before_big_bar".to_string());
+    let pattern = query
+        .pattern
+        .clone()
+        .unwrap_or_else(|| "fifty_percent_before_big_bar".to_string());
     let start_time = query.start_time.clone();
     let end_time = query.end_time.clone();
 
@@ -480,8 +741,11 @@ pub async fn debug_bulk_zones_handler(
         start_time,
         end_time,
         pattern,
-        enable_trading: None, lot_size: None, stop_loss_pips: None,
-        take_profit_pips: None, enable_trailing_stop: None,
+        enable_trading: None,
+        lot_size: None,
+        stop_loss_pips: None,
+        take_profit_pips: None,
+        enable_trailing_stop: None,
     };
 
     let caller_id = format!("debug_task_{}/{}", symbol, timeframe);
@@ -490,66 +754,153 @@ pub async fn debug_bulk_zones_handler(
     match _fetch_and_detect_core(&core_query, &caller_id).await {
         Ok((candles, _recognizer, detection_results_json)) => {
             if candles.is_empty() {
-                info!("[debug_bulk_zones_handler] No candle data found for {}/{}.", symbol, timeframe);
-                 return HttpResponse::NotFound().json(ErrorResponse {
-                    error: format!("No candle data found for Symbol: {}, Timeframe: {}", symbol, timeframe),
+                info!(
+                    "[debug_bulk_zones_handler] No candle data found for {}/{}.",
+                    symbol, timeframe
+                );
+                return HttpResponse::NotFound().json(ErrorResponse {
+                    error: format!(
+                        "No candle data found for Symbol: {}, Timeframe: {}",
+                        symbol, timeframe
+                    ),
                 });
             }
 
             // --- DUPLICATED Enrichment Logic ---
-            info!("[debug_bulk_zones_handler] Enriching results for {}/{} ({} candles)...", symbol, timeframe, candles.len());
+            info!(
+                "[debug_bulk_zones_handler] Enriching results for {}/{} ({} candles)...",
+                symbol,
+                timeframe,
+                candles.len()
+            );
             let mut final_supply_zones: Vec<EnrichedZone> = Vec::new(); // Use crate::types:: path if needed
             let mut final_demand_zones: Vec<EnrichedZone> = Vec::new(); // Use crate::types:: path if needed
             let mut enrichment_error: Option<String> = None;
             let candle_count = candles.len();
 
             // This closure uses the PRIVATE is_zone_still_active (defined above in this file)
-             let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool| -> Result<Vec<EnrichedZone>, String> {
-                 let mut processed_zones: Vec<EnrichedZone> = Vec::new();
-                 if let Some(zones) = zones_option {
-                     for zone_json in zones.iter() {
-                         // CALL THE PRIVATE FUNCTION: is_zone_still_active
-                         let is_active = is_zone_still_active(zone_json, &candles, is_supply);
-                         let bars_active_duration: Option<u64> = if is_active { zone_json.get("start_idx").and_then(|v| v.as_u64()).and_then(|start_idx| { if candle_count > start_idx as usize { Some(candle_count as u64 - start_idx) } else { warn!("[debug] Invalid start_idx {} >= candle_count {}", start_idx, candle_count); None } }) } else { None };
-                         // Call public function from types module
-                         match crate::types::deserialize_raw_zone_value(zone_json) {
-                             Ok(mut enriched_zone_struct) => {
-                                 enriched_zone_struct.is_active = is_active;
-                                 enriched_zone_struct.bars_active = bars_active_duration;
-                                 processed_zones.push(enriched_zone_struct);
-                             }
-                             Err(e) => { error!("[debug] Deserialize failed: {}. Value: {:?}", e, zone_json); return Err(format!("Deserialize failed: {}", e)); }
-                         }
-                     }
-                 }
-                 Ok(processed_zones)
+            let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>,
+                                            is_supply: bool|
+             -> Result<Vec<EnrichedZone>, String> {
+                let mut processed_zones: Vec<EnrichedZone> = Vec::new();
+                if let Some(zones) = zones_option {
+                    for zone_json in zones.iter() {
+                        debug!(
+                            "[API_ITER_CHECK] Processing zone with start_time: {:?}",
+                            zone_json.get("start_time").and_then(|v| v.as_str())
+                        );
+                        // CALL THE PRIVATE FUNCTION: is_zone_still_active
+                        let is_active = is_zone_still_active(zone_json, &candles, is_supply);
+                        let bars_active_duration: Option<u64> = if is_active {
+                            zone_json
+                                .get("start_idx")
+                                .and_then(|v| v.as_u64())
+                                .and_then(|start_idx| {
+                                    if candle_count > start_idx as usize {
+                                        Some(candle_count as u64 - start_idx)
+                                    } else {
+                                        warn!(
+                                            "[debug] Invalid start_idx {} >= candle_count {}",
+                                            start_idx, candle_count
+                                        );
+                                        None
+                                    }
+                                })
+                        } else {
+                            None
+                        };
+                        // Call public function from types module
+                        match crate::types::deserialize_raw_zone_value(zone_json) {
+                            Ok(mut enriched_zone_struct) => {
+                                enriched_zone_struct.is_active = is_active;
+                                enriched_zone_struct.bars_active = bars_active_duration;
+                                processed_zones.push(enriched_zone_struct);
+                            }
+                            Err(e) => {
+                                error!("[debug] Deserialize failed: {}. Value: {:?}", e, zone_json);
+                                return Err(format!("Deserialize failed: {}", e));
+                            }
+                        }
+                    }
+                }
+                Ok(processed_zones)
             };
 
             // Navigate results JSON
-            if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
-                 match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
-                    Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), true) { Ok(zones) => final_supply_zones = zones, Err(e) => enrichment_error = Some(e), } }
+            if let Some(data) = detection_results_json
+                .get("data")
+                .and_then(|d| d.get("price"))
+            {
+                match data
+                    .get("supply_zones")
+                    .and_then(|sz| sz.get("zones"))
+                    .and_then(|z| z.as_array())
+                {
+                    Some(raw_zones) => match process_and_enrich_zones(Some(raw_zones), true) {
+                        Ok(zones) => final_supply_zones = zones,
+                        Err(e) => enrichment_error = Some(e),
+                    },
                     None => debug!("[debug] No supply zones path for {}/{}.", symbol, timeframe),
-                 }
-                 if enrichment_error.is_none() {
-                    match data.get("demand_zones").and_then(|dz| dz.get("zones")).and_then(|z| z.as_array()) {
-                        Some(raw_zones) => { match process_and_enrich_zones(Some(raw_zones), false) { Ok(zones) => final_demand_zones = zones, Err(e) => enrichment_error = Some(e), } }
-                        None => debug!("[debug] No demand zones path for {}/{}.", symbol, timeframe),
+                }
+                if enrichment_error.is_none() {
+                    match data
+                        .get("demand_zones")
+                        .and_then(|dz| dz.get("zones"))
+                        .and_then(|z| z.as_array())
+                    {
+                        Some(raw_zones) => match process_and_enrich_zones(Some(raw_zones), false) {
+                            Ok(zones) => final_demand_zones = zones,
+                            Err(e) => enrichment_error = Some(e),
+                        },
+                        None => {
+                            debug!("[debug] No demand zones path for {}/{}.", symbol, timeframe)
+                        }
                     }
-                 }
-            } else { warn!("[debug] Missing 'data.price' path in results for {}/{}: {:?}", symbol, timeframe, detection_results_json); enrichment_error = Some("Missing 'data.price' structure.".to_string()); }
+                }
+            } else {
+                warn!(
+                    "[debug] Missing 'data.price' path in results for {}/{}: {:?}",
+                    symbol, timeframe, detection_results_json
+                );
+                enrichment_error = Some("Missing 'data.price' structure.".to_string());
+            }
 
             // --- Package Result (FILTERING HERE) ---
             if let Some(err_msg) = enrichment_error {
-                error!("[debug_bulk_zones_handler] Enrichment failed for {}/{}: {}", symbol, timeframe, err_msg);
+                error!(
+                    "[debug_bulk_zones_handler] Enrichment failed for {}/{}: {}",
+                    symbol, timeframe, err_msg
+                );
                 HttpResponse::InternalServerError().json(ErrorResponse {
                     error: format!("Enrichment Failed: {}", err_msg),
                 })
             } else {
-                 info!("[debug_bulk_zones_handler] Filtering for active zones for {}/{}...", symbol, timeframe);
-                 let active_supply_zones = final_supply_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-                 let active_demand_zones = final_demand_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-                 info!("[debug_bulk_zones_handler] Found {} active supply, {} active demand zones for {}/{}.", active_supply_zones.len(), active_demand_zones.len(), symbol, timeframe);
+                info!(
+                    "[debug_bulk_zones_handler] Filtering for active zones for {}/{}...",
+                    symbol, timeframe
+                );
+                let active_supply_zones = final_supply_zones // Use original vector
+                    .iter() // Use iter()
+                    .filter(|zone| {
+                        let active = zone.is_active;
+                        // Filter check log remains useful
+                        debug!("[API_FILTER_CHECK_ITER] Supply Zone Start: {:?}, is_active: {}, Keeping: {}",
+                            zone.start_time, active, active);
+                        active
+                    })
+                    .cloned() // <<< CLONE the zones that pass the filter
+                    .collect::<Vec<_>>();
+                let active_demand_zones = final_demand_zones // Use original vector
+                    .iter() // Use iter()
+                    .filter(|zone| {
+                        let active = zone.is_active;
+                        debug!("[API_FILTER_CHECK_ITER] Demand Zone Start: {:?}, is_active: {}, Keeping: {}",
+                                zone.start_time, active, active);
+                        active
+                    })
+                    .cloned() // <<< CLONE the zones that pass the filter
+                    .collect::<Vec<_>>();
+                info!("[debug_bulk_zones_handler] Found {} active supply, {} active demand zones for {}/{}.", active_supply_zones.len(), active_demand_zones.len(), symbol, timeframe);
 
                 // Use structs from types.rs
                 let timeframe_data = crate::types::TimeframeZoneResponse {
@@ -565,18 +916,39 @@ pub async fn debug_bulk_zones_handler(
                 HttpResponse::Ok().json(response)
             }
         }
-        Err(core_err) => { // Handle CoreError from this file's _fetch_and_detect_core
-            error!("[debug_bulk_zones_handler] Core error for {}/{}: {}", symbol, timeframe, core_err);
+        Err(core_err) => {
+            // Handle CoreError from this file's _fetch_and_detect_core
+            error!(
+                "[debug_bulk_zones_handler] Core error for {}/{}: {}",
+                symbol, timeframe, core_err
+            );
             // Use local CoreError variants directly
             let (mut status_code, error_message) = match core_err {
                 CoreError::Config(e) if e.starts_with("Pattern") => (HttpResponse::BadRequest(), e),
-                CoreError::Config(e) => (HttpResponse::InternalServerError(), format!("Configuration Error: {}", e)),
-                CoreError::Request(e) => (HttpResponse::InternalServerError(), format!("Data Fetch Error: {}", e)),
-                CoreError::Csv(e) => (HttpResponse::InternalServerError(), format!("Data Parse Error: {}", e)),
-                CoreError::EnvVar(e) => (HttpResponse::InternalServerError(), format!("Server Config Error: {}", e)),
-                CoreError::Processing(e) => (HttpResponse::InternalServerError(), format!("Processing Error: {}", e)),
+                CoreError::Config(e) => (
+                    HttpResponse::InternalServerError(),
+                    format!("Configuration Error: {}", e),
+                ),
+                CoreError::Request(e) => (
+                    HttpResponse::InternalServerError(),
+                    format!("Data Fetch Error: {}", e),
+                ),
+                CoreError::Csv(e) => (
+                    HttpResponse::InternalServerError(),
+                    format!("Data Parse Error: {}", e),
+                ),
+                CoreError::EnvVar(e) => (
+                    HttpResponse::InternalServerError(),
+                    format!("Server Config Error: {}", e),
+                ),
+                CoreError::Processing(e) => (
+                    HttpResponse::InternalServerError(),
+                    format!("Processing Error: {}", e),
+                ),
             };
-            status_code.json(ErrorResponse { error: error_message })
+            status_code.json(ErrorResponse {
+                error: error_message,
+            })
         }
     }
 }

@@ -1,0 +1,183 @@
+Comparing Generator vs API Active Lists from backend.log
+======================================================
+
+--- Comparison for: AUDCAD/30m (StartTime: 2025-04-03T14:30:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] AUDCAD_SB/30m: Found 4 active zones with start_times: ["2025-04-03T14:30:00Z", "2025-04-16T17:00:00Z", "2025-04-11T17:00:00Z", "2025-04-15T11:30:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task AUDCAD/30m] Found 4 active zones PRE-FILTER with start_times: ["2025-04-03T14:30:00Z", "2025-04-16T17:00:00Z", "2025-04-11T17:00:00Z", "2025-04-15T11:30:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: AUDJPY/1h (StartTime: 2025-04-04T01:00:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] AUDJPY_SB/1h: Found 2 active zones with start_times: ["2025-04-04T01:00:00Z", "2025-04-09T12:00:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task AUDJPY/1h] Found 2 active zones PRE-FILTER with start_times: ["2025-04-04T01:00:00Z", "2025-04-09T12:00:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: AUDJPY/5m (StartTime: 2025-04-16T17:25:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] AUDJPY_SB/5m: Found 7 active zones with start_times: ["2025-04-02T21:05:00Z", "2025-04-04T02:25:00Z", "2025-04-16T17:25:00Z", "2025-04-09T00:35:00Z", "2025-04-09T15:40:00Z", "2025-04-09T17:10:00Z", "2025-04-14T16:10:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:07Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task AUDJPY/5m] Found 7 active zones PRE-FILTER with start_times: ["2025-04-02T21:05:00Z", "2025-04-04T02:25:00Z", "2025-04-16T17:25:00Z", "2025-04-09T00:35:00Z", "2025-04-09T15:40:00Z", "2025-04-09T17:10:00Z", "2025-04-14T16:10:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: AUDNZD/15m (StartTime: 2025-04-10T00:00:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] AUDNZD_SB/15m: Found 3 active zones with start_times: ["2025-04-10T00:00:00Z", "2025-04-10T05:45:00Z", "2025-04-10T23:45:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task AUDNZD/15m] Found 3 active zones PRE-FILTER with start_times: ["2025-04-10T00:00:00Z", "2025-04-10T05:45:00Z", "2025-04-10T23:45:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: AUDNZD/30m (StartTime: 2025-04-09T23:30:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] AUDNZD_SB/30m: Found 3 active zones with start_times: ["2025-04-02T22:30:00Z", "2025-04-09T23:30:00Z", "2025-04-10T23:30:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task AUDNZD/30m] Found 3 active zones PRE-FILTER with start_times: ["2025-04-02T22:30:00Z", "2025-04-09T23:30:00Z", "2025-04-10T23:30:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: AUDUSD/5m (StartTime: 2025-04-11T08:40:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] AUDUSD_SB/5m: Found 4 active zones with start_times: ["2025-04-11T05:15:00Z", "2025-04-11T08:40:00Z", "2025-04-11T17:30:00Z", "2025-04-14T14:05:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:07Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task AUDUSD/5m] Found 4 active zones PRE-FILTER with start_times: ["2025-04-11T05:15:00Z", "2025-04-11T08:40:00Z", "2025-04-11T17:30:00Z", "2025-04-14T14:05:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: CADJPY/15m (StartTime: 2025-04-10T07:15:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] CADJPY_SB/15m: Found 3 active zones with start_times: ["2025-04-10T07:15:00Z", "2025-04-13T21:30:00Z", "2025-04-15T14:00:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task CADJPY/15m] Found 3 active zones PRE-FILTER with start_times: ["2025-04-10T07:15:00Z", "2025-04-13T21:30:00Z", "2025-04-15T14:00:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: CHFJPY/15m (StartTime: 2025-04-15T12:00:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:53Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] CHFJPY_SB/15m: Found 4 active zones with start_times: ["2025-04-15T12:00:00Z", "2025-03-06T13:45:00Z", "2025-04-03T09:45:00Z", "2025-04-10T07:45:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task CHFJPY/15m] Found 4 active zones PRE-FILTER with start_times: ["2025-04-15T12:00:00Z", "2025-03-06T13:45:00Z", "2025-04-03T09:45:00Z", "2025-04-10T07:45:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: CHFJPY/5m (StartTime: 2025-04-11T17:40:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:54Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] CHFJPY_SB/5m: Found 8 active zones with start_times: ["2025-04-11T17:40:00Z", "2025-04-11T20:40:00Z", "2025-04-03T06:35:00Z", "2025-04-03T07:00:00Z", "2025-04-10T07:05:00Z", "2025-04-10T08:00:00Z", "2025-04-10T08:15:00Z", "2025-04-10T13:35:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:07Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task CHFJPY/5m] Found 8 active zones PRE-FILTER with start_times: ["2025-04-11T17:40:00Z", "2025-04-11T20:40:00Z", "2025-04-03T06:35:00Z", "2025-04-03T07:00:00Z", "2025-04-10T07:05:00Z", "2025-04-10T08:00:00Z", "2025-04-10T08:15:00Z", "2025-04-10T13:35:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: EURAUD/1h (StartTime: 2025-04-09T00:00:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:54Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] EURAUD_SB/1h: Found 3 active zones with start_times: ["2025-04-04T09:00:00Z", "2025-04-10T06:00:00Z", "2025-04-16T16:00:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task EURAUD/1h] Found 3 active zones PRE-FILTER with start_times: ["2025-04-04T09:00:00Z", "2025-04-10T06:00:00Z", "2025-04-16T16:00:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: EURCAD/15m (StartTime: 2025-03-05T07:15:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:54Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] EURCAD_SB/15m: Found 5 active zones with start_times: ["2025-03-03T19:30:00Z", "2025-03-04T15:30:00Z", "2025-03-05T07:15:00Z", "2025-04-10T07:15:00Z", "2025-04-10T21:45:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task EURCAD/15m] Found 5 active zones PRE-FILTER with start_times: ["2025-03-03T19:30:00Z", "2025-03-04T15:30:00Z", "2025-03-05T07:15:00Z", "2025-04-10T07:15:00Z", "2025-04-10T21:45:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: EURNZD/15m (StartTime: 2025-04-14T12:00:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:54Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] EURNZD_SB/15m: Found 4 active zones with start_times: ["2025-04-09T05:45:00Z", "2025-04-14T02:15:00Z", "2025-04-14T12:00:00Z", "2025-04-16T17:15:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task EURNZD/15m] Found 4 active zones PRE-FILTER with start_times: ["2025-04-09T05:45:00Z", "2025-04-14T02:15:00Z", "2025-04-14T12:00:00Z", "2025-04-16T17:15:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: GBPCAD/15m (StartTime: 2025-04-11T00:15:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:55Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] GBPCAD_SB/15m: Found 4 active zones with start_times: ["2025-04-03T12:00:00Z", "2025-04-16T13:30:00Z", "2025-04-10T07:15:00Z", "2025-04-11T00:15:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task GBPCAD/15m] Found 4 active zones PRE-FILTER with start_times: ["2025-04-03T12:00:00Z", "2025-04-16T13:30:00Z", "2025-04-10T07:15:00Z", "2025-04-11T00:15:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: GBPJPY/15m (StartTime: 2025-04-04T07:15:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:55Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] GBPJPY_SB/15m: Found 2 active zones with start_times: ["2025-04-04T07:15:00Z", "2025-04-11T11:45:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task GBPJPY/15m] Found 2 active zones PRE-FILTER with start_times: ["2025-04-04T07:15:00Z", "2025-04-11T11:45:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: GBPNZD/5m (StartTime: 2025-04-09T12:05:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:55Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] GBPNZD_SB/5m: Found 6 active zones with start_times: ["2025-04-09T12:05:00Z", "2025-04-09T17:10:00Z", "2025-04-10T09:55:00Z", "2025-04-16T02:50:00Z", "2025-04-16T15:15:00Z", "2025-04-15T13:50:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:07Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task GBPNZD/5m] Found 6 active zones PRE-FILTER with start_times: ["2025-04-09T12:05:00Z", "2025-04-09T17:10:00Z", "2025-04-10T09:55:00Z", "2025-04-16T02:50:00Z", "2025-04-16T15:15:00Z", "2025-04-15T13:50:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: GBPUSD/15m (StartTime: 2025-03-04T08:00:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:55Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] GBPUSD_SB/15m: Found 10 active zones with start_times: ["2025-03-03T08:45:00Z", "2025-03-03T14:00:00Z", "2025-03-04T08:00:00Z", "2025-04-10T09:30:00Z", "2025-04-10T10:00:00Z", "2025-04-10T17:15:00Z", "2025-04-10T21:45:00Z", "2025-04-10T23:30:00Z", "2025-04-13T23:45:00Z", "2025-04-14T13:15:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task GBPUSD/15m] Found 10 active zones PRE-FILTER with start_times: ["2025-03-03T08:45:00Z", "2025-03-03T14:00:00Z", "2025-03-04T08:00:00Z", "2025-04-10T09:30:00Z", "2025-04-10T10:00:00Z", "2025-04-10T17:15:00Z", "2025-04-10T21:45:00Z", "2025-04-10T23:30:00Z", "2025-04-13T23:45:00Z", "2025-04-14T13:15:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: USDCHF/15m (StartTime: 2025-04-10T14:30:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:56Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] USDCHF_SB/15m: Found 6 active zones with start_times: ["2025-03-06T08:00:00Z", "2025-04-03T08:00:00Z", "2025-04-09T19:45:00Z", "2025-04-10T09:45:00Z", "2025-04-10T14:30:00Z", "2025-04-15T23:45:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task USDCHF/15m] Found 6 active zones PRE-FILTER with start_times: ["2025-03-06T08:00:00Z", "2025-04-03T08:00:00Z", "2025-04-09T19:45:00Z", "2025-04-10T09:45:00Z", "2025-04-10T14:30:00Z", "2025-04-15T23:45:00Z"]
+
+-------------------------------------------------------------
+
+--- Comparison for: USDJPY/15m (StartTime: 2025-04-16T17:15:00Z) ---
+
+[GENERATOR]
+2025-04-22T13:52:56Z INFO [pattern_detector::zone_generator] - [GENERATOR_ACTIVE_LIST] USDJPY_SB/15m: Found 4 active zones with start_times: ["2025-04-02T20:45:00Z", "2025-04-10T00:00:00Z", "2025-04-10T07:15:00Z", "2025-04-16T17:15:00Z"]
+
+[API PRE-FILTER]
+2025-04-22T13:53:06Z INFO [pattern_detector::detect] - [API_ACTIVE_LIST] [Task USDJPY/15m] Found 4 active zones PRE-FILTER with start_times: ["2025-04-02T20:45:00Z", "2025-04-10T00:00:00Z", "2025-04-10T07:15:00Z", "2025-04-16T17:15:00Z"]
+
+-------------------------------------------------------------
+
