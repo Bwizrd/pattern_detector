@@ -27,6 +27,7 @@ pub struct BulkSymbolTimeframesRequestItem {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct EnrichedZone {
     // Fields typically deserialized from the pattern recognizer's JSON output
+    pub zone_id: Option<String>, // Unique ID for the zone
     pub start_idx: Option<u64>,
     pub end_idx: Option<u64>,
     pub start_time: Option<String>, // ISO 8601 format string
@@ -112,6 +113,7 @@ pub fn deserialize_raw_zone_value(zone_value: &serde_json::Value) -> Result<Enri
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct StoredZone {
     // Base fields from detection
+    pub zone_id: Option<String>, // Unique ID for the zone
     pub start_idx: Option<u64>,
     pub end_idx: Option<u64>,
     pub start_time: Option<String>,

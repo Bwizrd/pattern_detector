@@ -24,7 +24,7 @@ influxdb2-structmap = "0.2.0"
 cucumber = "0.21.1"
 rand = "0.8.5"
 parking_lot = "0.12.1"
-
+sha2 = "0.10.6"
 
 
 [[bin]]

@@ -366,6 +366,40 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                                     
                                     match deserialize_raw_zone_value(zone_json) {
                                         Ok(mut enriched_zone_struct) => {
+                                            if enriched_zone_struct.zone_id.is_none() {
+                                                info!("[API_ID_CHECK] Symbol: {}, TF: {}, TypeForID: '{}', StartTime: {:?}, High: {:?}, Low: {:?}, RawJsonType: {:?}",
+                                                current_symbol,        // Log captured variable
+                                                current_timeframe,     // Log captured variable
+                                                // Determine type for ID *here* right before logging/using it:
+                                                if zone_json.get("type").and_then(|v| v.as_str()).unwrap_or("").contains("supply") { "supply" } else { "demand" },
+                                                enriched_zone_struct.start_time.as_deref(),      // Option<&str>
+                                                enriched_zone_struct.zone_high,       // Option<f64>
+                                                enriched_zone_struct.zone_low,        // Option<f64>
+                                                zone_json.get("type").and_then(|v| v.as_str())); // Log raw type field
+                                          // --- END OF INSERTED LOGGING BLOCK ---
+                                                // --- INSERT THIS LINE ---
+                                                let symbol_for_id = if current_symbol.ends_with("_SB") { current_symbol.clone() } else { format!("{}_SB", current_symbol) };
+                                                // --- END INSERTION ---
+                                                let zone_id = generate_deterministic_zone_id(
+                                                    &symbol_for_id,
+                                                    &current_timeframe,
+                                                    if zone_json.get("type") // Check the type field in the raw JSON
+                                                            .and_then(|v| v.as_str()) // Get it as a string slice
+                                                            .unwrap_or("") // Use an empty string if missing
+                                                            .contains("supply") // Check if the string CONTAINS "supply"
+                                                    {
+                                                        "supply" // If yes, use "supply"
+                                                    } else {
+                                                        "demand" // Otherwise, default to "demand"
+                                                    },
+                                                    
+                                                    enriched_zone_struct.start_time.as_deref(),
+                                                    enriched_zone_struct.zone_high,
+                                                    enriched_zone_struct.zone_low
+                                                );
+                                                info!("[API_ID_CHECK] Zone_ID: {}", zone_id);
+                                                enriched_zone_struct.zone_id = Some(zone_id);
+                                            }
                                             enriched_zone_struct.is_active = is_active;
                                             enriched_zone_struct.bars_active = bars_active_duration;
                                             processed_zones.push(enriched_zone_struct);
@@ -579,4 +613,37 @@ pub async fn debug_bulk_zones_handler(
             status_code.json(ErrorResponse { error: error_message })
         }
     }
+}
+
+pub fn generate_deterministic_zone_id(
+    symbol: &str,
+    timeframe: &str,
+    zone_type: &str,
+    start_time: Option<&str>,
+    zone_high: Option<f64>,
+    zone_low: Option<f64>,
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    const PRECISION: usize = 6; // Or your desired precision
+    let high_str = zone_high.map_or("0.0".to_string(), |v| format!("{:.prec$}", v, prec = PRECISION));
+    let low_str = zone_low.map_or("0.0".to_string(), |v| format!("{:.prec$}", v, prec = PRECISION));
+    
+    // Create a unique ID based on the zone's key properties
+    let id_input = format!("{}_{}_{}_{}_{}_{}", 
+        symbol, 
+        timeframe, 
+        zone_type,
+        start_time.unwrap_or("unknown"),
+        high_str, // Use formatted float string
+        low_str   // Use formatted float string
+    );
+    
+    let mut hasher = Sha256::new();
+    hasher.update(id_input.as_bytes());
+    let result = hasher.finalize();
+    let hex_id = format!("{:x}", result);
+    
+    // Use the first 16 chars of the hash for the ID
+    hex_id[..16].to_string()
 }
