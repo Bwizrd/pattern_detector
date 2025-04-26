@@ -36,8 +36,7 @@ pub struct EnrichedZone {
     pub zone_low: Option<f64>,
     pub fifty_percent_line: Option<f64>,
     pub detection_method: Option<String>,
-    pub quality_score: Option<f64>,
-    pub strength: Option<String>,
+
     pub extended: Option<bool>,         // Was the zone extended during detection?
     pub extension_percent: Option<f64>, // How much was it extended?
 
@@ -47,6 +46,11 @@ pub struct EnrichedZone {
 
     #[serde(skip_serializing_if = "Option::is_none")] // Don't include in JSON if None
     pub bars_active: Option<u64>, // How many bars the zone remained active (calculated for bulk/debug)
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub touch_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strength_score: Option<f64>,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -122,8 +126,6 @@ pub struct StoredZone {
     pub zone_low: Option<f64>,
     pub fifty_percent_line: Option<f64>,
     pub detection_method: Option<String>,
-    pub quality_score: Option<f64>,
-    pub strength: Option<String>,
     pub extended: Option<bool>,
     pub extension_percent: Option<f64>,
     // Status determined by the generator run
@@ -135,4 +137,10 @@ pub struct StoredZone {
     
     #[serde(default)]
     pub formation_candles: Vec<CandleData>,
+    // --- ADD THESE FIELDS ---
+    #[serde(skip_serializing_if = "Option::is_none")] // Don't expect in input JSON yet
+    pub touch_count: Option<i64>, // Use i64 for InfluxDB integer type
+    #[serde(skip_serializing_if = "Option::is_none")] // Don't expect in input JSON yet
+    pub strength_score: Option<f64>,
+    // --- END ADDED FIELDS ---
 }

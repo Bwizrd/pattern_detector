@@ -212,8 +212,6 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                      "start_idx": i,
                      "end_idx": zone_end_index,
                      "detection_method": method_text,
-                     "quality_score": if is_confirmed { 85.0 } else { 70.0 }, // Example score boost for confirmation
-                     "strength": if is_confirmed { "Very Strong" } else { "Strong" }, // Example strength boost
                      "extended": self.proximal_extension_percent > 0.0,
                      "extension_percent": self.proximal_extension_percent
                  }));
@@ -242,8 +240,6 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                      "start_idx": i,
                      "end_idx": zone_end_index,
                      "detection_method": method_text,
-                     "quality_score": if is_confirmed { 85.0 } else { 70.0 }, // Example score boost for confirmation
-                     "strength": if is_confirmed { "Very Strong" } else { "Strong" }, // Example strength boost
                      "extended": self.proximal_extension_percent > 0.0,
                      "extension_percent": self.proximal_extension_percent
                  }));

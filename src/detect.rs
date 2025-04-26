@@ -402,6 +402,16 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                                             }
                                             enriched_zone_struct.is_active = is_active;
                                             enriched_zone_struct.bars_active = bars_active_duration;
+                                            let calculated_touches = calculate_touches_within_range(
+                                                zone_json, // Pass the raw JSON
+                                                &candles,  // Pass the full candle slice
+                                                is_supply, // Pass supply flag
+                                                candle_count // Pass candle count
+                                            );
+                                            enriched_zone_struct.touch_count = Some(calculated_touches);
+                                            enriched_zone_struct.strength_score = Some(100.0);
+                                            enriched_zone_struct.is_active = is_active; // Set based on separate calculation
+                                            enriched_zone_struct.bars_active = bars_active_duration;
                                             processed_zones.push(enriched_zone_struct);
                                         }
                                         Err(e) => { 
@@ -646,4 +656,90 @@ pub fn generate_deterministic_zone_id(
     
     // Use the first 16 chars of the hash for the ID
     hex_id[..16].to_string()
+}
+
+/// Calculates the number of times a zone was "touched" by candles *after* its formation,
+/// within a given candle set. Stops counting after the zone is invalidated.
+/// NOTE: This only counts touches within the provided `candles` slice.
+pub fn calculate_touches_within_range(
+    zone_json: &Value,        // Raw JSON to get indices and levels reliably
+    candles: &[CandleData],   // The slice of candles to check against
+    is_supply: bool,
+    candle_count: usize,      // Pass candle_count for efficiency
+) -> i64 { // Return i64 to match DB type eventually
+
+    // --- Get necessary values from the zone JSON ---
+    // Use end_idx if available and reliable, otherwise fallback needs care
+    let end_idx = match zone_json.get("end_idx").and_then(|v| v.as_u64()) {
+        Some(idx) => idx as usize,
+        None => {
+            warn!("calculate_touches: Missing 'end_idx' in zone: {:?}. Cannot calculate touches.", zone_json);
+            return 0; // Cannot calculate without end index
+        }
+    };
+    let zone_high = match zone_json.get("zone_high").and_then(|v| v.as_f64()) {
+        Some(val) if val.is_finite() => val,
+        _ => { warn!("calculate_touches: Missing/invalid 'zone_high' in zone: {:?}", zone_json); return 0; }
+    };
+    let zone_low = match zone_json.get("zone_low").and_then(|v| v.as_f64()) {
+        Some(val) if val.is_finite() => val,
+        _ => { warn!("calculate_touches: Missing/invalid 'zone_low' in zone: {:?}", zone_json); return 0; }
+    };
+    // --- End Get necessary values ---
+
+
+    let mut touch_count: i64 = 0;
+    let mut is_still_valid = true; // Track if zone has been invalidated
+
+    // Start checking candles *after* the zone formation (end_idx + 1)
+    let check_start_idx = end_idx + 1;
+
+    if check_start_idx >= candle_count {
+        return 0; // No candles after formation in this range
+    }
+
+    for i in check_start_idx..candle_count {
+        let candle = &candles[i];
+
+        // Skip candles with bad data
+        if !candle.high.is_finite() || !candle.low.is_finite() {
+            continue;
+        }
+
+        // 1. Check for Invalidation FIRST
+        if is_supply {
+            // Supply invalidated if high breaks above zone high
+            if candle.high > zone_high {
+                is_still_valid = false;
+                // debug!("calculate_touches: Supply zone invalidated at index {} (High: {} > Zone High: {})", i, candle.high, zone_high);
+                break; // Stop counting touches after invalidation
+            }
+        } else {
+            // Demand invalidated if low breaks below zone low
+            if candle.low < zone_low {
+                is_still_valid = false;
+                // debug!("calculate_touches: Demand zone invalidated at index {} (Low: {} < Zone Low: {})", i, candle.low, zone_low);
+                break; // Stop counting touches after invalidation
+            }
+        }
+
+        // 2. If still valid, check for a Touch
+        if is_still_valid {
+            if is_supply {
+                // Supply Touch: High enters zone (>= low) but does NOT break high (already checked above)
+                if candle.high >= zone_low {
+                    touch_count += 1;
+                    // debug!("calculate_touches: Supply touch detected at index {}", i);
+                }
+            } else {
+                // Demand Touch: Low enters zone (<= high) but does NOT break low (already checked above)
+                if candle.low <= zone_high {
+                    touch_count += 1;
+                    // debug!("calculate_touches: Demand touch detected at index {}", i);
+                }
+            }
+        }
+    } // End loop through subsequent candles
+
+    touch_count
 }

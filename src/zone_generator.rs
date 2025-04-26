@@ -336,12 +336,6 @@ async fn write_zones_batch(
         if let Some(v) = &zone.detection_method {
             fields.push(format!("detection_method=\"{}\"", v.escape_default()));
         }
-        if let Some(v) = zone.quality_score {
-            fields.push(format!("quality_score={}", v));
-        }
-        if let Some(v) = &zone.strength {
-            fields.push(format!("strength=\"{}\"", v.escape_default()));
-        }
         if let Some(v) = zone.fifty_percent_line {
             fields.push(format!("fifty_percent_line={}", v));
         }
@@ -352,7 +346,13 @@ async fn write_zones_batch(
         // *** ADD is_active as INTEGER FIELD ***
         let is_active_int = if zone.is_active { 1 } else { 0 };
         fields.push(format!("is_active={}i", is_active_int)); // Note the 'i' suffix
-                                                              // *** END ADDED FIELD ***
+
+        fields.push(format!("touch_count={}i", zone.touch_count.unwrap_or(0)));
+        // Add strength_score (defaulting to 100.0 if None for safety)
+        fields.push(format!(
+            "strength_score={}",
+            zone.strength_score.unwrap_or(100.0)
+        ));
 
         // Serialize formation candles array into a JSON string field
         let candles_json = match serde_json::to_string(&zone.formation_candles) {
@@ -716,7 +716,7 @@ async fn process_symbol_timeframe_pattern(
     let (candles, detection_results) = match fetch_result {
         Ok((c, _recognizer, d)) => (c, d), // Extract candles and JSON results, drop non-Send recognizer
         Err(e) => {
-            // Handle errors from detection core
+            // --- RESTORED FULL ERROR HANDLING ---
             match e {
                 CoreError::Request(rq_err) => {
                     warn!(
@@ -761,7 +761,6 @@ async fn process_symbol_timeframe_pattern(
                     // This is a more critical error, return it
                     return Err(Box::new(csv_err) as BoxedError);
                 }
-                // REMOVED CoreError::Json arm as it doesn't exist in the definition
                 _ => {
                     // Catch-all for other CoreErrors or wrapped errors
                     error!(
@@ -774,20 +773,25 @@ async fn process_symbol_timeframe_pattern(
                     )) as BoxedError);
                 }
             }
+            // --- END RESTORED ERROR HANDLING ---
         }
     };
 
+    // --- Get candle count early ---
+    let candle_count = candles.len();
+
     // If no candle data was retrieved (handled above, but good safety check)
-    if candles.is_empty() {
+    if candle_count == 0 { // Use candle_count here
         info!(
             "No candle data available for {}/{}/{}. Skipping zone processing.",
             symbol, timeframe, pattern_name
         );
         return Ok(());
     }
+
     info!(
         "Fetched {} candles for {}/{}.",
-        candles.len(),
+        candle_count, // Use candle_count
         symbol,
         timeframe
     );
@@ -826,60 +830,62 @@ async fn process_symbol_timeframe_pattern(
 
             // Iterate through each raw zone detected
             for zone_json in zones_array {
-                let zone_type_for_id = zone_json
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .map(|s| if s == "supply" { "supply" } else { "demand" }) // Be explicit
-                    .unwrap_or("demand"); // Default consistent with API
-
                 // Attempt to deserialize the raw JSON into the StoredZone struct
                 match serde_json::from_value::<StoredZone>(zone_json.clone()) {
                     Ok(mut base_zone) => {
+                        // --- Zone ID Generation Block ---
                         if base_zone.zone_id.is_none() {
-                            // Ensure zone_type_for_id is calculated just before logging/using it
+                            // Calculate type for ID using .contains()
                             let raw_type_str =
                                 zone_json.get("type").and_then(|v| v.as_str()).unwrap_or("");
                             let zone_type_for_id = if raw_type_str.contains("supply") {
-                                // Check if it contains "supply"
                                 "supply"
                             } else {
-                                "demand" // Assume demand otherwise
+                                "demand"
                             };
 
+                            // Log inputs before ID generation
                             info!("[GENERATOR_ID_CHECK] Symbol: {}, TF: {}, TypeForID: '{}', StartTime: {:?}, High: {:?}, Low: {:?}, RawJsonType: {:?}",
-                                  symbol,                   // Symbol from function args
-                                  timeframe,                // Timeframe from function args
-                                  zone_type_for_id,         // The type just derived above
-                                  base_zone.start_time.as_deref(), // From StoredZone
-                                  base_zone.zone_high,             // From StoredZone
-                                  base_zone.zone_low,              // From StoredZone
-                                  zone_json.get("type").and_then(|v| v.as_str())); // Log raw type field
-                                                                                   // --- END OF INSERTED LOGGING BLOCK ---
+                                  symbol,
+                                  timeframe,
+                                  zone_type_for_id,
+                                  base_zone.start_time.as_deref(),
+                                  base_zone.zone_high,
+                                  base_zone.zone_low,
+                                  zone_json.get("type").and_then(|v| v.as_str()));
+
+                            // Generate ID using the public function from detect module
+                            let symbol_for_id = if symbol.ends_with("_SB") { symbol.to_string() } else { format!("{}_SB", symbol) }; // Ensure suffix
                             let zone_id = detect::generate_deterministic_zone_id(
-                                symbol,
+                                &symbol_for_id, // Use suffixed symbol
                                 timeframe,
-                                zone_type_for_id, // Use the type derived from JSON field
-                                base_zone.start_time.as_deref(), // From StoredZone
-                                base_zone.zone_high, // From StoredZone
-                                base_zone.zone_low, // From StoredZone
+                                zone_type_for_id, // Use calculated type
+                                base_zone.start_time.as_deref(),
+                                base_zone.zone_high,
+                                base_zone.zone_low,
                             );
-                            info!("[GENERATOR_ID_CHECK] -> GeneratedID: {}", zone_id);
-                            base_zone.zone_id = Some(zone_id); // Assign the generated ID
-                        } else {
-                            // Optional: Log if an ID already exists unexpectedly
-                            // warn!("Zone already had an ID before generation: {:?}", base_zone.zone_id);
+                            info!("[GENERATOR_ID_CHECK] -> GeneratedID: {}", zone_id); // Log result
+                            base_zone.zone_id = Some(zone_id);
                         }
-                        // Ensure required fields for processing are present
+                        // --- End Zone ID Generation ---
+
+
+                        // --- Essential Index Check ---
+                        // Ensure required fields for further processing are present
                         if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
                             warn!(
-                                "Skipping zone due to missing start_idx or end_idx: {:?}",
-                                zone_json
+                                "Skipping zone processing (after ID gen) due to missing start_idx or end_idx: ZoneID {:?}",
+                                base_zone.zone_id
                             );
-                            deser_failed += 1;
-                            continue; // Skip this zone if essential indices are missing
+                            deser_failed += 1; // Count as failure for processing, though ID might be generated
+                            continue; // Skip further processing for this zone
                         }
+                        // --- End Index Check ---
 
+
+                        // --- is_active Calculation ---
                         // Determine if the zone is still active based on ALL candles fetched for this run
+                        // Use public function from detect module
                         base_zone.is_active =
                             detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
 
@@ -891,67 +897,97 @@ async fn process_symbol_timeframe_pattern(
                             inactive_count += 1;
                             inactive_zones += 1;
                         }
+                        // --- End is_active Calculation ---
 
-                        // Extract the specific candles that formed this zone
-                        // NOTE: Ensure extract_formation_candles is defined elsewhere in this file or imported
+
+                        // --- Formation Candles Extraction ---
                         base_zone.formation_candles = extract_formation_candles(
                             &candles,
-                            base_zone.start_idx,
-                            base_zone.end_idx,
+                            base_zone.start_idx, // These are Some() due to check above
+                            base_zone.end_idx,   // These are Some() due to check above
                         );
+                        // --- End Formation Candles ---
 
-                        // --- Calculate and assign bars_active ---
-                        // The number of bars forming the zone is end_idx - start_idx + 1 (inclusive)
-                        // We already checked start_idx and end_idx are Some above
-                        let start = base_zone.start_idx.unwrap(); // Safe to unwrap here
-                        let end = base_zone.end_idx.unwrap(); // Safe to unwrap here
 
-                        if end >= start {
-                            // Basic sanity check
-                            base_zone.bars_active = Some(end - start + 1);
-                            debug!(
-                                "Calculated bars_active: {} for zone starting at idx {}",
-                                base_zone.bars_active.unwrap_or(0), // Use unwrap_or for logging clarity
-                                start
-                            );
+                        // --- bars_active Calculation ---
+                        // Indices are guaranteed Some() here from the check above
+                        let start_idx_val = base_zone.start_idx.unwrap();
+                        let end_idx_val = base_zone.end_idx.unwrap();
+
+                        if end_idx_val >= start_idx_val {
+                            base_zone.bars_active = Some(end_idx_val - start_idx_val + 1);
+                             // debug!( /* ... */ ); // Optional debug log
                         } else {
                             warn!(
                                 "Invalid indices for bars_active calculation: start={}, end={}. Setting bars_active to None.",
-                                start, end
+                                start_idx_val, end_idx_val
                             );
-                            // Reset to None if calculation is invalid
                             base_zone.bars_active = None;
                         }
-                        // --- End calculation ---
+                        // --- End bars_active Calculation ---
+
+
+                        // --- Touch Count Calculation ---
+                        // Log candle range available for touch calculation relative to zone end time
+                        let first_candle_time = candles.first().map(|c| c.time.as_str());
+                        let last_candle_time = candles.last().map(|c| c.time.as_str());
+                        let zone_end_time_str = zone_json.get("end_time").and_then(|v| v.as_str()); // Get end time as string
+                        info!("[GENERATOR_TOUCH_CHECK] ZoneID: {:?}, Zone End Time: {:?}. Processing {} candles from {:?} to {:?}",
+                              base_zone.zone_id, // Log the ID for correlation
+                              zone_end_time_str,
+                              candle_count,
+                              first_candle_time,
+                              last_candle_time);
+
+                        // Call the public function from detect module
+                        let calculated_touches = detect::calculate_touches_within_range(
+                            zone_json,      // Pass raw JSON for reliable indices/levels
+                            &candles,       // Pass the candle slice fetched for THIS generator run
+                            is_supply_flag, // Pass the flag indicating zone type context
+                            candle_count    // Pass candle count
+                        );
+                        info!("[GENERATOR_TOUCH_CHECK] ZoneID: {:?} -> Calculated Touches: {}", base_zone.zone_id, calculated_touches); // Log result
+                        base_zone.touch_count = Some(calculated_touches); // Store the calculated value
+                        // --- End Touch Count Calculation ---
+
+
+                        // --- Strength Score Initialization ---
+                        base_zone.strength_score = Some(100.0); // Initialize score
+                        // --- End Strength Score Initialization ---
+
 
                         // Add the fully processed zone to the list
                         zones_to_store.push(base_zone);
-                    }
+
+                    } // End Ok arm
                     Err(e) => {
-                        // Log errors if deserialization fails (e.g., structure mismatch)
+                        // Log errors if deserialization fails
                         error!(
                             "Failed to deserialize zone into StoredZone for {}/{}: {}. JSON: {}",
                             symbol, timeframe, e, zone_json
                         );
                         deser_failed += 1;
                     }
-                }
-            }
+                } // End match serde_json
+            } // End loop for zone_json
 
+            // Log summary for this zone type
             info!(
                 "[ZONE_GENERATOR] {}/{}/{}: {} {} zones - {} active, {} inactive, {} failed deserialization",
                 symbol, timeframe, zone_type_key, zone_count, zone_type_key, active_count, inactive_count, deser_failed
             );
-        } else {
+
+        } else { // End if let Some(zones_array)
             debug!(
                 "No '{}' key found or it's not an array in detection results for {}/{}/{}.",
                 zone_type_key, symbol, timeframe, pattern_name
             );
         }
-    }
+    } // End loop for (zone_type_key, is_supply_flag)
 
+    // Log overall summary for the symbol/timeframe
     info!(
-        "[ZONE_GENERATOR] {}/{}: TOTAL ZONES: {} - {} active, {} inactive, {} stored",
+        "[ZONE_GENERATOR] {}/{}: TOTAL ZONES PROCESSED: {} - {} active, {} inactive, {} stored",
         symbol,
         timeframe,
         total_zones,
@@ -960,7 +996,7 @@ async fn process_symbol_timeframe_pattern(
         zones_to_store.len()
     );
 
-    // If any zones were processed, write them to InfluxDB
+    // --- Write to InfluxDB ---
     if !zones_to_store.is_empty() {
         info!(
             "Storing {} processed zones for {}/{}/{}.",
@@ -969,9 +1005,7 @@ async fn process_symbol_timeframe_pattern(
             timeframe,
             pattern_name
         );
-        // Call the batch write function, passing necessary details
-        // The write_zones_batch function already handles the 'bars_active' field correctly
-        // NOTE: Ensure write_zones_batch is defined elsewhere in this file or imported
+        // Call the batch write function
         match write_zones_batch(
             http_client,
             influx_host,
@@ -979,10 +1013,10 @@ async fn process_symbol_timeframe_pattern(
             influx_token,
             write_bucket,
             zone_measurement,
-            symbol,
+            symbol, // Pass original symbol or suffixed one depending on write_zones_batch needs
             timeframe,
             pattern_name,
-            &zones_to_store,
+            &zones_to_store, // Pass zones containing calculated touch_count
         )
         .await
         {
@@ -995,7 +1029,6 @@ async fn process_symbol_timeframe_pattern(
                     "Failed to write zones batch for {}/{}/{}: {}",
                     symbol, timeframe, pattern_name, e
                 );
-                // Decide if a write error should stop the entire process or just this combo
                 return Err(e); // Propagate write errors
             }
         }
@@ -1005,6 +1038,7 @@ async fn process_symbol_timeframe_pattern(
             symbol, timeframe, pattern_name
         );
     }
+    // --- End Write to InfluxDB ---
 
     Ok(()) // Indicate successful processing for this combination
 }
