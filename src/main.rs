@@ -13,6 +13,8 @@ pub mod trades;
 pub mod trading;
 mod types;
 mod zone_generator;
+mod get_zone_by_id;
+mod errors;
 
 // --- API & Background Tasking Globals ---
 static ZONE_GENERATION_QUEUED: std::sync::atomic::AtomicBool =
@@ -87,6 +89,7 @@ async fn main() -> std::io::Result<()> {
     println!("  GET  /debug-bulk-zone?symbol=...&timeframe=...&start_time=...&end_time=...[&pattern=...]");
     println!("  POST /backtest");
     println!("  GET  /testDataRequest");
+    println!("  GET  /zone?zone_id=...");
     println!("  GET  /echo?...");
     println!("  GET  /health");
     println!("  POST /generate-zones");
@@ -148,6 +151,7 @@ async fn main() -> std::io::Result<()> {
             .route("/health", web::get().to(health_check))
             .route("/backtest", web::post().to(backtest::run_backtest))
             .route("/generate-zones", web::post().to(queue_zone_generator_api)) // API trigger remains
+            .route("/zone", web::get().to(get_zone_by_id::get_zone_by_id))
     })
     .bind((host, port))?;
 
