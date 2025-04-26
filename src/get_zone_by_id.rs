@@ -1,6 +1,7 @@
 // src/get_zone_by_id.rs
+use crate::detect::CandleData;
 use crate::errors::ServiceError; // Import your custom error
-use crate::types::StoredZone; // Import your StoredZone struct path
+use crate::types::StoredZone; // Import your StoredZone struct path and CandleData
 use actix_web::{get, web, HttpResponse, Responder};
 use csv;
 use log; // <<<--- ADD THIS IMPORT
@@ -50,17 +51,6 @@ pub async fn get_zone_by_id(
     let http_client = Client::new();
 
     // --- Construct the Flux Query ---
-    // let flux_query = format!(
-    //     r#"from(bucket: "{}")
-    //       |> range(start: 0)
-    //       |> filter(fn: (r) => r._measurement == "{}")
-    //       |> filter(fn: (r) => r._field == "zone_id" and r._value == "{}")
-    //       |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-    //       |> drop(columns: ["_start", "_stop", "_measurement"])
-    //     "#,
-    //     config.zone_bucket, config.zone_measurement, query.zone_id
-    // );
-
     let flux_query = format!(
         r#"from(bucket: "{}")
           |> range(start: 0)
@@ -69,9 +59,7 @@ pub async fn get_zone_by_id(
           |> filter(fn: (r) => r.zone_id == "{}")
           |> limit(n: 1)
         "#,
-        config.zone_bucket,
-        config.zone_measurement,
-        query.zone_id
+        config.zone_bucket, config.zone_measurement, query.zone_id
     );
 
     log::debug!("Executing Flux query: {}", flux_query);
@@ -116,53 +104,10 @@ pub async fn get_zone_by_id(
     for (i, line) in csv_data.lines().enumerate() {
         log::debug!("CSV row {}: {}", i, line);
     }
-    let mut reader = csv::ReaderBuilder::new()
-        .comment(Some(b'#'))
-        .trim(csv::Trim::All)
-        .from_reader(csv_data.as_bytes());
 
-    match reader.headers() {
-        Ok(headers) => {
-            log::debug!("CSV headers: {:?}", headers);
-            log::debug!("Header count: {}", headers.len());
-            for (i, h) in headers.iter().enumerate() {
-                log::debug!("  Header {}: '{}'", i, h);
-            }
-        }
-        Err(e) => log::error!("Failed to read CSV headers: {}", e),
-    };
+    // --- REPLACE EVERYTHING BELOW THIS LINE WITH THE NEW CODE ---
 
-    // Create a second reader since we consumed the first one
-    let mut reader = csv::ReaderBuilder::new()
-        .comment(Some(b'#'))
-        .trim(csv::Trim::All)
-        .from_reader(csv_data.as_bytes());
-
-    // Skip the header row since we already processed it
-    if let Ok(_) = reader.headers() {
-        log::debug!("Successfully skipped headers for record parsing");
-    }
-
-    // Collect records into a vector and log details
-    let records: Result<Vec<_>, _> = reader.records().collect();
-    match &records {
-        Ok(recs) => {
-            log::debug!("Parsed {} CSV records", recs.len());
-            for (i, record) in recs.iter().enumerate() {
-                log::debug!("Record {}: field count={}", i, record.len());
-                for (j, field) in record.iter().enumerate() {
-                    log::debug!("  Field {}[{}]: '{}'", i, j, field);
-                }
-            }
-        }
-        Err(e) => log::error!("Failed to collect CSV records: {}", e),
-    };
-
-    // Continue with your existing code, but with more detailed logging
-    // of the StoredZone struct before attempting deserialization
-    log::debug!("StoredZone struct fields: zone_id, start_idx, end_idx, start_time, end_time, zone_high, zone_low, fifty_percent_line, detection_method, extended, extension_percent, is_active, formation_candles");
-
-    // Now try to deserialize with a fresh reader
+    // Instead of direct deserialization, do a manual mapping
     let mut reader = csv::ReaderBuilder::new()
         .comment(Some(b'#'))
         .trim(csv::Trim::All)
@@ -171,29 +116,83 @@ pub async fn get_zone_by_id(
     let headers = match reader.headers() {
         Ok(h) => {
             let hclone = h.clone();
-            log::debug!("Headers for deserialization: {:?}", hclone);
+            log::debug!("CSV headers: {:?}", hclone);
+            log::debug!("Header count: {}", hclone.len());
+            for (i, h) in hclone.iter().enumerate() {
+                log::debug!("  Header {}: '{}'", i, h);
+            }
             hclone
         }
         Err(e) => {
-            log::error!("Failed to get headers for deserialization: {}", e);
+            log::error!("Failed to read CSV headers: {}", e);
             return Err(ServiceError::CsvError(e));
         }
     };
-    let mut records = reader.deserialize::<StoredZone>();
 
-    if let Some(result) = records.next() {
-        match result {
-            Ok(mut zone) => {
-                // Ensure zone_id from the query parameter is set if missing from DB data
+    // Create a record reader
+    let mut record_reader = csv::ReaderBuilder::new()
+        .comment(Some(b'#'))
+        .trim(csv::Trim::All)
+        .from_reader(csv_data.as_bytes());
+    let _ = record_reader.headers(); // Skip header row
+
+    if let Some(record_result) = record_reader.records().next() {
+        match record_result {
+            Ok(record) => {
+                // Create a new zone and populate it manually
+                let mut zone = StoredZone::default();
+
+                // Map fields from CSV to zone struct using header positions
+                for (i, header) in headers.iter().enumerate() {
+                    if i >= record.len() {
+                        continue; // Skip if record doesn't have enough fields
+                    }
+
+                    let value = &record[i];
+                    match header {
+                        "zone_id" => zone.zone_id = Some(value.to_string()),
+                        "symbol" => zone.symbol = Some(value.to_string()),
+                        "timeframe" => zone.timeframe = Some(value.to_string()),
+                        "zone_type" => zone.zone_type = Some(value.to_string()),
+                        "start_time_rfc3339" => zone.start_time = Some(value.to_string()),
+                        "end_time_rfc3339" => zone.end_time = Some(value.to_string()),
+                        "zone_high" => zone.zone_high = value.parse::<f64>().ok(),
+                        "zone_low" => zone.zone_low = value.parse::<f64>().ok(),
+                        "fifty_percent_line" => zone.fifty_percent_line = value.parse::<f64>().ok(),
+                        "detection_method" => zone.detection_method = Some(value.to_string()),
+                        "is_active" => {
+                            zone.is_active = match value {
+                                "1" | "true" | "TRUE" | "True" => true,
+                                _ => false,
+                            }
+                        }
+                        "formation_candles_json" => {
+                            // Parse the JSON array of candles
+                            if let Ok(candles) = serde_json::from_str::<Vec<CandleData>>(value) {
+                                zone.formation_candles = candles;
+                            } else {
+                                log::warn!("Failed to parse formation_candles_json: {}", value);
+                            }
+                        }
+                        "strength_score" => zone.strength_score = value.parse::<f64>().ok(),
+                        "touch_count" => zone.touch_count = value.parse::<i64>().ok(),
+                        "bars_active" => zone.bars_active = value.parse::<u64>().ok(),
+                        // Skip other fields that don't map directly
+                        _ => {}
+                    }
+                }
+
+                // Ensure zone_id from the query parameter is set if missing
                 if zone.zone_id.is_none() {
                     zone.zone_id = Some(query.zone_id.clone());
                 }
+
                 log::info!("Successfully fetched and parsed zone: {:?}", zone.zone_id);
                 Ok(HttpResponse::Ok().json(zone)) // Return 200 OK with JSON body
             }
             Err(e) => {
-                log::error!("Failed to deserialize InfluxDB record: {}", e);
-                Err(ServiceError::CsvError(e)) // Return specific CSV error
+                log::error!("Failed to read CSV record: {}", e);
+                Err(ServiceError::CsvError(e))
             }
         }
     } else {

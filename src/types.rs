@@ -142,5 +142,14 @@ pub struct StoredZone {
     pub touch_count: Option<i64>, // Use i64 for InfluxDB integer type
     #[serde(skip_serializing_if = "Option::is_none")] // Don't expect in input JSON yet
     pub strength_score: Option<f64>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeframe: Option<String>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_type: Option<String>,
     // --- END ADDED FIELDS ---
 }
