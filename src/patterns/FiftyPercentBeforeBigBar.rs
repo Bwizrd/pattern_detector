@@ -173,15 +173,15 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             let zone_low_base = fifty_candle.low;
             let zone_high_base = fifty_candle.high;
              let mut zone_end_index = i + 1;
-             for j in (i + 2)..candles.len() {
-                 // A simple check: if the candle's range overlaps the base zone range
-                 if candles[j].low <= zone_high_base && candles[j].high >= zone_low_base {
-                     zone_end_index = j.saturating_add(1).min(candles.len() - 1);
-                     break; // Stop extending once price revisits the base zone area
-                 }
-                 // If no interaction, the end index keeps advancing (up to the last candle)
-                zone_end_index = j;
-             }
+            //  for j in (i + 2)..candles.len() {
+            //      // A simple check: if the candle's range overlaps the base zone range
+            //      if candles[j].low <= zone_high_base && candles[j].high >= zone_low_base {
+            //          zone_end_index = j.saturating_add(1).min(candles.len() - 1);
+            //          break; // Stop extending once price revisits the base zone area
+            //      }
+            //      // If no interaction, the end index keeps advancing (up to the last candle)
+            //     zone_end_index = j;
+            //  }
              // Ensure end_index is at least i+1 (the big bar itself)
              zone_end_index = zone_end_index.max(i + 1);
              // Ensure end_index doesn't exceed bounds

@@ -4,7 +4,8 @@
 use serde::{Deserialize, Serialize};
 use crate::detect::{CandleData, ChartQuery}; // Imports from detect.rs
 use std::collections::HashMap; // Needed for HashMap fields
-
+use log::{warn};
+use serde_json::Value; 
 // --- Structs used as Input Parameters (e.g., for web requests) ---
 
 #[derive(Deserialize, Debug, Clone)]
@@ -26,31 +27,49 @@ pub struct BulkSymbolTimeframesRequestItem {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct EnrichedZone {
-    // Fields typically deserialized from the pattern recognizer's JSON output
+    // --- Fields typically set by the recognizer ---
     pub zone_id: Option<String>, // Unique ID for the zone
-    pub start_idx: Option<u64>,
-    pub end_idx: Option<u64>,
-    pub start_time: Option<String>, // ISO 8601 format string
-    pub end_time: Option<String>,   // ISO 8601 format string (for formation end)
-    pub zone_high: Option<f64>,
-    pub zone_low: Option<f64>,
-    pub fifty_percent_line: Option<f64>,
-    pub detection_method: Option<String>,
+    pub start_idx: Option<u64>,  // Index of the first candle forming the zone
+    pub end_idx: Option<u64>,    // Index of the LAST candle forming the zone (e.g., the big bar)
+    pub start_time: Option<String>, // ISO 8601 format string of start_idx candle
+    pub end_time: Option<String>,   // ISO 8601 format string of end_idx candle
+    pub zone_high: Option<f64>,     // Top boundary of the zone
+    pub zone_low: Option<f64>,      // Bottom boundary of the zone
+    pub fifty_percent_line: Option<f64>, // Midpoint of the zone
+    pub detection_method: Option<String>, // How the zone was identified
 
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")] // Added skip_serializing_if
+    pub zone_type: Option<String>, // e.g., "supply_zone", "demand_zone". Renamed from 'type'.
+
+    #[serde(skip_serializing_if = "Option::is_none")] // Added skip_serializing_if
     pub extended: Option<bool>,         // Was the zone extended during detection?
+    #[serde(skip_serializing_if = "Option::is_none")] // Added skip_serializing_if
     pub extension_percent: Option<f64>, // How much was it extended?
 
-    // Fields added during enrichment process
-    #[serde(default)] // Ensures this defaults to false if missing during deserialization
-    pub is_active: bool, // Status calculated based on later price action
+    // --- Fields calculated during enrichment ---
+    #[serde(default)] // Defaults to false if missing. Calculated based on distal line status.
+    pub is_active: bool,
 
     #[serde(skip_serializing_if = "Option::is_none")] // Don't include in JSON if None
-    pub bars_active: Option<u64>, // How many bars the zone remained active (calculated for bulk/debug)
+    pub bars_active: Option<u64>, // How many bars passed *after* formation before the zone was invalidated (distal break).
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub touch_count: Option<i64>,
+    pub touch_count: Option<i64>, // Number of times price entered the zone (touched proximal) before consumption/invalidation.
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub strength_score: Option<f64>,
+    pub strength_score: Option<f64>, // A calculated score (e.g., based on touches, formation quality).
+
+    // --- NEW FIELDS ---
+    /// Time (ISO 8601) of the first candle that invalidated the zone (broke the distal line). None if not invalidated yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalidation_time: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_data_candle: Option<String>,
+
+    // Optional: Include candles involved in the zone state? Might make JSON large.
+    // #[serde(skip_serializing_if = "Option::is_none")]
+    // pub candles: Option<Vec<CandleData>>,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -106,10 +125,37 @@ pub struct BulkActiveZonesResponse {
 
 // Public helper function to deserialize raw JSON into EnrichedZone
 // Used by handlers that process results from _fetch_and_detect_core
-pub fn deserialize_raw_zone_value(zone_value: &serde_json::Value) -> Result<EnrichedZone, serde_json::Error> {
-    serde_json::from_value::<EnrichedZone>(zone_value.clone())
-}
+pub fn deserialize_raw_zone_value(zone_json: &Value) -> Result<EnrichedZone, String> {
+    // Attempt direct deserialization first
+    match serde_json::from_value::<EnrichedZone>(zone_json.clone()) {
+        Ok(mut zone) => {
+            // Post-deserialization checks or defaults if needed
+            if zone.zone_id.is_none() {
+                // We expect the enrichment logic to add this now if missing
+                warn!("deserialize_raw_zone_value: Zone missing zone_id (will be generated during enrichment). JSON: {:?}", zone_json.get("start_time"));
+            }
+             if zone.zone_type.is_none() {
+                // Try to infer from detection_method if possible, or rely on enrichment context
+                warn!("deserialize_raw_zone_value: Zone missing zone_type. JSON: {:?}", zone_json.get("detection_method"));
+                 // Enrichment logic should set this based on context (supply/demand loop)
+             }
+            if zone.end_idx.is_none() {
+                 warn!("deserialize_raw_zone_value: Zone missing end_idx. JSON: {:?}", zone_json);
+                 // This is critical for enrichment, maybe return error? Or let enrichment handle Option?
+                 // Returning Ok for now, enrichment will fail later if None.
+            }
+             // `is_active` should default to false due to `#[serde(default)]` if missing
 
+            Ok(zone)
+        }
+        Err(e) => {
+            // Log the specific error and the JSON that failed
+            let error_msg = format!("deserialize_raw_zone_value error: {}. Failed JSON: {}", e, zone_json);
+            warn!("{}", error_msg); // Use warn or error as appropriate
+            Err(error_msg)
+        }
+    }
+}
 
 // --- StoredZone (Keep this here if you added it previously for the generator) ---
 // --- If you are ONLY restoring the debug endpoint, you can COMMENT OUT or REMOVE this struct ---
