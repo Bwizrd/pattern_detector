@@ -22,6 +22,12 @@ pub struct BulkSymbolTimeframesRequestItem {
 // Example (assuming it's imported from detect.rs):
 // pub use crate::detect::CandleData; // Re-export if needed elsewhere easily
 
+// *** NEW: Struct for touch point data ***
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TouchPoint {
+    pub time: String, // ISO 8601 time of the candle where touch occurred
+    pub price: f64,   // Price level of the touch (proximal line)
+}
 
 // --- Structs primarily used for Zone Data Processing & Output ---
 
@@ -66,6 +72,20 @@ pub struct EnrichedZone {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_data_candle: Option<String>,
+
+    // --- *** NEW FIELDS *** ---
+    /// Index of the first candle that invalidated the zone (broke distal). None if active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_end_idx: Option<u64>,
+
+    /// Time (ISO 8601) of the first candle that invalidated the zone. Same as invalidation_time. None if active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_end_time: Option<String>,
+    // --- *** END NEW FIELDS *** ---
+
+    // --- *** NEW FIELD for Touch Points *** ---
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub touch_points: Option<Vec<TouchPoint>>,
 
     // Optional: Include candles involved in the zone state? Might make JSON large.
     // #[serde(skip_serializing_if = "Option::is_none")]

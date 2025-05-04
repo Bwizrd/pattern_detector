@@ -9,6 +9,7 @@ use crate::types::{
     EnrichedZone,
     SymbolZoneResponse,    // Imported from types.rs
     TimeframeZoneResponse, // Imported from types.rs
+    TouchPoint,
 };
 use actix_web::{web, HttpResponse, Responder};
 use csv::ReaderBuilder;
@@ -622,6 +623,7 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                                         let mut touch_count: i64 = 0;
                                         let mut first_invalidation_idx: Option<usize> = None; // Distal break ONLY
                                         let mut is_outside_zone = true; // **** NEW: State flag, true initially ****
+                                        let mut current_touch_points: Vec<TouchPoint> = Vec::new();
 
                                         // --- 4. Loop Through Candles *After* Formation ---
                                         let check_start_idx = formation_end_idx + 1;
@@ -640,60 +642,55 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                                                     continue;
                                                 }
 
-                                                // --- a) Check for Invalidation (Distal Breach) ---
+                                                let mut interaction_occurred = false;
+                                                let mut interaction_price = 0.0;
+
+                                                // --- Check for Invalidation (Distal Breach) ---
+                                                // (This logic should remain BEFORE the interaction check)
                                                 if is_supply {
                                                     if candle.high > distal_line {
-                                                        is_currently_active = false; // Set inactive
+                                                        is_currently_active = false;
                                                         if first_invalidation_idx.is_none() {
                                                             first_invalidation_idx = Some(i);
                                                         }
-                                                        // Log appropriately using correct scope variables (current_symbol/timeframe or symbol/timeframe)
                                                         debug!("[Task/Debug] Supply zone invalidated at index {}", i);
-                                                        break; // Break loop after invalidation
+                                                        break; // Stop processing after invalidation
                                                     }
                                                 } else {
                                                     // Demand
                                                     if candle.low < distal_line {
-                                                        is_currently_active = false; // Set inactive
+                                                        is_currently_active = false;
                                                         if first_invalidation_idx.is_none() {
                                                             first_invalidation_idx = Some(i);
                                                         }
-                                                        // Log appropriately using correct scope variables
                                                         debug!("[Task/Debug] Demand zone invalidated at index {}", i);
-                                                        break; // Break loop after invalidation
+                                                        break; // Stop processing after invalidation
                                                     }
                                                 }
 
-                                                // --- b) Check for Touch ENTRY ---
-                                                let crosses_proximal_inward: bool;
-                                                let is_fully_outside_now: bool;
-
+                                                // --- Check for Interaction (Proximal Breach) ---
+                                                // (This is checked ONLY if zone is still active)
                                                 if is_supply {
-                                                    // Supply Zone: Proximal=Low, Distal=High
-                                                    crosses_proximal_inward =
-                                                        candle.high >= proximal_line;
-                                                    is_fully_outside_now =
-                                                        candle.high < proximal_line;
-                                                // Entire candle is below proximal
+                                                    if candle.high >= proximal_line {
+                                                        interaction_occurred = true;
+                                                        interaction_price = candle.high;
+                                                    }
                                                 } else {
-                                                    // Demand Zone: Proximal=High, Distal=Low
-                                                    crosses_proximal_inward =
-                                                        candle.low <= proximal_line;
-                                                    is_fully_outside_now =
-                                                        candle.low > proximal_line;
-                                                    // Entire candle is above proximal
+                                                    // Demand
+                                                    if candle.low <= proximal_line {
+                                                        interaction_occurred = true;
+                                                        interaction_price = candle.low;
+                                                    }
                                                 }
 
-                                                // Count touch only if we were outside and now cross the proximal line
-                                                if is_outside_zone && crosses_proximal_inward {
-                                                    touch_count += 1;
-                                                    is_outside_zone = false; // We are now inside/touching
-                                                                             // Log appropriately using correct scope variables
-                                                    debug!("[Task/Debug] Zone touched (entered) at index {}. Total touches: {}", i, touch_count);
-                                                }
-                                                // Update state for the *next* iteration: if we are fully outside now, set flag
-                                                else if is_fully_outside_now {
-                                                    is_outside_zone = true;
+                                                // --- Record Interaction and Increment Count (Single Block) ---
+                                                if interaction_occurred {
+                                                    touch_count += 1; // Count every interaction
+                                                    current_touch_points.push(TouchPoint {
+                                                        time: candle.time.clone(),
+                                                        price: interaction_price,
+                                                    });
+                                                    debug!("[Task/Debug] Zone interaction recorded at index {}. Price: {}. Total Interactions: {}", i, interaction_price, touch_count);
                                                 }
                                                 // If we were already inside and remain inside/crossing, is_outside_zone stays false.
                                             } // End candle loop
@@ -706,6 +703,31 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                                         // (Rest of finalize logic remains the same - setting is_active, touch_count, invalidation_time, bars_active, strength_score)
                                         enriched_zone_struct.is_active = is_currently_active;
                                         enriched_zone_struct.touch_count = Some(touch_count);
+                                        if !current_touch_points.is_empty() {
+                                            enriched_zone_struct.touch_points =
+                                                Some(current_touch_points);
+                                        } else {
+                                            enriched_zone_struct.touch_points = None;
+                                            // Explicitly None if no touches
+                                        }
+                                        // --- Populate NEW fields only if invalidated ---
+                                        if !is_currently_active {
+                                            // Zone is NOT active (invalidated)
+                                            enriched_zone_struct.invalidation_time =
+                                                first_invalidation_idx
+                                                    .map(|idx| candles[idx].time.clone());
+                                            // Populate zone_end_idx and zone_end_time
+                                            enriched_zone_struct.zone_end_idx =
+                                                first_invalidation_idx.map(|idx| idx as u64);
+                                            enriched_zone_struct.zone_end_time =
+                                                enriched_zone_struct.invalidation_time.clone();
+                                            // Reuse the invalidation time
+                                        } else {
+                                            // Zone IS active - ensure these fields are None (they are by default)
+                                            enriched_zone_struct.invalidation_time = None;
+                                            enriched_zone_struct.zone_end_idx = None;
+                                            enriched_zone_struct.zone_end_time = None;
+                                        }
                                         enriched_zone_struct.invalidation_time =
                                             first_invalidation_idx
                                                 .map(|idx| candles[idx].time.clone());
@@ -1086,6 +1108,7 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
                         let mut touch_count: i64 = 0;
                         let mut first_invalidation_idx: Option<usize> = None; // Distal break ONLY
                         let mut is_outside_zone = true; // **** NEW: State flag, true initially ****
+                        let mut current_touch_points: Vec<TouchPoint> = Vec::new();
 
                         // --- 4. Loop Through Candles *After* Formation ---
                         let check_start_idx = formation_end_idx + 1;
@@ -1104,62 +1127,61 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
                                     continue;
                                 }
 
-                                // --- a) Check for Invalidation (Distal Breach) ---
+                                let mut interaction_occurred = false;
+                                let mut interaction_price = 0.0;
+
+                                // --- Check for Invalidation (Distal Breach) ---
+                                // (This logic should remain BEFORE the interaction check)
                                 if is_supply {
                                     if candle.high > distal_line {
-                                        is_currently_active = false; // Set inactive
+                                        is_currently_active = false;
                                         if first_invalidation_idx.is_none() {
                                             first_invalidation_idx = Some(i);
                                         }
-                                        // Log appropriately using correct scope variables (current_symbol/timeframe or symbol/timeframe)
                                         debug!(
                                             "[Task/Debug] Supply zone invalidated at index {}",
                                             i
                                         );
-                                        break; // Break loop after invalidation
+                                        break; // Stop processing after invalidation
                                     }
                                 } else {
                                     // Demand
                                     if candle.low < distal_line {
-                                        is_currently_active = false; // Set inactive
+                                        is_currently_active = false;
                                         if first_invalidation_idx.is_none() {
                                             first_invalidation_idx = Some(i);
                                         }
-                                        // Log appropriately using correct scope variables
                                         debug!(
                                             "[Task/Debug] Demand zone invalidated at index {}",
                                             i
                                         );
-                                        break; // Break loop after invalidation
+                                        break; // Stop processing after invalidation
                                     }
                                 }
 
-                                // --- b) Check for Touch ENTRY ---
-                                let crosses_proximal_inward: bool;
-                                let is_fully_outside_now: bool;
-
+                                // --- Check for Interaction (Proximal Breach) ---
+                                // (This is checked ONLY if zone is still active)
                                 if is_supply {
-                                    // Supply Zone: Proximal=Low, Distal=High
-                                    crosses_proximal_inward = candle.high >= proximal_line;
-                                    is_fully_outside_now = candle.high < proximal_line;
-                                // Entire candle is below proximal
+                                    if candle.high >= proximal_line {
+                                        interaction_occurred = true;
+                                        interaction_price = candle.high;
+                                    }
                                 } else {
-                                    // Demand Zone: Proximal=High, Distal=Low
-                                    crosses_proximal_inward = candle.low <= proximal_line;
-                                    is_fully_outside_now = candle.low > proximal_line;
-                                    // Entire candle is above proximal
+                                    // Demand
+                                    if candle.low <= proximal_line {
+                                        interaction_occurred = true;
+                                        interaction_price = candle.low;
+                                    }
                                 }
 
-                                // Count touch only if we were outside and now cross the proximal line
-                                if is_outside_zone && crosses_proximal_inward {
-                                    touch_count += 1;
-                                    is_outside_zone = false; // We are now inside/touching
-                                                             // Log appropriately using correct scope variables
-                                    debug!("[Task/Debug] Zone touched (entered) at index {}. Total touches: {}", i, touch_count);
-                                }
-                                // Update state for the *next* iteration: if we are fully outside now, set flag
-                                else if is_fully_outside_now {
-                                    is_outside_zone = true;
+                                // --- Record Interaction and Increment Count (Single Block) ---
+                                if interaction_occurred {
+                                    touch_count += 1; // Count every interaction
+                                    current_touch_points.push(TouchPoint {
+                                        time: candle.time.clone(),
+                                        price: interaction_price,
+                                    });
+                                    debug!("[Task/Debug] Zone interaction recorded at index {}. Price: {}. Total Interactions: {}", i, interaction_price, touch_count);
                                 }
                                 // If we were already inside and remain inside/crossing, is_outside_zone stays false.
                             } // End candle loop
@@ -1172,6 +1194,28 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
                         // (Rest of finalize logic remains the same - setting is_active, touch_count, invalidation_time, bars_active, strength_score)
                         enriched_zone_struct.is_active = is_currently_active;
                         enriched_zone_struct.touch_count = Some(touch_count);
+                        if !current_touch_points.is_empty() {
+                            enriched_zone_struct.touch_points = Some(current_touch_points);
+                        } else {
+                            enriched_zone_struct.touch_points = None; // Explicitly None if no touches
+                        }
+                        // --- Populate NEW fields only if invalidated ---
+                        if !is_currently_active {
+                            // Zone is NOT active (invalidated)
+                            enriched_zone_struct.invalidation_time =
+                                first_invalidation_idx.map(|idx| candles[idx].time.clone());
+                            // Populate zone_end_idx and zone_end_time
+                            enriched_zone_struct.zone_end_idx =
+                                first_invalidation_idx.map(|idx| idx as u64);
+                            enriched_zone_struct.zone_end_time =
+                                enriched_zone_struct.invalidation_time.clone(); // Reuse the invalidation time
+                        } else {
+                            // Zone IS active - ensure these fields are None (they are by default)
+                            enriched_zone_struct.invalidation_time = None;
+                            enriched_zone_struct.zone_end_idx = None;
+                            enriched_zone_struct.zone_end_time = None;
+                        }
+                        // --- End NEW field population ---
                         enriched_zone_struct.invalidation_time =
                             first_invalidation_idx.map(|idx| candles[idx].time.clone());
                         let end_event_idx = first_invalidation_idx.unwrap_or(candle_count);
@@ -1184,10 +1228,10 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
                         let score_raw = 100.0 - (touch_count as f64 * 10.0);
                         enriched_zone_struct.strength_score = Some(score_raw.max(0.0));
 
-                        debug!("[debug {}/{}] {} zone {} (ID: {}) Final Status: Active={}, Touches={}, BarsActive={:?}, InvalidatedT={:?}",
-                               symbol, timeframe, zone_type_str, zone_counter, zone_id_log,
-                               enriched_zone_struct.is_active, enriched_zone_struct.touch_count.unwrap_or(0), enriched_zone_struct.bars_active,
-                               enriched_zone_struct.invalidation_time.is_some());
+                        debug!("[Task/Debug] Zone Final Status: Active={}, Touches={}, BarsActive={:?}, InvalidatedT={:?}, ZoneEndIdx={:?}, ZoneEndTime={:?}",
+                        enriched_zone_struct.is_active, enriched_zone_struct.touch_count.unwrap_or(0), enriched_zone_struct.bars_active,
+                        enriched_zone_struct.invalidation_time.is_some(), // Use invalidation_time for consistency in log
+                        enriched_zone_struct.zone_end_idx, enriched_zone_struct.zone_end_time);
 
                         processed_zones.push(enriched_zone_struct);
                     } // End loop through zones
@@ -1212,7 +1256,11 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
                     .and_then(|sz| sz.get("zones"))
                     .and_then(|z| z.as_array())
                 {
-                    Some(raw_zones) => match process_and_enrich_zones(Some(raw_zones), true, last_candle_timestamp.clone()) {
+                    Some(raw_zones) => match process_and_enrich_zones(
+                        Some(raw_zones),
+                        true,
+                        last_candle_timestamp.clone(),
+                    ) {
                         Ok(zones) => final_supply_zones = zones,
                         Err(e) => enrichment_error = Some(e),
                     },
@@ -1224,7 +1272,11 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
                         .and_then(|dz| dz.get("zones"))
                         .and_then(|z| z.as_array())
                     {
-                        Some(raw_zones) => match process_and_enrich_zones(Some(raw_zones), false, last_candle_timestamp.clone()) {
+                        Some(raw_zones) => match process_and_enrich_zones(
+                            Some(raw_zones),
+                            false,
+                            last_candle_timestamp.clone(),
+                        ) {
                             Ok(zones) => final_demand_zones = zones,
                             Err(e) => enrichment_error = Some(e),
                         },
