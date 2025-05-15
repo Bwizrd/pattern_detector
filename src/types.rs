@@ -2,7 +2,7 @@
 // Contains shared data structures used by both the web server handlers and potentially the generator.
 
 use serde::{Deserialize, Serialize};
-use crate::detect::{CandleData, ChartQuery}; // Imports from detect.rs
+pub use crate::detect::{CandleData, ChartQuery}; // Imports from detect.rs
 use std::collections::HashMap; // Needed for HashMap fields
 use log::{warn};
 use serde_json::Value; 
@@ -218,4 +218,6 @@ pub struct StoredZone {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone_type: Option<String>,
     // --- END ADDED FIELDS ---
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
 }

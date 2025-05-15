@@ -463,8 +463,9 @@ async fn write_zones_batch(
 
 // --- Main Processing Function for the Generator with Concurrency ---
 // Orchestrates the entire process with concurrent tasks
-pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
+pub async fn run_zone_generation(is_periodic_run: bool) -> Result<(), Box<dyn Error>> {
     // At the start of your run_zone_generation function:
+    let run_type = if is_periodic_run { "PERIODIC" } else { "FULL" };
     info!("Starting zone generation process...");
     dotenv().ok();
     info!("Reading environment variables...");
@@ -512,6 +513,21 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
         .map(|s| s.parse::<usize>().unwrap_or(4))
         .unwrap_or(4); // Default: process 4 combinations at once
                        // --- End Reading Env Vars ---
+
+                       // --- Determine Time Window Based on Run Type ---
+    let (query_start_time, query_end_time) = if is_periodic_run {
+        // Periodic Run: Use rolling window relative to now()
+        let lookback_duration = env::var("GENERATOR_PERIODIC_LOOKBACK") // New env var
+                                    .unwrap_or_else(|_| "2h".to_string());
+        info!("[ZONE_GENERATOR_PERIODIC] Using lookback: {}", lookback_duration);
+        (format!("-{}", lookback_duration), "now()".to_string())
+    } else {
+        // Full/Historical Run: Use fixed times from environment
+        let start_time = env::var("GENERATOR_START_TIME")?;
+        let end_time = env::var("GENERATOR_END_TIME")?;
+        info!("[ZONE_GENERATOR_FULL] Using fixed times: Start='{}', End='{}'", start_time, end_time);
+        (start_time, end_time)
+    };
 
     if patterns.is_empty() {
         return Err("No patterns specified in GENERATOR_PATTERNS env var.".into());
@@ -606,10 +622,8 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
     // Process in chunks to allow for some parallelism
     for (chunk_idx, chunk) in all_combinations.chunks(chunk_size).enumerate() {
         info!(
-            "Processing chunk {}/{} ({} combinations)",
-            chunk_idx + 1,
-            (total_combinations + chunk_size - 1) / chunk_size,
-            chunk.len()
+            "[ZONE_GENERATOR_{}] Processing chunk {}/{} ({} combinations)",
+            run_type, chunk_idx + 1, (total_combinations + chunk_size - 1) / chunk_size, chunk.len()
         );
 
         let mut futures = Vec::new();
@@ -638,7 +652,7 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
         // Process results from this chunk
         for (i, result) in results.into_iter().enumerate() {
             let (symbol, timeframe, pattern_name) = &chunk[i];
-            let task_id = format!("{}/{}/{}", symbol, timeframe, pattern_name);
+            let task_id = format!("[ZONE_GENERATOR_{}] {}/{}/{}", run_type, symbol, timeframe, pattern_name);
 
             match result {
                 Ok(_) => {
@@ -661,7 +675,7 @@ pub async fn run_zone_generation() -> Result<(), Box<dyn Error>> {
             (total_processed as f64 / total_combinations as f64) * 100.0
         );
     }
-
+    info!("[ZONE_GENERATOR_{}] Finished {} run.", run_type, run_type);
     // Report final status based on errors
     if total_errors > 0 {
         error!(
