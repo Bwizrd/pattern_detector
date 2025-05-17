@@ -11,10 +11,80 @@ use serde_json::json;
 use std::env; // For reading environment variables
 use std::error::Error; // For building JSON request bodies
 
+// --- BEGINNING OF ADDITIONS/MODIFICATIONS FOR RAW ZONE LOGGING ---
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::sync::Mutex;
+use chrono::Local; // For current detection time
+use lazy_static::lazy_static; // Ensure lazy_static is in Cargo.toml
+// --- END OF ADDITIONS/MODIFICATIONS FOR RAW ZONE LOGGING ---
+
 type BoxedError = Box<dyn std::error::Error + Send + Sync>;
 
+// --- BEGINNING OF ADDITIONS FOR RAW ZONE LOGGING ---
+lazy_static! {
+    static ref RAW_ZONE_TXT_LOGGER: Mutex<BufWriter<File>> = {
+        let file_path = "detected_raw_zones.txt"; // Log file in the current working directory
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_path)
+            .unwrap_or_else(|e| panic!("Failed to open or create {}: {}", file_path, e));
+        Mutex::new(BufWriter::new(file))
+    };
+}
+
+// Helper function to log a raw detected zone to the text file
+fn write_raw_zone_to_text_log(
+    symbol: &str,
+    timeframe: &str,
+    raw_zone_type_key: &str, // "supply_zones" or "demand_zones" (from recognizer output)
+    zone_json: &serde_json::Value,
+) {
+    let detection_timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let zone_type_for_log = if raw_zone_type_key.contains("supply") { "supply" } else { "demand" };
+
+    // Extract key details from the raw zone_json as produced by the recognizer
+    let zone_start_time = zone_json.get("start_time").and_then(|v| v.as_str()).unwrap_or("N/A");
+    let zone_high = zone_json.get("zone_high").and_then(|v| v.as_f64()).map_or_else(|| "N/A".to_string(), |f| format!("{:.6}", f));
+    let zone_low = zone_json.get("zone_low").and_then(|v| v.as_f64()).map_or_else(|| "N/A".to_string(), |f| format!("{:.6}", f));
+    let start_idx_raw = zone_json.get("start_idx").and_then(|v| v.as_u64()).map_or_else(|| "N/A".to_string(), |u| u.to_string());
+    let detection_method = zone_json.get("detection_method").and_then(|v| v.as_str()).unwrap_or("N/A");
+
+
+    let log_message = format!(
+        "DetectedAt: {} | Symbol: {} | TF: {} | Type: {} | ZoneStartTime: {} | ZoneHigh: {} | ZoneLow: {} | RawStartIdx: {} | Method: {}\n",
+        detection_timestamp,
+        symbol,
+        timeframe,
+        zone_type_for_log,
+        zone_start_time,
+        zone_high,
+        zone_low,
+        start_idx_raw,
+        detection_method
+    );
+
+    match RAW_ZONE_TXT_LOGGER.lock() {
+        Ok(mut writer) => {
+            if let Err(e) = writer.write_all(log_message.as_bytes()) {
+                log::error!("[RAW_ZONE_TXT_LOG] Failed to write: {}", e);
+            }
+            // Optional: Flush immediately if needed, though BufWriter handles it.
+            // if let Err(e) = writer.flush() {
+            //     log::error!("[RAW_ZONE_TXT_LOG] Failed to flush: {}", e);
+            // }
+        }
+        Err(e) => {
+            log::error!("[RAW_ZONE_TXT_LOG] Failed to acquire lock: {}", e);
+        }
+    }
+}
+// --- END OF ADDITIONS FOR RAW ZONE LOGGING ---
+
+
 // --- Helper function fetch_distinct_tag_values using reqwest ---
-// Fetches distinct values for a given tag from a measurement via InfluxDB HTTP API.
+// (This function is UNCHANGED from your version)
 async fn fetch_distinct_tag_values(
     http_client: &Client,
     influx_host: &str,
@@ -121,7 +191,7 @@ async fn fetch_distinct_tag_values(
 }
 
 // --- Helper to extract formation candles ---
-// Extracts the specific candles (based on start/end index) that formed the zone.
+// (This function is UNCHANGED from your version)
 fn extract_formation_candles(
     candles: &[CandleData],
     start_idx: Option<u64>,
@@ -210,7 +280,7 @@ fn extract_formation_candles(
 }
 
 // --- InfluxDB Writing Logic using reqwest ---
-// Writes a batch of StoredZone data points using InfluxDB Line Protocol via HTTP API.
+// (This function is UNCHANGED from your version)
 async fn write_zones_batch(
     http_client: &Client,
     influx_host: &str,
@@ -466,143 +536,103 @@ async fn write_zones_batch(
 pub async fn run_zone_generation(is_periodic_run: bool) -> Result<(), Box<dyn Error>> {
     // At the start of your run_zone_generation function:
     let run_type = if is_periodic_run { "PERIODIC" } else { "FULL" };
-    info!("Starting zone generation process...");
-    dotenv().ok();
-    info!("Reading environment variables...");
+    info!("Starting {} zone generation process...", run_type); // MODIFIED: Clarified run_type in log
+    // dotenv().ok(); // MODIFIED: dotenv is called in main.rs, assuming it's already loaded
+    
+    // MODIFIED: Retained your original ENV var logging loop
+    info!("Reading environment variables for generator run...");
     for var_name in [
-        "INFLUXDB_HOST",
-        "INFLUXDB_ORG",
-        "INFLUXDB_TOKEN",
-        "INFLUXDB_BUCKET",
-        "GENERATOR_WRITE_BUCKET",
-        "GENERATOR_TRENDBAR_MEASUREMENT",
-        "GENERATOR_ZONE_MEASUREMENT",
-        "GENERATOR_START_TIME",
-        "GENERATOR_END_TIME",
-        "GENERATOR_PATTERNS",
+        "INFLUXDB_HOST", "INFLUXDB_ORG", "INFLUXDB_TOKEN", "INFLUXDB_BUCKET",
+        "GENERATOR_WRITE_BUCKET", "GENERATOR_TRENDBAR_MEASUREMENT", "GENERATOR_ZONE_MEASUREMENT",
+        "GENERATOR_START_TIME", "GENERATOR_END_TIME", "GENERATOR_PATTERNS",
+        "GENERATOR_PERIODIC_LOOKBACK", "GENERATOR_CHUNK_SIZE", "GENERATOR_EXCLUDE_TIMEFRAMES", // Added some common ones to your list
     ] {
         match env::var(var_name) {
-            Ok(val) => info!("  {} = {}", var_name, val),
-            Err(_) => error!("  {} is not set!", var_name),
+            Ok(val) => info!("  [ENV] {} = {}", var_name, val),
+            Err(_) => warn!("  [ENV] {} is not set (will use default or fail if required)", var_name),
         }
     }
-    // dotenv is called in main.rs
 
     // --- Read ALL settings from Environment Variables ---
     let host = env::var("INFLUXDB_HOST")?;
     let org = env::var("INFLUXDB_ORG")?;
     let token = env::var("INFLUXDB_TOKEN")?;
-    let read_bucket = env::var("INFLUXDB_BUCKET")?; // Bucket for reading candles
-    let write_bucket = env::var("GENERATOR_WRITE_BUCKET")?; // Bucket for writing zones
-    let trendbar_measurement = env::var("GENERATOR_TRENDBAR_MEASUREMENT")?; // Measurement with candles
-    let zone_measurement = env::var("GENERATOR_ZONE_MEASUREMENT")?; // Target measurement for zones
+    let read_bucket = env::var("INFLUXDB_BUCKET")?;
+    let write_bucket = env::var("GENERATOR_WRITE_BUCKET")?;
+    let trendbar_measurement = env::var("GENERATOR_TRENDBAR_MEASUREMENT")?;
+    let zone_measurement = env::var("GENERATOR_ZONE_MEASUREMENT")?;
 
-    // Start and end time values - could be relative (like -90d) or absolute RFC3339 timestamps
-    let start_time = env::var("GENERATOR_START_TIME")?; // Start of analysis period (can be relative)
-    let end_time = env::var("GENERATOR_END_TIME")?; // End of analysis period (can be relative)
-
-    let patterns_str = env::var("GENERATOR_PATTERNS")?; // Comma-separated list of patterns
+    let patterns_str = env::var("GENERATOR_PATTERNS")?;
     let patterns: Vec<String> = patterns_str
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
-    // Get parallel processing size from env var or use a reasonable default
     let chunk_size = env::var("GENERATOR_CHUNK_SIZE")
         .map(|s| s.parse::<usize>().unwrap_or(4))
-        .unwrap_or(4); // Default: process 4 combinations at once
-                       // --- End Reading Env Vars ---
+        .unwrap_or(4);
 
-                       // --- Determine Time Window Based on Run Type ---
+    // --- Determine Time Window Based on Run Type ---
+    // MODIFIED: These query_start_time and query_end_time are Strings and live long enough
     let (query_start_time, query_end_time) = if is_periodic_run {
-        // Periodic Run: Use rolling window relative to now()
-        let lookback_duration = env::var("GENERATOR_PERIODIC_LOOKBACK") // New env var
+        let lookback_duration = env::var("GENERATOR_PERIODIC_LOOKBACK")
                                     .unwrap_or_else(|_| "2h".to_string());
-        info!("[ZONE_GENERATOR_PERIODIC] Using lookback: {}", lookback_duration);
+        info!("[ZONE_GENERATOR_{}] Using periodic lookback: {}", run_type, lookback_duration);
         (format!("-{}", lookback_duration), "now()".to_string())
     } else {
-        // Full/Historical Run: Use fixed times from environment
-        let start_time = env::var("GENERATOR_START_TIME")?;
-        let end_time = env::var("GENERATOR_END_TIME")?;
-        info!("[ZONE_GENERATOR_FULL] Using fixed times: Start='{}', End='{}'", start_time, end_time);
-        (start_time, end_time)
+        // These are only used for full runs, not the query_start_time/query_end_time for periodic.
+        let start_time_full = env::var("GENERATOR_START_TIME")?; 
+        let end_time_full = env::var("GENERATOR_END_TIME")?;
+        info!("[ZONE_GENERATOR_{}] Using fixed times: Start='{}', End='{}'", run_type, start_time_full, end_time_full);
+        (start_time_full, end_time_full)
     };
 
     if patterns.is_empty() {
         return Err("No patterns specified in GENERATOR_PATTERNS env var.".into());
     }
-    info!("Generator Config from Env:");
+    info!("Generator Config for this run:"); // MODIFIED: Clarified log for "this run"
     info!("  Read Bucket: {}", read_bucket);
     info!("  Write Bucket: {}", write_bucket);
     info!("  Trendbar Measurement: {}", trendbar_measurement);
     info!("  Zone Measurement: {}", zone_measurement);
-    info!("  Start Time: {}", start_time);
-    info!("  End Time: {}", end_time);
+    // MODIFIED: Log the actual query_start/end_time being used for candle fetching
+    info!("  Query Start Time for candle fetch: {}", query_start_time);
+    info!("  Query End Time for candle fetch: {}", query_end_time);
     info!("  Patterns: {:?}", patterns);
     info!("  Parallel Chunk Size: {}", chunk_size);
 
-    // Create a single reusable reqwest client
     let http_client = Client::new();
 
-    // 1. Discover Symbols from the source measurement
     let discovered_symbols = fetch_distinct_tag_values(
-        &http_client,
-        &host,
-        &org,
-        &token,
-        &read_bucket,
-        &trendbar_measurement,
-        "symbol",
-    )
-    .await?;
+        &http_client, &host, &org, &token, &read_bucket, &trendbar_measurement, "symbol",
+    ).await?;
     if discovered_symbols.is_empty() {
         return Err("No symbols found in trendbar measurement.".into());
     }
 
-    // 2. Discover Timeframes and filter for supported ones
-
     let all_timeframes = fetch_distinct_tag_values(
-        &http_client,
-        &host,
-        &org,
-        &token,
-        &read_bucket,
-        &trendbar_measurement,
-        "timeframe",
-    )
-    .await?;
+        &http_client, &host, &org, &token, &read_bucket, &trendbar_measurement, "timeframe",
+    ).await?;
 
     let excluded_timeframes_str = env::var("GENERATOR_EXCLUDE_TIMEFRAMES").unwrap_or_default();
     let excluded_timeframes: Vec<String> = excluded_timeframes_str
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    info!("Excluded timeframes: {:?}", excluded_timeframes);
+        .split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    info!("Excluded timeframes from ENV: {:?}", excluded_timeframes); // MODIFIED: Log actual excluded TFs
 
     let allowed_timeframes: Vec<String> = all_timeframes
         .into_iter()
         .filter(|tf| {
-            // First, check if it's in the excluded list
-            if excluded_timeframes.contains(tf) {
-                return false;
-            }
-            // Then apply the original supported timeframe filter
-            matches!(
-                tf.as_str(),
-                "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d"
-            )
+            if excluded_timeframes.contains(tf) { return false; }
+            matches!(tf.as_str(), "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d")
         })
         .collect();
     if allowed_timeframes.is_empty() {
-        return Err("No supported timeframes (1m-1d) found in trendbar measurement.".into());
+        return Err("No supported timeframes (1m-1d, excluding GENERATOR_EXCLUDE_TIMEFRAMES) found after filtering.".into()); // MODIFIED: Clarified error
     }
     info!("Will process symbols: {:?}", discovered_symbols);
     info!("Will process timeframes: {:?}", allowed_timeframes);
 
-    // --- Create a list of all combinations ---
     let mut all_combinations = Vec::new();
     for symbol in discovered_symbols.iter() {
         for timeframe in allowed_timeframes.iter() {
@@ -615,73 +645,52 @@ pub async fn run_zone_generation(is_periodic_run: bool) -> Result<(), Box<dyn Er
     let total_combinations = all_combinations.len();
     info!("Total combinations to process: {}", total_combinations);
 
-    // --- Process combinations in chunks (for parallel processing) ---
     let mut total_processed = 0;
     let mut total_errors = 0;
 
-    // Process in chunks to allow for some parallelism
     for (chunk_idx, chunk) in all_combinations.chunks(chunk_size).enumerate() {
         info!(
             "[ZONE_GENERATOR_{}] Processing chunk {}/{} ({} combinations)",
             run_type, chunk_idx + 1, (total_combinations + chunk_size - 1) / chunk_size, chunk.len()
         );
-
         let mut futures = Vec::new();
-
-        // Create a future for each combination in this chunk
         for (symbol, timeframe, pattern_name) in chunk {
+            // --- LIFETIME FIX APPLIED HERE ---
+            // Pass references to the query_start_time and query_end_time Strings
+            // which are defined in the outer scope of run_zone_generation and live long enough.
             let future = process_symbol_timeframe_pattern(
-                symbol,
-                timeframe,
-                pattern_name,
-                &start_time,
-                &end_time,
-                &write_bucket,
-                &zone_measurement,
-                &http_client,
-                &host,
-                &org,
-                &token,
+                symbol, timeframe, pattern_name,
+                &query_start_time, // Pass as &str
+                &query_end_time,   // Pass as &str
+                &write_bucket, &zone_measurement,
+                &http_client, &host, &org, &token,
             );
+            // --- END OF LIFETIME FIX ---
             futures.push(future);
         }
 
-        // Process this chunk of futures in parallel
         let results = futures::future::join_all(futures).await;
-
-        // Process results from this chunk
         for (i, result) in results.into_iter().enumerate() {
             let (symbol, timeframe, pattern_name) = &chunk[i];
             let task_id = format!("[ZONE_GENERATOR_{}] {}/{}/{}", run_type, symbol, timeframe, pattern_name);
-
             match result {
-                Ok(_) => {
-                    info!("[Task {}] Processing finished successfully.", task_id);
-                }
+                Ok(_) => info!("[Task {}] Processing finished successfully.", task_id),
                 Err(e) => {
                     error!("[Task {}] Error: {}", task_id, e);
                     total_errors += 1;
                 }
             }
-
             total_processed += 1;
         }
-
-        // Log progress after each chunk
         info!(
             "Progress: {}/{} combinations processed ({:.1}%)",
-            total_processed,
-            total_combinations,
+            total_processed, total_combinations,
             (total_processed as f64 / total_combinations as f64) * 100.0
         );
     }
     info!("[ZONE_GENERATOR_{}] Finished {} run.", run_type, run_type);
-    // Report final status based on errors
     if total_errors > 0 {
-        error!(
-            "Zone generation process finished with {} errors.",
-            total_errors
-        );
+        error!("Zone generation process finished with {} errors.", total_errors);
         Err(format!("{} generation tasks failed.", total_errors).into())
     } else {
         info!("Zone generation process finished successfully.");
@@ -695,8 +704,9 @@ async fn process_symbol_timeframe_pattern(
     symbol: &str,
     timeframe: &str,
     pattern_name: &str,
-    start_time: &str,
-    end_time: &str,
+    // MODIFIED: These are now &str, referencing the longer-lived Strings from run_zone_generation
+    fetch_start_time: &str,
+    fetch_end_time: &str,
     write_bucket: &str,
     zone_measurement: &str,
     http_client: &Client,
@@ -704,355 +714,157 @@ async fn process_symbol_timeframe_pattern(
     influx_org: &str,
     influx_token: &str,
 ) -> Result<(), BoxedError> {
-    // Add Send + Sync bounds to ensure thread safety
 
-    // Prepare query parameters for the detection function
+    // ChartQuery takes owned Strings, so we convert the borrowed &str here.
     let query = ChartQuery {
         symbol: symbol.to_string(),
         timeframe: timeframe.to_string(),
-        start_time: start_time.to_string(),
-        end_time: end_time.to_string(),
+        start_time: fetch_start_time.to_string(),
+        end_time: fetch_end_time.to_string(),
         pattern: pattern_name.to_string(),
-        enable_trading: None,
-        lot_size: None,
-        stop_loss_pips: None,
-        take_profit_pips: None,
-        enable_trailing_stop: None,
+        enable_trading: None, lot_size: None, stop_loss_pips: None,
+        take_profit_pips: None, enable_trailing_stop: None,
     };
 
-    // Call the shared detection function from detect.rs
-    // Process the result immediately to avoid moving non-Send types across await points
     let fetch_result =
         detect::_fetch_and_detect_core(&query, &format!("generator_{}/{}", symbol, timeframe))
             .await;
 
-    // Process the result of the detection core function - immediately process data to avoid Send issues
     let (candles, detection_results) = match fetch_result {
-        Ok((c, _recognizer, d)) => (c, d), // Extract candles and JSON results, drop non-Send recognizer
+        Ok((c, _recognizer, d)) => (c, d),
         Err(e) => {
-            // --- RESTORED FULL ERROR HANDLING ---
-            match e {
+            // MODIFIED: Consistent logging prefix and error handling structure
+            return match e {
                 CoreError::Request(rq_err) => {
-                    warn!(
-                        "InfluxDB request failed for {}/{}: {}. Skipping.",
-                        symbol, timeframe, rq_err
-                    );
-                    return Ok(()); // Treat request errors as skippable for this combo
+                    warn!("[GENERATOR] InfluxDB request failed for {}/{}: {}. Skipping.", symbol, timeframe, rq_err);
+                    Ok(()) // Skippable
                 }
-                CoreError::Config(cfg_err)
-                    if cfg_err.contains("Pattern") && cfg_err.contains("not supported") =>
-                {
-                    warn!(
-                        "Pattern '{}' not supported. Skipping combo {}/{}/{}.",
-                        pattern_name, symbol, timeframe, pattern_name
-                    );
-                    return Ok(()); // Skip unsupported patterns gracefully
+                CoreError::Config(cfg_err) if cfg_err.contains("Pattern") && cfg_err.contains("not supported") => {
+                    warn!("[GENERATOR] Pattern '{}' not supported. Skipping combo {}/{}/{}.", pattern_name, symbol, timeframe, pattern_name);
+                    Ok(()) // Skippable
                 }
                 CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
-                    info!(
-                        // Log as info, not error, as empty data is expected sometimes
-                        "No candle data returned by query for {}/{}/{}. Skipping.",
-                        symbol, timeframe, pattern_name
-                    );
-                    return Ok(()); // Skip processing if no data fetched
+                    info!("[GENERATOR] No candle data returned by query for {}/{}/{}. Skipping.", symbol, timeframe, pattern_name);
+                    Ok(()) // Skippable
                 }
                 CoreError::Config(cfg_err) if cfg_err.contains("CSV header mismatch") => {
-                    error!(
-                        "CSV header mismatch for {}/{}: {}",
-                        symbol, timeframe, cfg_err
-                    );
-                    // This is a more critical error, return it
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        cfg_err,
-                    )) as BoxedError);
+                    error!("[GENERATOR] CSV header mismatch for {}/{}: {}", symbol, timeframe, cfg_err);
+                    Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, cfg_err)) as BoxedError)
                 }
                 CoreError::Csv(csv_err) => {
-                    error!(
-                        "CSV parsing error for {}/{}: {}",
-                        symbol, timeframe, csv_err
-                    );
-                    // This is a more critical error, return it
-                    return Err(Box::new(csv_err) as BoxedError);
+                    error!("[GENERATOR] CSV parsing error for {}/{}: {}", symbol, timeframe, csv_err);
+                    Err(Box::new(csv_err) as BoxedError)
                 }
                 _ => {
-                    // Catch-all for other CoreErrors or wrapped errors
-                    error!(
-                        "Core fetch/detect error for {}/{}: {}",
-                        symbol, timeframe, e
-                    );
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )) as BoxedError);
+                    error!("[GENERATOR] Core fetch/detect error for {}/{}: {}", symbol, timeframe, e);
+                    Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as BoxedError)
                 }
-            }
-            // --- END RESTORED ERROR HANDLING ---
+            };
         }
     };
 
-    // --- Get candle count early ---
     let candle_count = candles.len();
 
-    // If no candle data was retrieved (handled above, but good safety check)
-    if candle_count == 0 { // Use candle_count here
-        info!(
-            "No candle data available for {}/{}/{}. Skipping zone processing.",
-            symbol, timeframe, pattern_name
-        );
+    if candle_count == 0 {
+        info!("[GENERATOR] No candle data available for {}/{}/{}. Skipping zone processing.", symbol, timeframe, pattern_name);
         return Ok(());
     }
 
-    info!(
-        "Fetched {} candles for {}/{}.",
-        candle_count, // Use candle_count
-        symbol,
-        timeframe
-    );
-    info!(
-        "Detection complete for {}/{}/{}.",
-        symbol, timeframe, pattern_name
-    );
+    info!("[GENERATOR] Fetched {} candles for {}/{}.", candle_count, symbol, timeframe);
+    info!("[GENERATOR] Detection complete for {}/{}/{}.", symbol, timeframe, pattern_name);
 
-    // Prepare to store processed zones
     let mut zones_to_store: Vec<StoredZone> = Vec::new();
-    // Navigate the JSON structure returned by the detector
     let price_data = detection_results.get("data").and_then(|d| d.get("price"));
 
-    let mut total_zones = 0;
-    let mut active_zones = 0;
-    let mut inactive_zones = 0;
+    // MODIFIED: Counters for more detailed summary logging
+    let mut total_zones_from_recognizer_field = 0;
+    if let Some(val) = detection_results.get("total_detected").and_then(|v| v.as_u64()) {
+        total_zones_from_recognizer_field = val;
+    }
+    let mut actual_zones_iterated_from_arrays = 0;
 
-    // Process both supply and demand zones found in the results
+
     for (zone_type_key, is_supply_flag) in [("supply_zones", true), ("demand_zones", false)] {
         if let Some(zones_array) = price_data
             .and_then(|p| p.get(zone_type_key))
             .and_then(|zt| zt.get("zones"))
             .and_then(|z| z.as_array())
         {
-            let zone_count = zones_array.len();
-            total_zones += zone_count;
-            debug!(
-                "Processing {} raw {} zones for {}/{}.",
-                zone_count, zone_type_key, symbol, timeframe
-            );
+            debug!("[GENERATOR] Processing {} raw {} zones from recognizer output for {}/{}.", zones_array.len(), zone_type_key, symbol, timeframe);
 
-            // Track zone counts by active status
-            let mut active_count = 0;
-            let mut inactive_count = 0;
-            let mut deser_failed = 0;
-
-            // Iterate through each raw zone detected
             for zone_json in zones_array {
-                // Attempt to deserialize the raw JSON into the StoredZone struct
+                actual_zones_iterated_from_arrays += 1; // Count each zone we attempt to process
+
+                // --- ADDITION: Call to log raw zone to text file ---
+                write_raw_zone_to_text_log(symbol, timeframe, zone_type_key, zone_json);
+                // --- END OF ADDITION ---
+
+                // Your existing StoredZone conversion and enrichment logic
                 match serde_json::from_value::<StoredZone>(zone_json.clone()) {
                     Ok(mut base_zone) => {
-                        // --- Zone ID Generation Block ---
                         if base_zone.zone_id.is_none() {
-                            // Calculate type for ID using .contains()
-                            let raw_type_str =
-                                zone_json.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                            let zone_type_for_id = if raw_type_str.contains("supply") {
-                                "supply"
-                            } else {
-                                "demand"
-                            };
-
-                            // Log inputs before ID generation
-                            info!("[GENERATOR_ID_CHECK] Symbol: {}, TF: {}, TypeForID: '{}', StartTime: {:?}, High: {:?}, Low: {:?}, RawJsonType: {:?}",
-                                  symbol,
-                                  timeframe,
-                                  zone_type_for_id,
-                                  base_zone.start_time.as_deref(),
-                                  base_zone.zone_high,
-                                  base_zone.zone_low,
-                                  zone_json.get("type").and_then(|v| v.as_str()));
-
-                            // Generate ID using the public function from detect module
-                            let symbol_for_id = if symbol.ends_with("_SB") { symbol.to_string() } else { format!("{}_SB", symbol) }; // Ensure suffix
+                            let raw_type_str = zone_json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            let zone_type_for_id = if raw_type_str.contains("supply") { "supply" } else { "demand" };
+                            let symbol_for_id = if symbol.ends_with("_SB") { symbol.to_string() } else { format!("{}_SB", symbol) };
                             let zone_id = detect::generate_deterministic_zone_id(
-                                &symbol_for_id, // Use suffixed symbol
-                                timeframe,
-                                zone_type_for_id, // Use calculated type
-                                base_zone.start_time.as_deref(),
-                                base_zone.zone_high,
-                                base_zone.zone_low,
+                                &symbol_for_id, timeframe, zone_type_for_id,
+                                base_zone.start_time.as_deref(), base_zone.zone_high, base_zone.zone_low,
                             );
-                            info!("[GENERATOR_ID_CHECK] -> GeneratedID: {}", zone_id); // Log result
                             base_zone.zone_id = Some(zone_id);
                         }
-                        // --- End Zone ID Generation ---
-
-
-                        // --- Essential Index Check ---
-                        // Ensure required fields for further processing are present
                         if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
-                            warn!(
-                                "Skipping zone processing (after ID gen) due to missing start_idx or end_idx: ZoneID {:?}",
-                                base_zone.zone_id
-                            );
-                            deser_failed += 1; // Count as failure for processing, though ID might be generated
-                            continue; // Skip further processing for this zone
+                            warn!("[GENERATOR] Skipping StoredZone conversion due to missing start/end_idx: ZoneID {:?}", base_zone.zone_id);
+                            continue;
                         }
-                        // --- End Index Check ---
-
-
-                        // --- is_active Calculation ---
-                        // Determine if the zone is still active based on ALL candles fetched for this run
-                        // Use public function from detect module
-                        base_zone.is_active =
-                            detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
-
-                        // Count active vs inactive
-                        if base_zone.is_active {
-                            active_count += 1;
-                            active_zones += 1;
-                        } else {
-                            inactive_count += 1;
-                            inactive_zones += 1;
-                        }
-                        // --- End is_active Calculation ---
-
-
-                        // --- Formation Candles Extraction ---
-                        base_zone.formation_candles = extract_formation_candles(
-                            &candles,
-                            base_zone.start_idx, // These are Some() due to check above
-                            base_zone.end_idx,   // These are Some() due to check above
-                        );
-                        // --- End Formation Candles ---
-
-
-                        // --- bars_active Calculation ---
-                        // Indices are guaranteed Some() here from the check above
+                        base_zone.is_active = detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
+                        base_zone.formation_candles = extract_formation_candles(&candles, base_zone.start_idx, base_zone.end_idx);
                         let start_idx_val = base_zone.start_idx.unwrap();
                         let end_idx_val = base_zone.end_idx.unwrap();
-
                         if end_idx_val >= start_idx_val {
                             base_zone.bars_active = Some(end_idx_val - start_idx_val + 1);
-                             // debug!( /* ... */ ); // Optional debug log
                         } else {
-                            warn!(
-                                "Invalid indices for bars_active calculation: start={}, end={}. Setting bars_active to None.",
-                                start_idx_val, end_idx_val
-                            );
+                            warn!("[GENERATOR] Invalid indices for bars_active: start={}, end={}. Setting to None. ZoneID: {:?}", start_idx_val, end_idx_val, base_zone.zone_id);
                             base_zone.bars_active = None;
                         }
-                        // --- End bars_active Calculation ---
-
-
-                        // --- Touch Count Calculation ---
-                        // Log candle range available for touch calculation relative to zone end time
-                        let first_candle_time = candles.first().map(|c| c.time.as_str());
-                        let last_candle_time = candles.last().map(|c| c.time.as_str());
-                        let zone_end_time_str = zone_json.get("end_time").and_then(|v| v.as_str()); // Get end time as string
-                        info!("[GENERATOR_TOUCH_CHECK] ZoneID: {:?}, Zone End Time: {:?}. Processing {} candles from {:?} to {:?}",
-                              base_zone.zone_id, // Log the ID for correlation
-                              zone_end_time_str,
-                              candle_count,
-                              first_candle_time,
-                              last_candle_time);
-
-                        // Call the public function from detect module
-                        let calculated_touches = detect::calculate_touches_within_range(
-                            zone_json,      // Pass raw JSON for reliable indices/levels
-                            &candles,       // Pass the candle slice fetched for THIS generator run
-                            is_supply_flag, // Pass the flag indicating zone type context
-                            candle_count    // Pass candle count
-                        );
-                        info!("[GENERATOR_TOUCH_CHECK] ZoneID: {:?} -> Calculated Touches: {}", base_zone.zone_id, calculated_touches); // Log result
-                        base_zone.touch_count = Some(calculated_touches); // Store the calculated value
-                        // --- End Touch Count Calculation ---
-
-
-                        // --- Strength Score Initialization ---
-                        base_zone.strength_score = Some(100.0); // Initialize score
-                        // --- End Strength Score Initialization ---
-
-
-                        // Add the fully processed zone to the list
+                        let calculated_touches = detect::calculate_touches_within_range(zone_json, &candles, is_supply_flag, candle_count);
+                        base_zone.touch_count = Some(calculated_touches);
+                        base_zone.strength_score = Some(100.0); // Default score
                         zones_to_store.push(base_zone);
-
-                    } // End Ok arm
-                    Err(e) => {
-                        // Log errors if deserialization fails
-                        error!(
-                            "Failed to deserialize zone into StoredZone for {}/{}: {}. JSON: {}",
-                            symbol, timeframe, e, zone_json
-                        );
-                        deser_failed += 1;
                     }
-                } // End match serde_json
-            } // End loop for zone_json
-
-            // Log summary for this zone type
-            info!(
-                "[ZONE_GENERATOR] {}/{}/{}: {} {} zones - {} active, {} inactive, {} failed deserialization",
-                symbol, timeframe, zone_type_key, zone_count, zone_type_key, active_count, inactive_count, deser_failed
-            );
-
-        } else { // End if let Some(zones_array)
-            debug!(
-                "No '{}' key found or it's not an array in detection results for {}/{}/{}.",
-                zone_type_key, symbol, timeframe, pattern_name
-            );
+                    Err(e) => {
+                        error!("[GENERATOR] Failed to deserialize zone_json into StoredZone for {}/{}: {}. JSON: {}", symbol, timeframe, e, zone_json);
+                    }
+                }
+            }
+        } else {
+            debug!("[GENERATOR] No '{}' key or not an array in detection_results for {}/{}/{}.", zone_type_key, symbol, timeframe, pattern_name);
         }
-    } // End loop for (zone_type_key, is_supply_flag)
+    }
 
-    // Log overall summary for the symbol/timeframe
+    // MODIFIED: More detailed summary log
     info!(
-        "[ZONE_GENERATOR] {}/{}: TOTAL ZONES PROCESSED: {} - {} active, {} inactive, {} stored",
-        symbol,
-        timeframe,
-        total_zones,
-        active_zones,
-        inactive_zones,
+        "[GENERATOR_SUMMARY] {}/{}/{}: RecognizerOutputTotalDetected={}, ActualZonesIteratedFromArray={}, FinalZonesPreparedForDB={}",
+        symbol, timeframe, pattern_name,
+        total_zones_from_recognizer_field,
+        actual_zones_iterated_from_arrays,
         zones_to_store.len()
     );
 
-    // --- Write to InfluxDB ---
     if !zones_to_store.is_empty() {
-        info!(
-            "Storing {} processed zones for {}/{}/{}.",
-            zones_to_store.len(),
-            symbol,
-            timeframe,
-            pattern_name
-        );
-        // Call the batch write function
+        info!("[GENERATOR] Storing {} processed zones for {}/{}/{}.", zones_to_store.len(), symbol, timeframe, pattern_name);
         match write_zones_batch(
-            http_client,
-            influx_host,
-            influx_org,
-            influx_token,
-            write_bucket,
-            zone_measurement,
-            symbol, // Pass original symbol or suffixed one depending on write_zones_batch needs
-            timeframe,
-            pattern_name,
-            &zones_to_store, // Pass zones containing calculated touch_count
-        )
-        .await
-        {
-            Ok(_) => info!(
-                "Successfully wrote zones for {}/{}/{}",
-                symbol, timeframe, pattern_name
-            ),
+            http_client, influx_host, influx_org, influx_token,
+            write_bucket, zone_measurement, symbol, timeframe, pattern_name, &zones_to_store,
+        ).await {
+            Ok(_) => info!("[GENERATOR] Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
             Err(e) => {
-                error!(
-                    "Failed to write zones batch for {}/{}/{}: {}",
-                    symbol, timeframe, pattern_name, e
-                );
-                return Err(e); // Propagate write errors
+                error!("[GENERATOR] Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
+                return Err(e);
             }
         }
     } else {
-        info!(
-            "No zones detected or processed to store for {}/{}/{}.",
-            symbol, timeframe, pattern_name
-        );
+        info!("[GENERATOR] No zones to store for {}/{}/{}.", symbol, timeframe, pattern_name);
     }
-    // --- End Write to InfluxDB ---
 
-    Ok(()) // Indicate successful processing for this combination
+    Ok(())
 }

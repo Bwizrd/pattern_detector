@@ -16,7 +16,7 @@ tokio = { version = "1", features = ["full"] }
 env_logger = "0.10"
 log4rs = "1.2.0"  
 log = "0.4"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 influxdb = "0.7.0"  # Main InfluxDB client
 futures = "0.3" 
 influxdb2 = "0.5.2"
@@ -26,7 +26,7 @@ rand = "0.8.5"
 parking_lot = "0.12.1"
 sha2 = "0.10.6"
 thiserror = "1.0" # For error handling
-
+lazy_static = "1.4.0" # Or latest
 
 [[bin]]
 name = "pattern_detector"  # This should match your main binary name

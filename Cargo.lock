@@ -1917,6 +1917,7 @@ dependencies = [
  "influxdb",
  "influxdb2",
  "influxdb2-structmap",
+ "lazy_static",
  "log",
  "log4rs",
  "parking_lot 0.12.3",
