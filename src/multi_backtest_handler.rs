@@ -31,6 +31,7 @@ async fn load_backtest_candles(
     start_time: &str,
     end_time: &str,
 ) -> Result<Vec<CandleData>, Box<dyn StdError>> {
+    // ... (This function is assumed to be correct as per previous versions) ...
     debug!(
         "[multi_backtest_handler::load_backtest_candles] Fetching: sym={}, tf={}, start={}, end={}",
         symbol, timeframe, start_time, end_time
@@ -170,7 +171,7 @@ pub async fn run_multi_symbol_backtest(
     let mut tasks = Vec::new();
 
     for symbol in req.0.symbols.iter() {
-        for pattern_tf_str in pattern_timeframes.iter() {
+        for pattern_tf_str in req.0.pattern_timeframes.iter() {
             let task_symbol = symbol.clone();
             let task_pattern_tf = pattern_tf_str.to_string();
             let task_execution_tf = execution_timeframe.to_string();
@@ -186,89 +187,36 @@ pub async fn run_multi_symbol_backtest(
             let bucket_clone = bucket.clone();
             
             tasks.push(tokio::spawn(async move {
+                // ... (This whole tokio::spawn block should be the one from the
+                //      previous message that fixed the borrow checker issues for early returns)
+                //      Ensure all calculation for summary_for_task is complete with correct values.
                 debug!("Starting backtest task for {} on {} (pattern TF), executing on {}", task_symbol, task_pattern_tf, task_execution_tf);
 
-                let pattern_candles = match load_backtest_candles(
-                    &host_clone, &org_clone, &token_clone, &bucket_clone,
-                    &task_symbol, &task_pattern_tf, &task_start_time, &task_end_time
-                ).await {
+                let pattern_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &task_symbol, &task_pattern_tf, &task_start_time, &task_end_time ).await {
                     Ok(candles) => candles,
-                    Err(e) => {
-                        error!("Task Error: loading pattern candles for {}/{}: {}", task_symbol, task_pattern_tf, e);
-                        let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf);
-                        return (task_symbol, task_pattern_tf, Vec::new(), summary);
-                    }
+                    Err(e) => { error!("Task Error: loading pattern candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
                 };
-                if pattern_candles.is_empty() {
-                    warn!("Task Info: No pattern candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time);
-                    let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf);
-                    return (task_symbol, task_pattern_tf, Vec::new(), summary);
-                }
+                if pattern_candles.is_empty() { warn!("Task Info: No pattern candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
                 debug!("Task Info: Loaded {} pattern candles for {}/{}", pattern_candles.len(), task_symbol, task_pattern_tf);
 
-                let execution_candles = match load_backtest_candles(
-                    &host_clone, &org_clone, &token_clone, &bucket_clone,
-                    &task_symbol, &task_execution_tf, &task_start_time, &task_end_time
-                ).await {
+                let execution_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &task_symbol, &task_execution_tf, &task_start_time, &task_end_time ).await {
                     Ok(candles) => candles,
-                    Err(e) => {
-                        error!("Task Error: loading execution (1m) candles for {}/{}: {}", task_symbol, task_pattern_tf, e);
-                        let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf);
-                        return (task_symbol, task_pattern_tf, Vec::new(), summary);
-                    }
+                    Err(e) => { error!("Task Error: loading execution (1m) candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
                 };
-                 if execution_candles.is_empty() {
-                    warn!("Task Info: No execution (1m) candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time);
-                    let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf);
-                    return (task_symbol, task_pattern_tf, Vec::new(), summary);
-                }
+                if execution_candles.is_empty() { warn!("Task Info: No execution (1m) candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
                 debug!("Task Info: Loaded {} execution candles for {}/{}", execution_candles.len(), task_symbol, task_execution_tf);
 
                 let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
-                
                 let detected_value_json: serde_json::Value = recognizer.detect(&pattern_candles);
-                
                 let mut total_detected_zones_count = 0;
-                if let Some(data_val) = detected_value_json.get("data") {
-                    if let Some(price_val) = data_val.get("price") {
-                        if let Some(supply_zones_val) = price_val.get("supply_zones") {
-                            if let Some(zones_array) = supply_zones_val.get("zones").and_then(|z| z.as_array()) {
-                                total_detected_zones_count += zones_array.len();
-                            }
-                        }
-                        if let Some(demand_zones_val) = price_val.get("demand_zones") {
-                            if let Some(zones_array) = demand_zones_val.get("zones").and_then(|z| z.as_array()) {
-                                total_detected_zones_count += zones_array.len();
-                            }
-                        }
-                    }
-                }
-
-                if total_detected_zones_count == 0 {
-                    info!("Task Info: No pattern zones found in JSON for {} on {}", task_symbol, task_pattern_tf);
-                    let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf);
-                    return (task_symbol, task_pattern_tf, Vec::new(), summary);
-                }
+                if let Some(data_val) = detected_value_json.get("data") { if let Some(price_val) = data_val.get("price") { if let Some(supply_zones_val) = price_val.get("supply_zones") { if let Some(zones_array) = supply_zones_val.get("zones").and_then(|z| z.as_array()) { total_detected_zones_count += zones_array.len(); } } if let Some(demand_zones_val) = price_val.get("demand_zones") { if let Some(zones_array) = demand_zones_val.get("zones").and_then(|z| z.as_array()) { total_detected_zones_count += zones_array.len(); } } } }
+                if total_detected_zones_count == 0 { info!("Task Info: No pattern zones found in JSON for {} on {}", task_symbol, task_pattern_tf); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
                 debug!("Task Info: Total {} raw pattern zones found in JSON for {}/{}", total_detected_zones_count, task_symbol, task_pattern_tf);
 
-                let trade_config = TradeConfig {
-                    enabled: true,
-                    lot_size: task_lot_size,
-                    default_stop_loss_pips: task_sl_pips,
-                    default_take_profit_pips: task_tp_pips,
-                    risk_percent: 1.0,
-                    max_trades_per_pattern: 1, 
-                    ..Default::default()
-                };
-
+                let trade_config = TradeConfig { enabled: true, lot_size: task_lot_size, default_stop_loss_pips: task_sl_pips, default_take_profit_pips: task_tp_pips, risk_percent: 1.0, max_trades_per_pattern: 1, ..Default::default() };
                 let mut trade_executor = TradeExecutor::new(trade_config.clone());
                 trade_executor.set_minute_candles(execution_candles.clone());
-
-                let executed_trades_internal = trade_executor.execute_trades_for_pattern(
-                    "fifty_percent_before_big_bar",
-                    &detected_value_json, 
-                    &pattern_candles,
-                );
+                let executed_trades_internal = trade_executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles );
                 info!("Task Info: Executed {} trades for {}/{}", executed_trades_internal.len(), task_symbol, task_pattern_tf);
 
                 let mut current_task_trades_result: Vec<IndividualTradeResult> = Vec::new();
@@ -276,60 +224,20 @@ pub async fn run_multi_symbol_backtest(
                 let mut total_pnl_pips_for_summary: f64 = 0.0;
                 let mut total_gross_profit_pips: f64 = 0.0;
                 let mut total_gross_loss_pips: f64 = 0.0;
-
                 for trade_internal in executed_trades_internal.iter() {
                     let entry_dt_res = DateTime::parse_from_rfc3339(&trade_internal.entry_time);
-                    if entry_dt_res.is_err() {
-                        warn!("Task Warning: Failed to parse entry_time '{}' for {}/{}", &trade_internal.entry_time, task_symbol, task_pattern_tf);
-                        continue; 
-                    }
+                    if entry_dt_res.is_err() { warn!("Task Warning: Failed to parse entry_time '{}' for {}/{}", &trade_internal.entry_time, task_symbol, task_pattern_tf); continue; }
                     let entry_dt = entry_dt_res.unwrap().with_timezone(&Utc);
-
-                    let exit_dt = trade_internal.exit_time.as_ref().and_then(|et_str|
-                        DateTime::parse_from_rfc3339(et_str).ok()
-                    ).map(|dt| dt.with_timezone(&Utc)); 
-
+                    let exit_dt = trade_internal.exit_time.as_ref().and_then(|et_str| DateTime::parse_from_rfc3339(et_str).ok() ).map(|dt| dt.with_timezone(&Utc)); 
                     let pnl = trade_internal.profit_loss_pips.unwrap_or(0.0);
                     total_pnl_pips_for_summary += pnl;
-                    if pnl > 0.0 {
-                        winning_trades_count += 1;
-                        total_gross_profit_pips += pnl;
-                    } else if pnl < 0.0 {
-                        total_gross_loss_pips += pnl.abs();
-                    }
-
-                    current_task_trades_result.push(IndividualTradeResult {
-                        symbol: task_symbol.clone(),
-                        timeframe: task_pattern_tf.clone(),
-                        direction: format!("{:?}", trade_internal.direction),
-                        entry_time: entry_dt, 
-                        entry_price: trade_internal.entry_price,
-                        exit_time: exit_dt, 
-                        exit_price: trade_internal.exit_price,
-                        pnl_pips: trade_internal.profit_loss_pips,
-                        exit_reason: trade_internal.exit_reason.clone(),
-                        entry_day_of_week: Some(entry_dt.weekday().to_string()),
-                        entry_hour_of_day: Some(entry_dt.hour()),
-                    });
+                    if pnl > 0.0 { winning_trades_count += 1; total_gross_profit_pips += pnl; } else if pnl < 0.0 { total_gross_loss_pips += pnl.abs(); }
+                    current_task_trades_result.push(IndividualTradeResult { symbol: task_symbol.clone(), timeframe: task_pattern_tf.clone(), direction: format!("{:?}", trade_internal.direction), entry_time: entry_dt, entry_price: trade_internal.entry_price, exit_time: exit_dt, exit_price: trade_internal.exit_price, pnl_pips: trade_internal.profit_loss_pips, exit_reason: trade_internal.exit_reason.clone(), entry_day_of_week: Some(entry_dt.weekday().to_string()), entry_hour_of_day: Some(entry_dt.hour()), });
                 }
-
                 let total_trades_for_summary = executed_trades_internal.len();
                 let win_rate = if total_trades_for_summary > 0 { (winning_trades_count as f64 / total_trades_for_summary as f64) * 100.0 } else { 0.0 };
                 let profit_factor_val = if total_gross_loss_pips > 0.0 { total_gross_profit_pips / total_gross_loss_pips } else if total_gross_profit_pips > 0.0 { f64::INFINITY } else { 0.0 };
-
-                // This summary is for the successful path
-                let summary_for_task = SymbolTimeframeSummary {
-                    symbol: task_symbol.clone(), // Clone for this struct
-                    timeframe: task_pattern_tf.clone(), // Clone for this struct
-                    total_trades: total_trades_for_summary,
-                    winning_trades: winning_trades_count,
-                    losing_trades: total_trades_for_summary - winning_trades_count,
-                    win_rate_percent: win_rate,
-                    total_pnl_pips: total_pnl_pips_for_summary,
-                    profit_factor: profit_factor_val,
-                };
-                
-                // Original task_symbol and task_pattern_tf are moved into the tuple here
+                let summary_for_task = SymbolTimeframeSummary { symbol: task_symbol.clone(), timeframe: task_pattern_tf.clone(), total_trades: total_trades_for_summary, winning_trades: winning_trades_count, losing_trades: total_trades_for_summary - winning_trades_count, win_rate_percent: win_rate, total_pnl_pips: total_pnl_pips_for_summary, profit_factor: profit_factor_val, };
                 (task_symbol, task_pattern_tf, current_task_trades_result, summary_for_task)
             }));
         }
@@ -353,7 +261,8 @@ pub async fn run_multi_symbol_backtest(
         }
     }
 
-    // ... (Overall summary calculation as before) ...
+    // --- Overall Summary Calculation (THIS IS THE TARGET FOR THE FIX) ---
+    debug!("[OverallSummary] Starting calculation. all_individual_trades length: {}", all_individual_trades.len()); // Debug log
     let mut overall_total_trades = 0;
     let mut overall_total_pnl_pips = 0.0;
     let mut overall_winning_trades = 0;
@@ -367,17 +276,40 @@ pub async fn run_multi_symbol_backtest(
     let mut trades_by_hour_count: HashMap<u32, usize> = HashMap::new();
     let mut pnl_by_hour_pips: HashMap<u32, f64> = HashMap::new();
 
-    for trade in &all_individual_trades { /* ... */ } // Populate HashMaps
+    // Ensure this loop actually runs and updates the variables
+    for trade in &all_individual_trades {
+        overall_total_trades += 1;
+        let pnl = trade.pnl_pips.unwrap_or(0.0);
+        overall_total_pnl_pips += pnl;
+        if pnl > 0.0 {
+            overall_winning_trades += 1;
+            overall_gross_profit_pips += pnl;
+        } else if pnl < 0.0 {
+            overall_gross_loss_pips += pnl.abs();
+        }
+
+        *trades_by_symbol_count.entry(trade.symbol.clone()).or_insert(0) += 1;
+        *trades_by_timeframe_count.entry(trade.timeframe.clone()).or_insert(0) += 1;
+        if let Some(day_str) = &trade.entry_day_of_week {
+            *trades_by_day_count.entry(day_str.clone()).or_insert(0) += 1;
+            *pnl_by_day_pips.entry(day_str.clone()).or_insert(0.0) += pnl;
+        }
+        if let Some(hour_val) = trade.entry_hour_of_day {
+            *trades_by_hour_count.entry(hour_val).or_insert(0) += 1;
+            *pnl_by_hour_pips.entry(hour_val).or_insert(0.0) += pnl;
+        }
+    }
+    debug!("[OverallSummary] After loop. overall_total_trades: {}", overall_total_trades); // Debug log
+    debug!("[OverallSummary] After loop. overall_total_pnl_pips: {}", overall_total_pnl_pips); // Debug log
     
     let overall_win_rate = if overall_total_trades > 0 { (overall_winning_trades as f64 / overall_total_trades as f64) * 100.0 } else { 0.0 };
     let overall_profit_factor_val = if overall_gross_loss_pips > 0.0 { overall_gross_profit_pips / overall_gross_loss_pips } else if overall_gross_profit_pips > 0.0 { f64::INFINITY } else { 0.0 };
     let calculate_percent = |count: usize, total: usize| { if total > 0 { (count as f64 / total as f64) * 100.0 } else { 0.0 } };
+    
     let trades_by_symbol_percent: HashMap<String, f64> = trades_by_symbol_count.iter().map(|(k, v)| (k.clone(), calculate_percent(*v, overall_total_trades))).collect();
-    // ... (other percentage HashMaps) ...
     let trades_by_timeframe_percent: HashMap<String, f64> = trades_by_timeframe_count.iter().map(|(k, v)| (k.clone(), calculate_percent(*v, overall_total_trades))).collect();
     let trades_by_day_of_week_percent: HashMap<String, f64> = trades_by_day_count.iter().map(|(k, v)| (k.clone(), calculate_percent(*v, overall_total_trades))).collect();
     let trades_by_hour_of_day_percent: HashMap<u32, f64> = trades_by_hour_count.iter().map(|(k, v)| (*k, calculate_percent(*v, overall_total_trades))).collect();
-
 
     let overall_summary = OverallBacktestSummary {
         total_trades: overall_total_trades,

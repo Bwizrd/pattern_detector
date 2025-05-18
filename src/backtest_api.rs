@@ -1,11 +1,12 @@
-use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc,Weekday}; // For analytics
+use chrono::{DateTime, Utc, Weekday};
+use serde::{Deserialize, Serialize}; // For analytics
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MultiBacktestRequest {
     pub start_time: String,
     pub end_time: String,
     pub symbols: Vec<String>,
+    pub pattern_timeframes: Vec<String>,
     pub stop_loss_pips: f64,
     pub take_profit_pips: f64,
     pub lot_size: Option<f64>, // Or f64 if always required
@@ -24,7 +25,7 @@ pub struct IndividualTradeResult {
     pub exit_reason: Option<String>, // "Take Profit", "Stop Loss", "End of Data"
     // For analytics
     pub entry_day_of_week: Option<String>, // e.g., "Monday"
-    pub entry_hour_of_day: Option<u32>,   // 0-23
+    pub entry_hour_of_day: Option<u32>,    // 0-23
 }
 
 #[derive(Serialize, Debug, Clone)]
