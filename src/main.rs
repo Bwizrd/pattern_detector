@@ -18,6 +18,8 @@ pub mod trades;
 pub mod trading;
 mod types; // Make sure StoredZone is defined here and derives Serialize/Deserialize
 mod zone_generator; // Make sure run_zone_generation accepts bool parameter
+pub mod backtest_api; // Make sure this is public
+mod multi_backtest_handler;
 
 // --- Use necessary types ---
 // Ensure StoredZone is accessible, adjust path if needed
@@ -467,38 +469,49 @@ async fn main() -> std::io::Result<()> {
     });
     // --- End API Background Task Setup ---
 
-    // --- NEW Periodic Trigger (Calls run_zone_generation with is_periodic_run = true) ---
-    let periodic_interval_secs = env::var("GENERATOR_PERIODIC_INTERVAL")
-        .unwrap_or_else(|_| "60".to_string())
-        .parse::<u64>()
-        .unwrap_or(60);
+     let enable_periodic_env = env::var("ENABLE_PERIODIC_ZONE_GENERATOR")
+        .unwrap_or_else(|_| "true".to_string()); // Default to "true" if not set
+    let enable_periodic = enable_periodic_env.trim().to_lowercase() == "true";
 
-    if periodic_interval_secs > 0 {
-        log::info!(
-            "[MAIN] Starting PERIODIC zone generation trigger every {} seconds.",
-            periodic_interval_secs
-        );
-        tokio::task::spawn_local(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await; // Initial delay
+    if enable_periodic { // <<<<< CHECK THE FLAG HERE
+        let periodic_interval_secs = env::var("GENERATOR_PERIODIC_INTERVAL")
+            .unwrap_or_else(|_| "60".to_string())
+            .parse::<u64>()
+            .unwrap_or(60);
+
+        if periodic_interval_secs > 0 {
             log::info!(
-                "[MAIN] Initial delay complete. Starting periodic zone generation interval."
+                "[MAIN] ENABLE_PERIODIC_ZONE_GENERATOR is true. Starting PERIODIC zone generation trigger every {} seconds.",
+                periodic_interval_secs
             );
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(periodic_interval_secs));
-            loop {
-                interval.tick().await;
-                log::info!("[MAIN] Periodic zone generation triggered by timer...");
-                // Pass true for is_periodic_run
-                if let Err(e) = zone_generator::run_zone_generation(true, None).await {
-                    log::error!("[MAIN] Periodic zone generation run failed: {}", e);
-                } else {
-                    log::info!("[MAIN] Periodic zone generation run cycle completed.");
+            tokio::task::spawn_local(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await; // Initial delay
+                log::info!(
+                    "[MAIN] Initial delay complete. Starting periodic zone generation interval."
+                );
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(periodic_interval_secs));
+                loop {
+                    interval.tick().await;
+                    log::info!("[MAIN] Periodic zone generation triggered by timer...");
+                    // Pass true for is_periodic_run
+                    if let Err(e) = zone_generator::run_zone_generation(true, None).await {
+                        log::error!("[MAIN] Periodic zone generation run failed: {}", e);
+                    } else {
+                        log::info!("[MAIN] Periodic zone generation run cycle completed.");
+                    }
                 }
-            }
-        });
+            });
+        } else {
+            log::info!(
+                "[MAIN] Periodic zone generation is configured to be enabled but GENERATOR_PERIODIC_INTERVAL ('{}') is <= 0. Not starting timer.",
+                periodic_interval_secs
+            );
+        }
     } else {
         log::info!(
-            "[MAIN] Periodic zone generation is disabled (GENERATOR_PERIODIC_INTERVAL <= 0)."
+            "[MAIN] Periodic zone generation is DISABLED via ENABLE_PERIODIC_ZONE_GENERATOR='{}'.",
+            enable_periodic_env
         );
     }
     // --- End Periodic Trigger ---
@@ -532,6 +545,8 @@ async fn main() -> std::io::Result<()> {
                 "/bulk-multi-tf-active-zones",
                 web::post().to(detect::get_bulk_multi_tf_active_zones_handler),
             )
+            .route("/multi-symbol-backtest", 
+                    web::post().to(multi_backtest_handler::run_multi_symbol_backtest))
             .route(
                 "/debug-bulk-zone",
                 web::get().to(detect::debug_bulk_zones_handler),
@@ -546,6 +561,7 @@ async fn main() -> std::io::Result<()> {
                 "/latest-formed-zones",
                 web::get().to(get_latest_formed_zones),
             )
+            .route("/find-and-verify-zone", web::get().to(detect::find_and_verify_zone_handler))
     })
     .bind((host, port))?;
 

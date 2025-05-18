@@ -555,6 +555,8 @@ pub async fn run_zone_generation(
 ) -> Result<(), Box<dyn Error>> {
     // At the start of your run_zone_generation function:
     let run_type = if is_periodic_run { "PERIODIC" } else { "FULL" };
+    // CRITICAL LOG 1: What is the value of is_periodic_run AT THE START?
+    log::error!("[RUN_ZONE_GEN_ENTRY] is_periodic_run parameter value: {}", is_periodic_run);
     info!("Starting {} zone generation process...", run_type); // MODIFIED: Clarified run_type in log
     dotenv().ok(); // MODIFIED: dotenv is called in main.rs, assuming it's already loaded
 
@@ -617,6 +619,7 @@ pub async fn run_zone_generation(
 
     // --- Determine Time Window Based on Run Type ---
     // MODIFIED: These query_start_time and query_end_time are Strings and live long enough
+    log::error!("[RUN_ZONE_GEN_BEFORE_IF] is_periodic_run value before time decision: {}", is_periodic_run);
     let (query_start_time, query_end_time) = if is_periodic_run {
         let lookback_duration =
             env::var("GENERATOR_PERIODIC_LOOKBACK").unwrap_or_else(|_| "2h".to_string());
@@ -786,8 +789,6 @@ pub async fn run_zone_generation(
     }
 }
 
-// --- Inner processing function for a single symbol/timeframe/pattern ---
-// Fetches candle data, runs detection, enriches zones, and writes to InfluxDB.
 async fn process_symbol_timeframe_pattern(
     symbol: &str,
     timeframe: &str,
@@ -801,266 +802,304 @@ async fn process_symbol_timeframe_pattern(
     influx_org: &str,
     influx_token: &str,
 ) -> Result<(), BoxedError> {
-    // ChartQuery takes owned Strings, so we convert the borrowed &str here.
-    let query = ChartQuery {
+    let chart_query = ChartQuery {
         symbol: symbol.to_string(),
         timeframe: timeframe.to_string(),
         start_time: fetch_start_time.to_string(),
         end_time: fetch_end_time.to_string(),
         pattern: pattern_name.to_string(),
-        enable_trading: None,
-        lot_size: None,
-        stop_loss_pips: None,
-        take_profit_pips: None,
-        enable_trailing_stop: None,
+        enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
     };
 
+    log::info!("[GENERATOR_PSP_ENTRY] Processing: Symbol='{}', Timeframe='{}', Pattern='{}', FetchRange: '{}' to '{}'",
+        symbol, timeframe, pattern_name, fetch_start_time, fetch_end_time);
+
     let fetch_result =
-        detect::_fetch_and_detect_core(&query, &format!("generator_{}/{}", symbol, timeframe))
+        detect::_fetch_and_detect_core(&chart_query, &format!("generator_{}/{}", symbol, timeframe))
             .await;
 
-    let (candles, detection_results) = match fetch_result {
-        Ok((c, _recognizer, d)) => (c, d),
+    let (all_fetched_candles, _recognizer, recognizer_output_value) = match fetch_result {
+        Ok((c, rec, d_val)) => (c, rec, d_val),
         Err(e) => {
-            return match e {
+            match e {
                 CoreError::Request(rq_err) => {
-                    warn!(
-                        "[GENERATOR_PROCESS] InfluxDB request failed for {}/{}: {}. Skipping combination.",
-                        symbol, timeframe, rq_err
-                    );
-                    Ok(())
+                    warn!("[GENERATOR_PSP] InfluxDB request failed for {}/{}: {}. Skipping.", symbol, timeframe, rq_err);
+                    return Ok(());
                 }
                 CoreError::Config(cfg_err)
                     if cfg_err.contains("Pattern") && cfg_err.contains("not supported") =>
                 {
-                    warn!(
-                        "[GENERATOR_PROCESS] Pattern '{}' not supported. Skipping combo {}/{}/{}.",
-                        pattern_name, symbol, timeframe, pattern_name
-                    );
-                    Ok(())
+                    warn!("[GENERATOR_PSP] Pattern '{}' not supported for {}/{}/{}. Skipping.", pattern_name, symbol, timeframe, pattern_name);
+                    return Ok(());
                 }
                 CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
-                    info!(
-                        "[GENERATOR_PROCESS] No candle data returned by query for {}/{}/{}. Skipping combination.",
-                        symbol, timeframe, pattern_name
-                    );
-                    Ok(())
+                    info!("[GENERATOR_PSP] No candle data returned by query for {}/{}/{}. Skipping.", symbol, timeframe, pattern_name);
+                    return Ok(());
                 }
                 CoreError::Config(cfg_err) if cfg_err.contains("CSV header mismatch") => {
-                    error!(
-                        "[GENERATOR_PROCESS] CSV header mismatch for {}/{}: {}. Failing this combination.",
-                        symbol, timeframe, cfg_err
-                    );
-                    Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        cfg_err,
-                    )) as BoxedError)
+                    error!("[GENERATOR_PSP] CSV header mismatch for {}/{}: {}", symbol, timeframe, cfg_err);
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, cfg_err)) as BoxedError);
                 }
                 CoreError::Csv(csv_err) => {
-                    error!(
-                        "[GENERATOR_PROCESS] CSV parsing error for {}/{}: {}. Failing this combination.",
-                        symbol, timeframe, csv_err
-                    );
-                    Err(Box::new(csv_err) as BoxedError)
+                    error!("[GENERATOR_PSP] CSV parsing error for {}/{}: {}", symbol, timeframe, csv_err);
+                    return Err(Box::new(csv_err) as BoxedError);
                 }
                 _ => {
-                    error!(
-                        "[GENERATOR_PROCESS] Core fetch/detect error for {}/{}: {}. Failing this combination.",
-                        symbol, timeframe, e
-                    );
-                    Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )) as BoxedError)
+                    error!("[GENERATOR_PSP] Core fetch/detect error for {}/{}: {}", symbol, timeframe, e);
+                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())) as BoxedError);
                 }
-            };
+            }
         }
     };
 
-    let candle_count = candles.len();
+    let candle_count_total = all_fetched_candles.len();
 
-    if candle_count == 0 {
-        info!(
-            "[GENERATOR_PROCESS] No candle data available (after fetch) for {}/{}/{}. Skipping zone processing.",
-            symbol, timeframe, pattern_name
-        );
+    if candle_count_total == 0 {
+        info!("[GENERATOR_PSP_SKIP_CANDLES] No candle data for {}/{}/{}. Skipping.", symbol, timeframe, pattern_name);
+        return Ok(());
+    }
+    info!("[GENERATOR_PSP_INFO] Fetched {} candles for {}/{}.", candle_count_total, symbol, timeframe);
+
+    let mut zones_to_store: Vec<StoredZone> = Vec::new();
+    let price_data = recognizer_output_value.get("data").and_then(|d| d.get("price"));
+
+    if price_data.is_none() {
+        warn!("[GENERATOR_PSP_WARN] 'data.price' missing in recognizer output for {}/{}/{}.", symbol, timeframe, pattern_name);
         return Ok(());
     }
 
-    info!(
-        "[GENERATOR_PROCESS] Fetched {} candles for {}/{}.",
-        candle_count, symbol, timeframe
-    );
-    // --- FIXED LOG LINE ---
-    debug!(
-        "[GENERATOR_PROCESS] Detection results received for {}/{}/{}. Keys: {}", // Use {} for the joined string
-        symbol, timeframe, pattern_name,
-        detection_results.as_object().map_or_else(
-            || "Not a JSON object".to_string(), // Handle if not an object
-            |o| o.keys().map(|s_ref| s_ref.as_str()).collect::<Vec<&str>>().join(", ") // Map &String to &str before joining
-        )
-    );
-    // --- END OF FIX ---
+    let mut total_raw_zones_processed = 0;
+    let mut zones_missing_essential_fields = 0;
+    let mut zones_with_invalid_indices = 0;
 
+    for zone_kind_key in ["supply_zones", "demand_zones"] {
+        if let Some(zones_array_val) = price_data.and_then(|p| p.get(zone_kind_key)).and_then(|zk| zk.get("zones")) {
+            if let Some(zones_array) = zones_array_val.as_array() {
+                debug!("[GENERATOR_PSP] Processing {} raw {} from recognizer for {}/{}.",
+                    zones_array.len(), zone_kind_key, symbol, timeframe);
 
-    let mut zones_to_store: Vec<StoredZone> = Vec::new();
-    let price_data = detection_results.get("data").and_then(|d| d.get("price"));
+                for raw_zone_json in zones_array {
+                    total_raw_zones_processed += 1;
+                    write_raw_zone_to_text_log(symbol, timeframe, zone_kind_key, raw_zone_json);
 
-    if price_data.is_none() {
-        warn!("[GENERATOR_PROCESS] 'data.price' field missing in detection_results for {}/{}/{}. Cannot process zones.",
-            symbol, timeframe, pattern_name);
-    }
+                    let mut base_zone_for_storage = StoredZone::default();
 
-    let mut total_zones_from_recognizer_field = 0;
-    if let Some(val) = detection_results.get("total_detected").and_then(|v| v.as_u64()) {
-        total_zones_from_recognizer_field = val;
-    }
-    let mut actual_zones_iterated_from_arrays = 0;
-    let mut zones_failing_deserialization = 0;
-    let mut zones_missing_indices = 0;
-    let mut zones_passed_to_is_active_check = 0;
+                    // --- Part 1: Extract initial details from raw_zone_json ---
+                    base_zone_for_storage.start_time = raw_zone_json.get("start_time").and_then(|v| v.as_str()).map(String::from);
+                    base_zone_for_storage.zone_high = raw_zone_json.get("zone_high").and_then(|v| v.as_f64());
+                    base_zone_for_storage.zone_low = raw_zone_json.get("zone_low").and_then(|v| v.as_f64());
+                    base_zone_for_storage.start_idx = raw_zone_json.get("start_idx").and_then(|v| v.as_u64());
+                    base_zone_for_storage.end_idx = raw_zone_json.get("end_idx").and_then(|v| v.as_u64());
+                    base_zone_for_storage.detection_method = raw_zone_json.get("detection_method").and_then(|v|v.as_str()).map(String::from);
+                    base_zone_for_storage.end_time = raw_zone_json.get("end_time").and_then(|v| v.as_str()).map(String::from);
+                    base_zone_for_storage.fifty_percent_line = raw_zone_json.get("fifty_percent_line").and_then(|v| v.as_f64());
+                    // Add other StoredZone fields if they come directly from raw_zone_json
 
+                    let detection_method_str = base_zone_for_storage.detection_method.as_deref().unwrap_or("");
+                    let zone_type_explicit = raw_zone_json.get("type").and_then(|v| v.as_str());
 
-    for (zone_type_key, is_supply_flag) in [("supply_zones", true), ("demand_zones", false)] {
-        if let Some(zones_array) = price_data
-            .and_then(|p| p.get(zone_type_key))
-            .and_then(|zt| zt.get("zones"))
-            .and_then(|z| z.as_array())
-        {
-            info!(
-                "[GENERATOR_PROCESS] Found {} raw {} zones in recognizer output for {}/{}.",
-                zones_array.len(),
-                zone_type_key,
-                symbol,
-                timeframe
-            );
+                    let is_supply: bool;
+                    let zone_type_for_id_generation: &str;
 
-            for zone_json in zones_array {
-                actual_zones_iterated_from_arrays += 1;
-
-                write_raw_zone_to_text_log(symbol, timeframe, zone_type_key, zone_json);
-
-                let raw_zone_start_time_for_log = zone_json.get("start_time").and_then(|v| v.as_str()).unwrap_or("N/A");
-                log::info!(
-                    "[GENERATOR_DEBUG_ITERATION] ------ Processing Raw Zone ------ Symbol: {}/{}, TypeKey: {}, RawZoneStartTime: {}",
-                    symbol, timeframe, zone_type_key, raw_zone_start_time_for_log
-                );
-                log::debug!(
-                    "[GENERATOR_DEBUG_ITERATION] Raw zone_json: {}",
-                    serde_json::to_string_pretty(&zone_json).unwrap_or_else(|e| format!("Error serializing zone_json: {}", e))
-                );
-
-                match serde_json::from_value::<StoredZone>(zone_json.clone()) {
-                    Ok(mut base_zone) => {
-                        log::info!(
-                            "[GENERATOR_DEBUG_ITERATION] Successfully deserialized to StoredZone. Initial base_zone.zone_id: {:?}, start_idx: {:?}, end_idx: {:?}",
-                            base_zone.zone_id, base_zone.start_idx, base_zone.end_idx
-                        );
-
-                        if base_zone.zone_id.is_none() {
-                            let raw_type_str = zone_json.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                            let zone_type_for_id = if raw_type_str.contains("supply") { "supply" } else { "demand" };
-                            let symbol_for_id = if symbol.ends_with("_SB") { symbol.to_string() } else { format!("{}_SB", symbol) };
-                            let zone_id = detect::generate_deterministic_zone_id(
-                                &symbol_for_id, timeframe, zone_type_for_id,
-                                base_zone.start_time.as_deref(), base_zone.zone_high, base_zone.zone_low,
-                            );
-                            log::info!("[GENERATOR_DEBUG_ITERATION] Generated zone_id: {}", zone_id);
-                            base_zone.zone_id = Some(zone_id);
-                        }
-
-                        if base_zone.start_idx.is_none() || base_zone.end_idx.is_none() {
-                            zones_missing_indices += 1;
-                            warn!(
-                                "[GENERATOR_PROCESS_SKIP] Zone (ID: {:?}, RawStartTime: {}): SKIPPING is_active_check due to missing start_idx ({:?}) or end_idx ({:?}).",
-                                base_zone.zone_id, raw_zone_start_time_for_log, base_zone.start_idx, base_zone.end_idx
-                            );
-                            continue; 
-                        }
-
-                        zones_passed_to_is_active_check += 1;
-                        log::info!(
-                            "[GENERATOR_PROCESS_ACTION] ZoneID {:?}: ABOUT TO CALL detect::is_zone_still_active. Candles len for check: {}",
-                            base_zone.zone_id, candles.len()
-                        );
-                        base_zone.is_active = detect::is_zone_still_active(zone_json, &candles, is_supply_flag);
-                        log::info!(
-                            "[GENERATOR_PROCESS_ACTION] ZoneID {:?}: After detect::is_zone_still_active, base_zone.is_active = {}",
-                            base_zone.zone_id, base_zone.is_active
-                        );
-                        
-                        base_zone.formation_candles = extract_formation_candles(&candles, base_zone.start_idx, base_zone.end_idx);
-                        let start_idx_val = base_zone.start_idx.unwrap(); 
-                        let end_idx_val = base_zone.end_idx.unwrap();   
-                        if end_idx_val >= start_idx_val {
-                            base_zone.bars_active = Some(end_idx_val - start_idx_val + 1);
+                    if let Some(zt_explicit) = zone_type_explicit {
+                        if zt_explicit.to_lowercase().contains("supply") {
+                            is_supply = true; zone_type_for_id_generation = "supply";
+                        } else if zt_explicit.to_lowercase().contains("demand") {
+                            is_supply = false; zone_type_for_id_generation = "demand";
                         } else {
-                            warn!("[GENERATOR_PROCESS] ZoneID {:?}: Invalid indices for bars_active calculation: start={}, end={}. Setting bars_active to None.",
-                                base_zone.zone_id, start_idx_val, end_idx_val);
-                            base_zone.bars_active = None;
+                            is_supply = detection_method_str.to_lowercase().contains("supply") ||
+                                        detection_method_str.to_lowercase().contains("bearish");
+                            zone_type_for_id_generation = if is_supply { "supply" } else { "demand" };
                         }
-                        let calculated_touches = detect::calculate_touches_within_range(zone_json, &candles, is_supply_flag, candle_count);
-                        base_zone.touch_count = Some(calculated_touches);
-                        base_zone.strength_score = Some(100.0);
-                        zones_to_store.push(base_zone);
+                    } else {
+                        is_supply = detection_method_str.to_lowercase().contains("supply") ||
+                                    detection_method_str.to_lowercase().contains("bearish");
+                        zone_type_for_id_generation = if is_supply { "supply" } else { "demand" };
                     }
-                    Err(e) => {
-                        zones_failing_deserialization += 1;
-                        error!(
-                            "[GENERATOR_PROCESS_ERROR] FAILED DESERIALIZATION for {}/{}/{}. RawStartTime: {}. Error: {}. JSON being deserialized: {}",
-                            symbol, timeframe, zone_type_key, raw_zone_start_time_for_log, e,
-                            serde_json::to_string_pretty(&zone_json).unwrap_or_else(|_| "Error serializing original JSON for log".to_string())
-                        );
+
+                    let symbol_for_id = if symbol.ends_with("_SB") { symbol.to_string() } else { format!("{}_SB", symbol) };
+                    base_zone_for_storage.zone_id = Some(detect::generate_deterministic_zone_id(
+                        &symbol_for_id,
+                        timeframe,
+                        zone_type_for_id_generation,
+                        base_zone_for_storage.start_time.as_deref(),
+                        base_zone_for_storage.zone_high,
+                        base_zone_for_storage.zone_low,
+                    ));
+
+                    // --- Log before validation (as in simplified version) ---
+                    if symbol == "EURUSD_SB" && timeframe == "1h" && base_zone_for_storage.start_time.as_deref() == Some("2025-05-16T13:00:00Z") {
+                        log::error!("[EURUSD_1H_DEBUG_GENERATOR_REACHED_POINT] ZoneID: {:?}, Raw StartTime: {:?}, Raw High: {:?}, Raw Low: {:?}, Raw StartIdx: {:?}, Raw EndIdx: {:?}",
+                            base_zone_for_storage.zone_id, base_zone_for_storage.start_time, base_zone_for_storage.zone_high,
+                            base_zone_for_storage.zone_low, base_zone_for_storage.start_idx, base_zone_for_storage.end_idx);
+                        log::error!("[EURUSD_1H_DEBUG_GENERATOR_RAW_JSON_AT_POINT] {}", serde_json::to_string_pretty(raw_zone_json).unwrap_or_default());
+                    }
+
+                    // --- Part 2: Validate essential fields & indices for activity check ---
+                    let (zone_high_val, zone_low_val, start_idx_val, end_idx_val) = match (
+                        base_zone_for_storage.zone_high,
+                        base_zone_for_storage.zone_low,
+                        base_zone_for_storage.start_idx,
+                        base_zone_for_storage.end_idx,
+                    ) {
+                        (Some(h), Some(l), Some(s), Some(e)) if h.is_finite() && l.is_finite() => (h, l, s as usize, e as usize),
+                        _ => {
+                            if symbol == "EURUSD_SB" && timeframe == "1h" && base_zone_for_storage.start_time.as_deref() == Some("2025-05-16T13:00:00Z") {
+                                log::error!("[EURUSD_1H_DEBUG_GENERATOR_SKIP_FIELDS] ZoneID: {:?}. Raw JSON: {:?}", base_zone_for_storage.zone_id, raw_zone_json);
+                            }
+                            warn!("[GENERATOR_PSP] ZoneID {:?}: Missing essential fields from recognizer. Skipping. JSON: {:?}", base_zone_for_storage.zone_id, raw_zone_json);
+                            zones_missing_essential_fields += 1;
+                            continue;
+                        }
+                    };
+
+                    if end_idx_val >= candle_count_total || start_idx_val > end_idx_val {
+                        if symbol == "EURUSD_SB" && timeframe == "1h" && base_zone_for_storage.start_time.as_deref() == Some("2025-05-16T13:00:00Z") {
+                             log::error!("[EURUSD_1H_DEBUG_GENERATOR_SKIP_INDICES] ZoneID: {:?}. start_idx_val={}, end_idx_val={}, candle_count_total={}. Raw JSON: {:?}",
+                                base_zone_for_storage.zone_id, start_idx_val, end_idx_val, candle_count_total, raw_zone_json);
+                        }
+                        warn!("[GENERATOR_PSP] ZoneID {:?}: Invalid indices from recognizer: start_idx={}, end_idx={}, candle_count={}. Skipping. JSON: {:?}",
+                            base_zone_for_storage.zone_id, start_idx_val, end_idx_val, candle_count_total, raw_zone_json);
+                        zones_with_invalid_indices += 1;
                         continue;
                     }
+
+                    // --- Part 3: Full Enrichment Logic (is_active, touch_count, bars_active) ---
+                    base_zone_for_storage.is_active = true; // Assume active
+                    let mut current_touch_count: i64 = 0;
+                    let mut bars_active_count_for_zone: Option<u64> = None; // Renamed to avoid confusion
+                    let mut _invalidation_time_found_for_debug: Option<String> = None; // For debug log only
+
+                    let (proximal_line, distal_line) = if is_supply {
+                        (zone_low_val, zone_high_val)
+                    } else {
+                        (zone_high_val, zone_low_val)
+                    };
+
+                    let check_start_idx_in_slice = end_idx_val + 1;
+                    let mut is_currently_outside_zone_state = true; // Renamed for clarity
+
+                    if check_start_idx_in_slice < candle_count_total {
+                        for i in check_start_idx_in_slice..candle_count_total {
+                            let candle = &all_fetched_candles[i];
+                            if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+                                warn!("[GENERATOR_PSP_ENRICH] ZoneID {:?}: Candle at index {} (time: {}) has non-finite values. Skipping for activity.", base_zone_for_storage.zone_id, i, candle.time);
+                                continue;
+                            }
+
+                            bars_active_count_for_zone = Some((i - check_start_idx_in_slice + 1) as u64);
+
+                            if is_supply {
+                                if candle.high > distal_line {
+                                    base_zone_for_storage.is_active = false;
+                                    _invalidation_time_found_for_debug = Some(candle.time.clone());
+                                    debug!("[GENERATOR_PSP_ENRICH] ZoneID {:?}: Supply invalidated at {}: CH {} > Distal {}", base_zone_for_storage.zone_id, candle.time, candle.high, distal_line);
+                                    break;
+                                }
+                            } else { // Demand
+                                if candle.low < distal_line {
+                                    base_zone_for_storage.is_active = false;
+                                    _invalidation_time_found_for_debug = Some(candle.time.clone());
+                                    debug!("[GENERATOR_PSP_ENRICH] ZoneID {:?}: Demand invalidated at {}: CL {} < Distal {}", base_zone_for_storage.zone_id, candle.time, candle.low, distal_line);
+                                    break;
+                                }
+                            }
+
+                            let mut interaction_occurred = false;
+                            if is_supply {
+                                if candle.high >= proximal_line { interaction_occurred = true; }
+                            } else {
+                                if candle.low <= proximal_line { interaction_occurred = true; }
+                            }
+
+                            if interaction_occurred && is_currently_outside_zone_state {
+                                current_touch_count += 1;
+                                debug!("[GENERATOR_PSP_ENRICH] ZoneID {:?}: Touched at {}. Touches: {}", base_zone_for_storage.zone_id, candle.time, current_touch_count);
+                            }
+                            is_currently_outside_zone_state = !interaction_occurred;
+                        }
+                    } else {
+                        bars_active_count_for_zone = Some(0);
+                         debug!("[GENERATOR_PSP_ENRICH] ZoneID {:?}: No candles after formation (end_idx: {}) to check activity.", base_zone_for_storage.zone_id, end_idx_val);
+                    }
+                    
+                    if base_zone_for_storage.is_active && bars_active_count_for_zone.is_none() {
+                        if check_start_idx_in_slice < candle_count_total {
+                           bars_active_count_for_zone = Some((candle_count_total - check_start_idx_in_slice) as u64);
+                        } else {
+                           bars_active_count_for_zone = Some(0);
+                        }
+                    }
+                    base_zone_for_storage.bars_active = bars_active_count_for_zone;
+                    base_zone_for_storage.touch_count = Some(current_touch_count);
+                    
+                    // Populate remaining StoredZone fields
+                    base_zone_for_storage.formation_candles = extract_formation_candles(
+                        &all_fetched_candles,
+                        base_zone_for_storage.start_idx,
+                        base_zone_for_storage.end_idx,
+                    );
+                    base_zone_for_storage.strength_score = Some(100.0 - (current_touch_count as f64 * 10.0).max(0.0).min(100.0));
+
+                    // --- EURUSD 1H TARGETED FINAL LOG ---
+                    if symbol == "EURUSD_SB" && timeframe == "1h" && base_zone_for_storage.start_time.as_deref() == Some("2025-05-16T13:00:00Z") {
+                        log::error!("[EURUSD_1H_DEBUG_GENERATOR_FINAL] ZoneID: {:?}, IsActive: {}, Touches: {:?}, BarsActive: {:?}, High: {:?}, Low: {:?}, StartIdx: {:?}, EndIdx: {:?}",
+                            base_zone_for_storage.zone_id,
+                            base_zone_for_storage.is_active,
+                            base_zone_for_storage.touch_count,
+                            base_zone_for_storage.bars_active,
+                            base_zone_for_storage.zone_high,
+                            base_zone_for_storage.zone_low,
+                            base_zone_for_storage.start_idx,
+                            base_zone_for_storage.end_idx
+                        );
+                        log::error!("[EURUSD_1H_DEBUG_GENERATOR_INV_TIME_INTERNAL] InvalidationTimeFound (for debug): {:?}", _invalidation_time_found_for_debug);
+                    }
+                    // --- END TARGETED LOGGING ---
+
+                    zones_to_store.push(base_zone_for_storage);
                 }
             }
-        } else {
-            debug!( 
-                "[GENERATOR_PROCESS] No '{}' array found or structure mismatch in detection_results for {}/{}/{}.",
-                zone_type_key, symbol, timeframe, pattern_name
-            );
+        }  else {
+             debug!("[GENERATOR_PSP] No '{}' key or not an array in price_data for {}/{}/{}.",
+                zone_kind_key, symbol, timeframe, pattern_name);
         }
     }
 
     info!(
-        "[GENERATOR_SUMMARY] {}/{}/{}: FromRecognizerFieldTotal={}, IteratedRawFromArray={}, FailedDeserialize={}, MissingIndices={}, PassedToIsActiveCheck={}, FinalPreparedForDB={}",
+        "[GENERATOR_PSP_SUMMARY] {}/{}/{}: TotalRawZones={}, MissingFields={}, InvalidIndices={}, FinalPreparedForDB={}",
         symbol, timeframe, pattern_name,
-        total_zones_from_recognizer_field,
-        actual_zones_iterated_from_arrays,
-        zones_failing_deserialization,
-        zones_missing_indices,
-        zones_passed_to_is_active_check,
+        total_raw_zones_processed,
+        zones_missing_essential_fields,
+        zones_with_invalid_indices,
         zones_to_store.len()
     );
 
     if !zones_to_store.is_empty() {
-        info!(
-            "[GENERATOR_PROCESS] Storing {} processed zones for {}/{}/{} to measurement '{}'.",
-            zones_to_store.len(), symbol, timeframe, pattern_name, target_zone_measurement
-        );
+        info!("[GENERATOR_PSP] Storing {} processed zones for {}/{}/{}.",
+            zones_to_store.len(), symbol, timeframe, pattern_name);
         match write_zones_batch(
-            http_client, influx_host, influx_org, influx_token,
-            write_bucket, target_zone_measurement,
-            symbol, timeframe, pattern_name, &zones_to_store,
-        ).await {
-            Ok(_) => info!(
-                "[GENERATOR_PROCESS] Successfully wrote zones for {}/{}/{} to '{}'",
-                symbol, timeframe, pattern_name, target_zone_measurement
-            ),
+            http_client,
+            influx_host,
+            influx_org,
+            influx_token,
+            write_bucket,
+            target_zone_measurement,
+            symbol,
+            timeframe,
+            pattern_name,
+            &zones_to_store,
+        )
+        .await
+        {
+            Ok(_) => info!("[GENERATOR_PSP] Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
             Err(e) => {
-                error!(
-                    "[GENERATOR_PROCESS_ERROR] Failed to write zones batch for {}/{}/{} to '{}': {}",
-                    symbol, timeframe, pattern_name, target_zone_measurement, e
-                );
+                error!("[GENERATOR_PSP] Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
                 return Err(e);
             }
         }
     } else {
-        info!(
-            "[GENERATOR_PROCESS] No zones to store for {}/{}/{}.",
-            symbol, timeframe, pattern_name
-        );
+        info!("[GENERATOR_PSP] No zones to store for {}/{}/{}.", symbol, timeframe, pattern_name);
     }
 
     Ok(())

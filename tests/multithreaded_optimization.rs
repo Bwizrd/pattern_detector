@@ -1,5 +1,4 @@
 // tests/multithreaded_optimization.rs
-// tests/enhanced_optimization.rs
 use chrono::{DateTime, Utc};
 use dotenv::dotenv;
 use pattern_detector::detect::CandleData;

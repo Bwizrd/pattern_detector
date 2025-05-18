@@ -221,3 +221,50 @@ pub struct StoredZone {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
 }
+
+#[derive(Deserialize, Debug)]
+pub struct FindAndVerifyZoneQueryParams {
+    pub symbol: String,
+    pub timeframe: String,
+    pub target_formation_start_time: String, // RFC3339
+    pub pattern: String,
+    pub fetch_window_start_time: String,     // RFC3339
+    pub fetch_window_end_time: String,       // RFC3339
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct FindAndVerifyZoneQueryParamsSerializable { // For echoing in response
+    pub symbol: String,
+    pub timeframe: String,
+    pub target_formation_start_time: String,
+    pub pattern: String,
+    pub fetch_window_start_time: String,
+    pub fetch_window_end_time: String,
+}
+
+#[derive(Serialize, Debug, Default, Clone)]
+pub struct FoundZoneActivityDetails { // Details of THE ONE zone if found
+    pub detected_zone_actual_start_time: Option<String>,
+    pub zone_high: Option<f64>,
+    pub zone_low: Option<f64>,
+    pub detection_method: Option<String>,
+    pub zone_type_detected: Option<String>,
+    pub start_idx_in_fetched_slice: Option<u64>,
+    pub end_idx_in_fetched_slice: Option<u64>,
+    pub is_active: bool,
+    pub touch_count: i64,
+    pub bars_active_after_formation: Option<u64>,
+    pub invalidation_candle_time: Option<String>,
+    pub first_touch_candle_time: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct FindAndVerifyZoneResult { // Overall response for the endpoint
+    pub query_params: FindAndVerifyZoneQueryParamsSerializable,
+    pub fetched_candles_count: usize,
+    pub found_zone_details: Option<FoundZoneActivityDetails>,
+    pub message: String,
+    pub error_details: Option<String>,
+    pub recognizer_raw_output_for_target_zone: Option<serde_json::Value>, // For debugging
+    // We can add overall_fetch_start/end if needed later, from the logic function
+}

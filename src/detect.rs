@@ -1,16 +1,25 @@
 // src/detect.rs
 use crate::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
 use crate::types::{
+    // Your existing, working types:
     deserialize_raw_zone_value,
     BulkActiveZonesResponse,
     BulkResultData,
     BulkResultItem,
     BulkSymbolTimeframesRequestItem,
     EnrichedZone,
-    SymbolZoneResponse,    // Imported from types.rs
-    TimeframeZoneResponse, // Imported from types.rs
+    SymbolZoneResponse,
+    TimeframeZoneResponse,
     TouchPoint,
+
+    // --- ADDED FOR THE NEW ENDPOINT ---
+    FindAndVerifyZoneQueryParams,
+    FindAndVerifyZoneResult,
+    FindAndVerifyZoneQueryParamsSerializable,
+    FoundZoneActivityDetails,
+    // --- END ADDED ---
 };
+use chrono::{DateTime, Utc}; // For time comparisons if needed
 use actix_web::{web, HttpResponse, Responder};
 use csv::ReaderBuilder;
 use dotenv::dotenv;
@@ -291,7 +300,11 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
 // --- Helper function to check zone activity ---
 pub fn is_zone_still_active(zone: &Value, candles: &[CandleData], is_supply: bool) -> bool {
     // --- START: Enhanced Logging ---
-    log::error!("FORCED LOG: is_zone_still_active CALLED! ...");
+    log::error!("[DETECT_IS_ACTIVE_FORCED_LOG] CALLED! Zone RawStartTime: {:?}, IsSupply: {}. Candles provided: {}",
+        zone.get("start_time").and_then(|v| v.as_str()),
+        is_supply,
+        candles.len()
+    );
     let zone_id_for_log = zone.get("zone_id") // Try to get generated ID if already present (e.g. from bulk)
         .or_else(|| zone.get("start_time")) // Fallback to start_time for identification
         .and_then(|v| v.as_str())
@@ -1630,4 +1643,304 @@ pub fn calculate_touches_within_range(
     } // End loop through subsequent candles
 
     touch_count
+}
+
+pub async fn find_and_verify_zone_handler(
+    query: web::Query<FindAndVerifyZoneQueryParams>, // Uses the new struct
+) -> impl Responder {
+    info!("[HANDLER_FIND_VERIFY] Request: {:?}", query);
+
+    let serializable_query_params = FindAndVerifyZoneQueryParamsSerializable {
+        symbol: query.symbol.clone(),
+        timeframe: query.timeframe.clone(),
+        target_formation_start_time: query.target_formation_start_time.clone(),
+        pattern: query.pattern.clone(),
+        fetch_window_start_time: query.fetch_window_start_time.clone(),
+        fetch_window_end_time: query.fetch_window_end_time.clone(),
+    };
+
+    // Call the core logic function (we'll define its signature next)
+    match execute_find_and_verify_zone_logic(&query).await {
+        Ok(mut result_payload) => { // result_payload is FindAndVerifyZoneResult
+            // Ensure query_params in the payload is correctly set if not done by logic fn
+            result_payload.query_params = serializable_query_params;
+            HttpResponse::Ok().json(result_payload)
+        }
+        Err(e) => { // Assuming execute_find_and_verify_zone_logic returns Result<FindAndVerifyZoneResult, CoreError>
+            error!("[HANDLER_FIND_VERIFY] Core error: {}", e);
+            let err_msg = format!("Failed to process find-and-verify request: {}", e);
+            
+            // Build an error response using FindAndVerifyZoneResult
+            HttpResponse::InternalServerError().json(FindAndVerifyZoneResult {
+                query_params: serializable_query_params,
+                fetched_candles_count: 0,
+                found_zone_details: None,
+                message: "Error during processing.".to_string(),
+                error_details: Some(err_msg),
+                recognizer_raw_output_for_target_zone: None,
+            })
+        }
+    }
+}
+
+async fn execute_find_and_verify_zone_logic(
+    query_params: &FindAndVerifyZoneQueryParams,
+) -> Result<FindAndVerifyZoneResult, CoreError> {
+    info!("[LOGIC_FIND_VERIFY] Processing for target start time: {} for S/TF: {}/{}",
+        query_params.target_formation_start_time, query_params.symbol, query_params.timeframe);
+
+    // 1. Prepare ChartQuery for _fetch_and_detect_core
+    let chart_query_for_fetch = ChartQuery {
+        symbol: query_params.symbol.clone(),
+        timeframe: query_params.timeframe.clone(),
+        start_time: query_params.fetch_window_start_time.clone(),
+        end_time: query_params.fetch_window_end_time.clone(),
+        pattern: query_params.pattern.clone(), // Use the specified pattern
+        enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
+    };
+
+    let serializable_query_params = FindAndVerifyZoneQueryParamsSerializable {
+        symbol: query_params.symbol.clone(),
+        timeframe: query_params.timeframe.clone(),
+        target_formation_start_time: query_params.target_formation_start_time.clone(),
+        pattern: query_params.pattern.clone(),
+        fetch_window_start_time: query_params.fetch_window_start_time.clone(),
+        fetch_window_end_time: query_params.fetch_window_end_time.clone(),
+    };
+
+    // 2. Fetch candles and run recognizer
+    let (all_fetched_candles, _recognizer, recognizer_output_value) =
+        match _fetch_and_detect_core(&chart_query_for_fetch, "find_and_verify_logic").await {
+            Ok(data) => data,
+            Err(e) => {
+                error!("[LOGIC_FIND_VERIFY] Error from _fetch_and_detect_core: {}", e);
+                return Err(e); // Propagate CoreError
+            }
+        };
+
+    if all_fetched_candles.is_empty() {
+        info!("[LOGIC_FIND_VERIFY] No candles fetched in the window for {}/{}", query_params.symbol, query_params.timeframe);
+        return Ok(FindAndVerifyZoneResult {
+            query_params: serializable_query_params,
+            fetched_candles_count: 0,
+            found_zone_details: None,
+            message: "No candles fetched in the specified window.".to_string(),
+            error_details: None,
+            recognizer_raw_output_for_target_zone: Some(recognizer_output_value), // Still include recognizer output
+        });
+    }
+    let candle_count_total = all_fetched_candles.len();
+    info!("[LOGIC_FIND_VERIFY] Fetched {} candles. Recognizer output keys: {:?}",
+        candle_count_total,
+        recognizer_output_value.as_object().map_or_else(|| Vec::new(), |o| o.keys().cloned().collect::<Vec<_>>())
+    );
+
+
+    // 3. Find the specific zone matching target_formation_start_time
+    let mut target_zone_raw_json: Option<serde_json::Value> = None;
+
+    // Expected path to zones array: recognizer_output_value["data"]["price"]["supply_zones" or "demand_zones"]["zones"]
+    if let Some(data_val) = recognizer_output_value.get("data") {
+        if let Some(price_val) = data_val.get("price") {
+            for zone_kind_key in ["supply_zones", "demand_zones"] { // Check both supply and demand
+                if let Some(zones_of_kind_val) = price_val.get(zone_kind_key) {
+                    if let Some(zones_array_val) = zones_of_kind_val.get("zones") {
+                        if let Some(zones_array) = zones_array_val.as_array() {
+                            for zone_json in zones_array {
+                                if let Some(zone_start_str) = zone_json.get("start_time").and_then(|st| st.as_str()) {
+                                    if zone_start_str == query_params.target_formation_start_time {
+                                        target_zone_raw_json = Some(zone_json.clone());
+                                        info!("[LOGIC_FIND_VERIFY] Found target zone starting at {}: Kind: {}", zone_start_str, zone_kind_key);
+                                        break; // Found our specific zone
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if target_zone_raw_json.is_some() {
+                    break; // Stop checking other kinds if found
+                }
+            }
+        }
+    }
+
+    if target_zone_raw_json.is_none() {
+        info!("[LOGIC_FIND_VERIFY] No zone found by recognizer starting exactly at {}", query_params.target_formation_start_time);
+        return Ok(FindAndVerifyZoneResult {
+            query_params: serializable_query_params,
+            fetched_candles_count: candle_count_total,
+            found_zone_details: None,
+            message: format!("No zone detected by pattern '{}' starting exactly at {}.", query_params.pattern, query_params.target_formation_start_time),
+            error_details: None,
+            recognizer_raw_output_for_target_zone: Some(recognizer_output_value), // Show what was found
+        });
+    }
+
+    // 4. If found, perform enrichment (This is where we adapt logic from bulk handler's closure)
+   let raw_zone_to_enrich = target_zone_raw_json.as_ref().unwrap();
+
+    // --- START: Adapted Enrichment Logic ---
+    let mut activity_details = FoundZoneActivityDetails::default();
+
+    let detection_method_str = raw_zone_to_enrich
+        .get("detection_method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown from recognizer");
+
+    // Prefer "type" field from recognizer if it exists, otherwise infer from detection_method
+    let zone_type_explicit = raw_zone_to_enrich
+        .get("type") // e.g., "supply_zone", "demand_zone"
+        .and_then(|v| v.as_str());
+
+    let is_supply: bool; // Will be used for activity logic
+    let zone_type_str: String;
+
+    if let Some(zt_explicit) = zone_type_explicit {
+        if zt_explicit.to_lowercase().contains("supply") {
+            is_supply = true;
+            zone_type_str = "supply".to_string();
+        } else if zt_explicit.to_lowercase().contains("demand") {
+            is_supply = false;
+            zone_type_str = "demand".to_string();
+        } else {
+            // Fallback if "type" field is ambiguous
+            is_supply = detection_method_str.to_lowercase().contains("supply") ||
+                        detection_method_str.to_lowercase().contains("bearish");
+            zone_type_str = if is_supply { "supply".to_string() } else { "demand".to_string() };
+            warn!("[LOGIC_FIND_VERIFY] Ambiguous 'type' field ('{}') from recognizer, inferred type based on detection_method.", zt_explicit);
+        }
+    } else {
+        // Infer from detection_method if "type" field is missing
+        is_supply = detection_method_str.to_lowercase().contains("supply") ||
+                    detection_method_str.to_lowercase().contains("bearish");
+        zone_type_str = if is_supply { "supply".to_string() } else { "demand".to_string() };
+    }
+
+    // activity_details.is_supply_zone_detected = Some(is_supply); // OLD
+    activity_details.zone_type_detected = Some(zone_type_str); // NEW
+    activity_details.detection_method = Some(detection_method_str.to_string());
+
+
+    activity_details.detected_zone_actual_start_time = raw_zone_to_enrich.get("start_time").and_then(|v| v.as_str()).map(String::from);
+    activity_details.zone_high = raw_zone_to_enrich.get("zone_high").and_then(|v| v.as_f64());
+    activity_details.zone_low = raw_zone_to_enrich.get("zone_low").and_then(|v| v.as_f64());
+    activity_details.start_idx_in_fetched_slice = raw_zone_to_enrich.get("start_idx").and_then(|v| v.as_u64());
+    activity_details.end_idx_in_fetched_slice = raw_zone_to_enrich.get("end_idx").and_then(|v| v.as_u64());
+
+    let (zone_high, zone_low, start_idx_from_json, end_idx_from_json) = match (
+        activity_details.zone_high,
+        activity_details.zone_low,
+        activity_details.start_idx_in_fetched_slice,
+        activity_details.end_idx_in_fetched_slice,
+    ) {
+        (Some(h), Some(l), Some(s), Some(e)) if h.is_finite() && l.is_finite() => (h, l, s as usize, e as usize),
+        _ => {
+            let err_msg = format!("Target zone JSON missing essential fields (high, low, start_idx, end_idx): {:?}", raw_zone_to_enrich);
+            error!("[LOGIC_FIND_VERIFY] {}", err_msg);
+            return Ok(FindAndVerifyZoneResult {
+                query_params: serializable_query_params,
+                fetched_candles_count: candle_count_total,
+                found_zone_details: None, // Could put partial details here if desired
+                message: "Error enriching target zone.".to_string(),
+                error_details: Some(err_msg),
+                recognizer_raw_output_for_target_zone: Some(recognizer_output_value),
+            });
+        }
+    };
+
+    // Ensure indices are within bounds of the fetched candles
+    if end_idx_from_json >= candle_count_total || start_idx_from_json > end_idx_from_json {
+        let err_msg = format!(
+            "Invalid indices from recognizer for target zone: start_idx={}, end_idx={}, candle_count={}. Zone JSON: {:?}",
+            start_idx_from_json, end_idx_from_json, candle_count_total, raw_zone_to_enrich
+        );
+        error!("[LOGIC_FIND_VERIFY] {}", err_msg);
+         return Ok(FindAndVerifyZoneResult {
+            query_params: serializable_query_params,
+            fetched_candles_count: candle_count_total,
+            found_zone_details: None,
+            message: "Invalid indices from recognizer for target zone.".to_string(),
+            error_details: Some(err_msg),
+            recognizer_raw_output_for_target_zone: Some(recognizer_output_value),
+        });
+    }
+
+
+    activity_details.is_active = true; // Assume active
+    let (proximal_line, distal_line) = if is_supply {
+        (zone_low, zone_high)
+    } else {
+        (zone_high, zone_low)
+    };
+
+    // Activity check starts *after* the zone is fully formed (after end_idx_from_json)
+    let check_start_idx_in_slice = end_idx_from_json + 1;
+    let mut is_currently_outside_zone = true;
+
+    if check_start_idx_in_slice < candle_count_total {
+        for i in check_start_idx_in_slice..candle_count_total {
+            let candle = &all_fetched_candles[i];
+             if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+                warn!("[LOGIC_FIND_VERIFY] Candle at index {} (time: {}) has non-finite values during activity check. Skipping.", i, candle.time);
+                continue;
+            }
+
+            activity_details.bars_active_after_formation = Some((i - check_start_idx_in_slice + 1) as u64);
+
+            if is_supply {
+                if candle.high > distal_line {
+                    activity_details.is_active = false;
+                    activity_details.invalidation_candle_time = Some(candle.time.clone());
+                    debug!("[LOGIC_FIND_VERIFY] Supply zone invalidated at candle {}: CH {} > Distal {}", candle.time, candle.high, distal_line);
+                    break;
+                }
+            } else {
+                if candle.low < distal_line {
+                    activity_details.is_active = false;
+                    activity_details.invalidation_candle_time = Some(candle.time.clone());
+                    debug!("[LOGIC_FIND_VERIFY] Demand zone invalidated at candle {}: CL {} < Distal {}", candle.time, candle.low, distal_line);
+                    break;
+                }
+            }
+
+            let mut interaction_occurred = false;
+            if is_supply {
+                if candle.high >= proximal_line { interaction_occurred = true; }
+            } else {
+                if candle.low <= proximal_line { interaction_occurred = true; }
+            }
+
+            if interaction_occurred && is_currently_outside_zone {
+                activity_details.touch_count += 1;
+                if activity_details.first_touch_candle_time.is_none() {
+                    activity_details.first_touch_candle_time = Some(candle.time.clone());
+                }
+                debug!("[LOGIC_FIND_VERIFY] Zone touched at candle {}. Touches: {}", candle.time, activity_details.touch_count);
+            }
+            is_currently_outside_zone = !interaction_occurred;
+        }
+    } else {
+        activity_details.bars_active_after_formation = Some(0);
+        info!("[LOGIC_FIND_VERIFY] No candles available after zone formation (end_idx: {}) to check activity.", end_idx_from_json);
+    }
+     if activity_details.is_active && activity_details.bars_active_after_formation.is_none() {
+         if check_start_idx_in_slice < candle_count_total {
+            activity_details.bars_active_after_formation = Some((candle_count_total - check_start_idx_in_slice) as u64);
+         } else {
+            activity_details.bars_active_after_formation = Some(0);
+         }
+    }
+    // --- END: Adapted Enrichment Logic ---
+
+    info!("[LOGIC_FIND_VERIFY] Final activity for target zone: active={}, touches={}", activity_details.is_active, activity_details.touch_count);
+
+    Ok(FindAndVerifyZoneResult {
+        query_params: serializable_query_params,
+        fetched_candles_count: candle_count_total,
+        found_zone_details: Some(activity_details),
+        message: "Target zone found and analyzed.".to_string(),
+        error_details: None,
+        recognizer_raw_output_for_target_zone: Some(raw_zone_to_enrich.clone()), // Include the specific zone's JSON
+    })
 }
