@@ -4,3 +4,4 @@ pub mod patterns;
 pub mod trades;
 pub mod trading;
 pub mod types;
+pub mod zone_generator; 

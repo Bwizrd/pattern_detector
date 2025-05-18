@@ -290,47 +290,118 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
 
 // --- Helper function to check zone activity ---
 pub fn is_zone_still_active(zone: &Value, candles: &[CandleData], is_supply: bool) -> bool {
+    // --- START: Enhanced Logging ---
+    log::error!("FORCED LOG: is_zone_still_active CALLED! ...");
+    let zone_id_for_log = zone.get("zone_id") // Try to get generated ID if already present (e.g. from bulk)
+        .or_else(|| zone.get("start_time")) // Fallback to start_time for identification
+        .and_then(|v| v.as_str())
+        .unwrap_or("UNKNOWN_ZONE_ID_OR_START_TIME");
+
+    let source_detection_method = zone.get("detection_method").and_then(|v|v.as_str()).unwrap_or("N/A");
+
+    // Log the call and key parameters
+    log::info!(
+        "[IS_ZONE_ACTIVE_CHECK] Called for Zone (ID/StartTime: '{}', Method: '{}'), IsSupply: {}. Total candles provided for check: {}.",
+        zone_id_for_log,
+        source_detection_method,
+        is_supply,
+        candles.len()
+    );
+    if candles.len() > 0 {
+        log::info!(
+            "[IS_ZONE_ACTIVE_CHECK] Candles range from {} to {}",
+            candles.first().unwrap().time,
+            candles.last().unwrap().time
+        );
+    }
+    // --- END: Enhanced Logging ---
+
     let start_idx = match zone.get("start_idx").and_then(|v| v.as_u64()) {
         Some(idx) => idx as usize,
         None => {
-            warn!("is_zone_still_active: Missing 'start_idx'");
+            warn!("[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): Missing 'start_idx'. Marking INACTIVE.", zone_id_for_log);
             return false;
         }
     };
     let zone_high = match zone.get("zone_high").and_then(|v| v.as_f64()) {
         Some(val) if val.is_finite() => val,
         _ => {
-            warn!("is_zone_still_active: Missing/invalid 'zone_high'");
+            warn!("[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): Missing/invalid 'zone_high'. Marking INACTIVE.", zone_id_for_log);
             return false;
         }
     };
     let zone_low = match zone.get("zone_low").and_then(|v| v.as_f64()) {
         Some(val) if val.is_finite() => val,
         _ => {
-            warn!("is_zone_still_active: Missing/invalid 'zone_low'");
+            warn!("[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): Missing/invalid 'zone_low'. Marking INACTIVE.", zone_id_for_log);
             return false;
         }
     };
+
+    // The "fifty_candle" is at `candles[start_idx]`
+    // The "big_bar" (which completes the zone formation) is at `candles[start_idx + 1]`
+    // So, activity check should start from the candle *after* the big_bar: `start_idx + 2`
     let check_start_idx = start_idx.saturating_add(2);
+
+    // Log zone boundaries and where checking starts
+    let formation_fifty_candle_time = candles.get(start_idx).map_or("N/A_IDX", |c| c.time.as_str());
+    let formation_big_bar_time = candles.get(start_idx + 1).map_or("N/A_IDX", |c| c.time.as_str());
+    log::info!(
+        "[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): FiftyCandleTime: {}, BigBarTime: {}. ZoneDef [Low: {:.5}, High: {:.5}]. Activity check starts at index: {} (Time: {}).",
+        zone_id_for_log,
+        formation_fifty_candle_time,
+        formation_big_bar_time,
+        zone_low,
+        zone_high,
+        check_start_idx,
+        candles.get(check_start_idx).map_or("N/A_IDX_PAST_END", |c| c.time.as_str())
+    );
+
+
     if check_start_idx >= candles.len() {
-        return true;
+        log::info!("[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): No candles available after formation pattern (check_start_idx {} >= candles.len {}). Zone remains ACTIVE.",
+            zone_id_for_log, check_start_idx, candles.len());
+        return true; // No candles after formation to invalidate it
     }
+
     for i in check_start_idx..candles.len() {
         let candle = &candles[i];
         if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+            warn!("[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): Subsequent candle #{} (Time: {}) has non-finite OHLC values. Skipping this candle for check.",
+                zone_id_for_log, i, candle.time);
             continue;
         }
+
+        // Verbose log for each candle being checked against the zone
+        log::trace!(
+            "[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): Checking subsequent candle #{} (Time: {}): Open={:.5}, High={:.5}, Low={:.5}, Close={:.5}",
+            zone_id_for_log, i, candle.time, candle.open, candle.high, candle.low, candle.close
+        );
+
         if is_supply {
             if candle.high > zone_high {
+                log::info!(
+                    "[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}', Type: SUPPLY): INVALIDATED by candle #{} (Time: {}). Candle_High ({:.5}) > Zone_High ({:.5}). Marking INACTIVE.",
+                    zone_id_for_log, i, candle.time, candle.high, zone_high
+                );
                 return false;
             }
-        } else {
+        } else { // is_demand
             if candle.low < zone_low {
+                log::info!(
+                    "[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}', Type: DEMAND): INVALIDATED by candle #{} (Time: {}). Candle_Low ({:.5}) < Zone_Low ({:.5}). Marking INACTIVE.",
+                    zone_id_for_log, i, candle.time, candle.low, zone_low
+                );
                 return false;
             }
         }
     }
-    true
+
+    log::info!(
+        "[IS_ZONE_ACTIVE_CHECK] Zone (ID/StartTime: '{}'): Remained valid through all {} subsequent candles checked. Marking ACTIVE.",
+        zone_id_for_log, candles.len().saturating_sub(check_start_idx)
+    );
+    return true;
 }
 
 // --- get_active_zones_handler ---

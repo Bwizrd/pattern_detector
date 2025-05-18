@@ -389,6 +389,7 @@ async fn main() -> std::io::Result<()> {
     log4rs::init_file("log4rs.yaml", Default::default())
         .expect("Failed to initialize log4rs logging");
 
+    log::info!("TEST LOG FROM MAIN: Logger initialized.");
     log::info!("Starting Pattern Detector Application...");
 
     // --- Check if Startup Generation is Enabled (Calls run_zone_generation with is_periodic_run = false) ---
@@ -399,7 +400,7 @@ async fn main() -> std::io::Result<()> {
     if run_on_startup {
         log::info!("RUN_GENERATOR_ON_STARTUP is true. Running FULL zone generation at startup...");
         // Pass false for is_periodic_run
-        if let Err(e) = zone_generator::run_zone_generation(false).await {
+        if let Err(e) = zone_generator::run_zone_generation(false, None).await {
             log::error!("Startup zone generation failed: {}", e);
         } else {
             log::info!("Startup zone generation completed successfully.");
@@ -456,7 +457,7 @@ async fn main() -> std::io::Result<()> {
         while rx.recv().await.is_some() {
             log::info!("Running queued FULL zone generation task triggered by API...");
             // Pass false for is_periodic_run
-            if let Err(e) = zone_generator::run_zone_generation(false).await {
+            if let Err(e) = zone_generator::run_zone_generation(false, None).await {
                 log::error!("Queued FULL zone generation failed: {}", e);
             } else {
                 log::info!("Queued FULL zone generation completed successfully");
@@ -488,7 +489,7 @@ async fn main() -> std::io::Result<()> {
                 interval.tick().await;
                 log::info!("[MAIN] Periodic zone generation triggered by timer...");
                 // Pass true for is_periodic_run
-                if let Err(e) = zone_generator::run_zone_generation(true).await {
+                if let Err(e) = zone_generator::run_zone_generation(true, None).await {
                     log::error!("[MAIN] Periodic zone generation run failed: {}", e);
                 } else {
                     log::info!("[MAIN] Periodic zone generation run cycle completed.");
