@@ -5,3 +5,7 @@ pub mod html_reporter;
 pub mod parameter_generator;
 pub mod main;
 pub mod multi_currency;
+pub mod advanced_optimizer;
+pub mod html_reporter_advanced;
+pub mod performance_scanner;
+pub mod html_reporter_scanner;

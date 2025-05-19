@@ -214,6 +214,7 @@ impl TradeExecutor {
                                     };
 
                                     let trade = Trade::new(
+                                          self.symbol.clone(), 
                                         zone_id.clone(), pattern_type_str.clone(), trade_direction,
                                         current_candle, entry_price, self.config.lot_size,
                                         stop_loss, take_profit, i,
@@ -301,6 +302,7 @@ impl TradeExecutor {
                     };
                     let pattern_id = format!("{}-{}-{}", self.symbol, pattern_name, entry_candle.time); // Added symbol for uniqueness
                     let trade = Trade::new(
+                           self.symbol.clone(),
                         pattern_id, pattern_name.to_string(), dir,
                         entry_candle, entry_price, self.config.lot_size,
                         sl_price, tp_price, entry_candle_idx,

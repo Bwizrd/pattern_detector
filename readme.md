@@ -8,6 +8,10 @@ cargo test --test optimization/main -- --nocapture
 
 cargo test --test optimization multi_currency::run_multi_currency_optimization -- --nocapture
 
+cargo test --test optimization advanced_optimizer::run_advanced_optimization -- --nocapture
+RUST_LOG=debug,pattern_detector::trading=debug cargo test --test optimization advanced_optimizer::run_advanced_optimization -- --nocapture
+RUST_LOG=info,optimization::advanced_optimizer=debug,pattern_detector::trading=info cargo test --test optimization advanced_optimizer::run_advanced_optimization -- --nocapture
+
 I am building a forex data pattern recognizer in rust and displaying the results in an Angular App using SciCharts. The Data is stored in an Influx db.
 
 The Rust backend has 

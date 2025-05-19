@@ -20,6 +20,10 @@ use crate::html_reporter::generate_report;
 use crate::parameter_generator::generate_parameter_grid;
 
 mod multi_currency;
+pub mod html_reporter_advanced;
+pub mod advanced_optimizer; 
+pub mod performance_scanner;
+pub mod html_reporter_scanner;
 
 // Parameter search configuration
 #[derive(Clone)]

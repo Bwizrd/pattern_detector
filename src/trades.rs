@@ -46,6 +46,7 @@ impl Default for TradeConfig {
 
 #[derive(Serialize, Clone)]
 pub struct Trade {
+    pub symbol: String,
     pub id: String,
     pub pattern_id: String,
     pub pattern_type: String,
@@ -67,6 +68,7 @@ pub struct Trade {
 
 impl Trade {
     pub fn new(
+        symbol_arg: String,
         pattern_id: String,
         pattern_type: String,
         direction: TradeDirection,
@@ -81,6 +83,7 @@ impl Trade {
         let id = format!("{}-{}-{:?}", pattern_type, entry_candle.time, direction);
         
         Self {
+            symbol: symbol_arg,
             id,
             pattern_id,
             pattern_type,
@@ -102,35 +105,86 @@ impl Trade {
     }
     
     pub fn close(&mut self, exit_candle: &CandleData, exit_reason: &str, candlestick_idx: usize) {
+        if self.status == TradeStatus::Closed {
+            // println!("Warning: Attempted to close an already closed trade: {}", self.id); // Simple console log for now
+            return;
+        }
+
         self.status = TradeStatus::Closed;
         self.exit_time = Some(exit_candle.time.clone());
+        // self.exit_reason = Some(exit_reason.to_string()); // This will be set at the end
+        // self.candlestick_idx_exit = Some(candlestick_idx); // This will be set at the end
         
-        // Set exit price based on reason
-        let exit_price = if exit_reason == "Stop Loss" {
-            // Use the actual stop loss price when stopped out
+        let effective_exit_price = if exit_reason == "Stop Loss" {
             self.stop_loss
         } else if exit_reason == "Take Profit" {
-            // Use the actual take profit price when taking profit
             self.take_profit
         } else {
-            // Otherwise use candle close
+            // For "End of Data" or any other/unexpected reason
             exit_candle.close
         };
+        self.exit_price = Some(effective_exit_price);
+
+        let identifier_to_check_for_symbol = &self.symbol;
+
+        // ---- TEMPORARY DEBUG LOG ----
+        if identifier_to_check_for_symbol.contains("JPY_SB") {
+            println!("[DEBUG Trade::close] JPY PAIR DETECTED for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
+        } else if identifier_to_check_for_symbol.contains("USDJPY_SB") { // Be more specific for testing
+             println!("[DEBUG Trade::close] USDJPY_SB PAIR DETECTED for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
+        } else {
+             println!("[DEBUG Trade::close] NOT JPY PAIR for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
+        }
+        // ---- END TEMPORARY DEBUG LOG ----
         
-        self.exit_price = Some(exit_price);
+        // --- MINIMAL CHANGE TO DETERMINE pip_value ---
+        let pip_value: f64;
+        // Determine pip_value based on a field that reliably contains the symbol.
+        // Assuming self.pattern_id is the best candidate (e.g., "EURUSD_SB-zone-123")
+        // If pattern_id does NOT contain the symbol, this logic needs a reliable source for it.
+        let identifier_to_check_for_symbol = &self.pattern_id; // Or self.id / self.pattern_type
+
+        if identifier_to_check_for_symbol.contains("JPY_SB") {
+            pip_value = 0.01; 
+        } else if identifier_to_check_for_symbol.contains("NAS100_SB") || 
+                    identifier_to_check_for_symbol.contains("US500_SB") || 
+                    identifier_to_check_for_symbol.contains("XAU_SB") { // Assuming XAU_SB for gold
+            pip_value = 1.0; // If SL/TP for these are in points/dollar values, and 1 point = 1.0 price change
+        } else {
+            pip_value = 0.0001; // Default for standard FX
+        }
+        // --- END MINIMAL CHANGE TO DETERMINE pip_value ---
         
-        // Calculate P/L in pips (assuming 4 decimal places for forex)
-        let pip_value = 0.0001;
-        let profit_loss_pips = match self.direction {
-            TradeDirection::Long => (exit_price - self.entry_price) / pip_value,
-            TradeDirection::Short => (self.entry_price - exit_price) / pip_value,
+        let profit_loss_price_diff = match self.direction {
+            TradeDirection::Long => effective_exit_price - self.entry_price,
+            TradeDirection::Short => self.entry_price - effective_exit_price,
+        };
+
+        // Calculate P/L in *true* pips/points using the determined pip_value
+        let calculated_pnl_pips = if pip_value.abs() > 1e-12 {
+            profit_loss_price_diff / pip_value
+        } else {
+            // This case should be logged more formally if log crate is used.
+            println!("Error: pip_value is zero or too small for trade ID {} (pattern_id: {}). Pips set to 0.", self.id, self.pattern_id);
+            0.0 
         };
         
-        // Calculate P/L in account currency
-        let profit_loss = profit_loss_pips * 10.0 * self.lot_size; // Assuming $10 per pip for 1.0 lot
+        // Calculate monetary P/L using YOUR ORIGINAL FORMULA, but with the 
+        // *newly calculated (and correctly scaled) pips*.
+        // Your original formula: profit_loss_pips * 10.0 * self.lot_size
+        // This implies that the "10.0" factor was designed when profit_loss_pips was always
+        // based on a 0.0001 pip value.
+        // To keep the monetary value's *intended scale* consistent with what it was before
+        // for non-JPY pairs, while using the new true pips:
+        // We need to find out what 1 true pip (from calculated_pnl_pips) is worth in terms of "0.0001 units"
+        // and then apply the original 10.0 * self.lot_size scaling.
+        // Number of "0.0001 units" in price_diff = profit_loss_price_diff / 0.0001
+        let old_system_equivalent_pips = profit_loss_price_diff / 0.0001;
+        let calculated_monetary_profit_loss = old_system_equivalent_pips * 10.0 * self.lot_size;
         
-        self.profit_loss = Some(profit_loss);
-        self.profit_loss_pips = Some(profit_loss_pips);
+        // Assign all the values as per your original structure
+        self.profit_loss = Some(calculated_monetary_profit_loss);
+        self.profit_loss_pips = Some(calculated_pnl_pips); // THIS NOW HOLDS CORRECTLY SCALED PIPS
         self.exit_reason = Some(exit_reason.to_string());
         self.candlestick_idx_exit = Some(candlestick_idx);
     }
