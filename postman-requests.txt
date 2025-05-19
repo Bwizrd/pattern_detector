@@ -1,0 +1,19 @@
+{
+    "start_time": "2025-05-11T22:00:00Z",
+    "end_time": "2025-05-16T22:00:00Z",
+    "symbols": [
+        "EURUSD_SB", "GBPUSD_SB", "USDCHF_SB", "AUDUSD_SB", "USDCAD_SB", 
+        "NZDUSD_SB", "EURGBP_SB", "EURCHF_SB", "EURAUD_SB", "EURCAD_SB", 
+        "EURNZD_SB", "GBPCHF_SB", "GBPAUD_SB", "GBPCAD_SB", "GBPNZD_SB", 
+        "AUDNZD_SB", "AUDCAD_SB"
+    ],
+    "pattern_timeframes": [
+        "30m",
+        "1h",
+        "4h",
+        "1d"
+    ],
+    "stop_loss_pips": 10.0,
+    "take_profit_pips": 50.0,
+    "lot_size": 0.01
+}

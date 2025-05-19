@@ -47,6 +47,9 @@ pub struct OverallBacktestSummary {
     pub total_pnl_pips: f64,
     pub overall_win_rate_percent: f64,
     pub overall_profit_factor: f64,
+    pub average_trade_duration_str: String,
+    pub overall_winning_trades: usize,
+    pub overall_losing_trades: usize, 
     pub trades_by_symbol_percent: std::collections::HashMap<String, f64>, // {"EURUSD_SB": 20.0, ...}
     pub trades_by_timeframe_percent: std::collections::HashMap<String, f64>, // {"30m": 10.0, ...}
     pub trades_by_day_of_week_percent: std::collections::HashMap<String, f64>, // {"Monday": 25.0, ...}
