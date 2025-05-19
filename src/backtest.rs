@@ -342,7 +342,12 @@ pub async fn run_backtest(
     );
 
     // --- 4. Instantiate and Execute Trades ---
-    let mut trade_executor = TradeExecutor::new(trade_config);
+    let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
+    let mut trade_executor = TradeExecutor::new(trade_config, 
+        default_symbol_for_recognizer_trade,
+        None, // Pass primary timeframe for context
+        None// Pass the original timeframe for context
+    );
     if !minute_candles.is_empty() {
         trade_executor.set_minute_candles(minute_candles);
         log::info!("TradeExecutor configured with 1m data for precise execution.");

@@ -239,7 +239,12 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 // Create a trade executor with minute data
-                let mut trade_executor = TradeExecutor::new(trade_config);
+                let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER";
+                let mut trade_executor = TradeExecutor::new(trade_config, 
+                    default_symbol_for_recognizer_trade,
+                    None,
+                    None
+                );
                 trade_executor.set_minute_candles(minute_candles.clone());
 
                 // Execute trades using the executor

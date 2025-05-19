@@ -10,7 +10,7 @@ use crate::trades::TradeConfig;
 use crate::trading::TradeExecutor;
 use crate::types::CandleData;
 
-use chrono::{DateTime, Utc, Timelike, Datelike};
+use chrono::{DateTime, Utc, Timelike, Datelike, Weekday};
 use std::collections::HashMap;
 use futures::future::join_all;
 use log::{info, error, warn, debug};
@@ -161,6 +161,17 @@ pub async fn run_multi_symbol_backtest(
 ) -> Result<HttpResponse, ActixError> {
     info!("Received multi-symbol backtest request: {:?}", req.0);
 
+    // Parse allowed_trade_days from request strings to Weekday enums
+    // and get trade_end_hour_utc directly from the request.
+    let parsed_allowed_days: Option<Vec<Weekday>> = parse_allowed_days(req.0.allowed_trade_days.clone());
+    let parsed_trade_end_hour_utc: Option<u32> = req.0.trade_end_hour_utc;
+
+    if req.0.allowed_trade_days.is_some() && parsed_allowed_days.is_none() {
+        warn!("Request included allowed_trade_days, but all entries were invalid or list was empty.");
+        // Optionally, you could return a BadRequest here if strict parsing is required.
+    }
+
+
     let host = std::env::var("INFLUXDB_HOST").unwrap_or_else(|_| "http://localhost:8086".to_string());
     let org = match std::env::var("INFLUXDB_ORG") {
         Ok(val) => val, Err(e) => { error!("INFLUXDB_ORG not set: {}", e); return Ok(HttpResponse::InternalServerError().json(json!({"error": "Server configuration error: INFLUXDB_ORG missing."}))); }
@@ -179,7 +190,7 @@ pub async fn run_multi_symbol_backtest(
     let mut tasks = Vec::new();
 
     for symbol in req.0.symbols.iter() {
-        for pattern_tf_str in pattern_timeframes.iter() { // Iterate over cloned Vec
+        for pattern_tf_str in pattern_timeframes.iter() {
             let task_symbol = symbol.clone();
             let task_pattern_tf = pattern_tf_str.clone(); 
             let task_execution_tf = execution_timeframe.to_string();
@@ -188,6 +199,10 @@ pub async fn run_multi_symbol_backtest(
             let task_sl_pips = req.0.stop_loss_pips;
             let task_tp_pips = req.0.take_profit_pips;
             let task_lot_size = lot_size;
+
+            // Clone the parsed filter options for the task
+            let task_allowed_days = parsed_allowed_days.clone();
+            let task_trade_end_hour_utc = parsed_trade_end_hour_utc;
 
             let host_clone = host.clone();
             let org_clone = org.clone();
@@ -218,9 +233,24 @@ pub async fn run_multi_symbol_backtest(
                 if total_detected_zones_count == 0 { info!("Task Info: No pattern zones found in JSON for {} on {}", task_symbol, task_pattern_tf); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
                 debug!("Task Info: Total {} raw pattern zones found in JSON for {}/{}", total_detected_zones_count, task_symbol, task_pattern_tf);
 
-                let trade_config = TradeConfig { enabled: true, lot_size: task_lot_size, default_stop_loss_pips: task_sl_pips, default_take_profit_pips: task_tp_pips, risk_percent: 1.0, max_trades_per_pattern: 1, ..Default::default() };
-                let mut trade_executor = TradeExecutor::new(trade_config.clone());
+                let current_trade_config = TradeConfig {
+                    enabled: true,
+                    lot_size: task_lot_size,
+                    default_stop_loss_pips: task_sl_pips,
+                    default_take_profit_pips: task_tp_pips,
+                    risk_percent: 1.0,
+                    max_trades_per_pattern: 1, 
+                    ..Default::default()
+                };
+
+                let mut trade_executor = TradeExecutor::new(
+                    current_trade_config,
+                    &task_symbol,
+                    task_allowed_days, // Pass the parsed and cloned filters
+                    task_trade_end_hour_utc
+                );
                 trade_executor.set_minute_candles(execution_candles.clone());
+
                 let executed_trades_internal = trade_executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles );
                 info!("Task Info: Executed {} trades for {}/{}", executed_trades_internal.len(), task_symbol, task_pattern_tf);
                 
@@ -240,8 +270,8 @@ pub async fn run_multi_symbol_backtest(
                     let pnl_for_individual_trade_struct = round_f64(pnl_raw, 1);
 
                     total_pnl_pips_for_summary_raw += pnl_raw;
-                    if pnl_raw > 0.0 { winning_trades_count += 1; total_gross_profit_pips_raw += pnl_raw; }
-                    else if pnl_raw < 0.0 { total_gross_loss_pips_raw += pnl_raw.abs(); }
+                    if pnl_raw > 1e-9 { winning_trades_count += 1; total_gross_profit_pips_raw += pnl_raw; } // Use epsilon for float comparison
+                    else if pnl_raw < -1e-9 { total_gross_loss_pips_raw += pnl_raw.abs(); }
                     
                     current_task_trades_result.push(IndividualTradeResult {
                         symbol: task_symbol.clone(), timeframe: task_pattern_tf.clone(),
@@ -256,7 +286,7 @@ pub async fn run_multi_symbol_backtest(
                 }
                 let total_trades_for_summary = executed_trades_internal.len();
                 let win_rate = if total_trades_for_summary > 0 { (winning_trades_count as f64 / total_trades_for_summary as f64) * 100.0 } else { 0.0 };
-                let profit_factor_val = if total_gross_loss_pips_raw > 0.0 { total_gross_profit_pips_raw / total_gross_loss_pips_raw } else if total_gross_profit_pips_raw > 0.0 { f64::INFINITY } else { 0.0 };
+                let profit_factor_val = if total_gross_loss_pips_raw > 1e-9 { total_gross_profit_pips_raw / total_gross_loss_pips_raw } else if total_gross_profit_pips_raw > 1e-9 { f64::INFINITY } else { 0.0 };
                 
                 let summary_for_task = SymbolTimeframeSummary {
                     symbol: task_symbol.clone(), timeframe: task_pattern_tf.clone(),
@@ -295,6 +325,8 @@ pub async fn run_multi_symbol_backtest(
     let mut overall_winning_trades = 0;
     let mut overall_gross_profit_pips_sum_of_rounded: f64 = 0.0;
     let mut overall_gross_loss_pips_sum_of_rounded: f64 = 0.0;
+    let mut total_duration_seconds: i64 = 0;
+
 
     let mut trades_by_symbol_count: HashMap<String, usize> = HashMap::new();
     let mut trades_by_timeframe_count: HashMap<String, usize> = HashMap::new();
@@ -302,8 +334,6 @@ pub async fn run_multi_symbol_backtest(
     let mut pnl_by_day_pips_sum_of_rounded: HashMap<String, f64> = HashMap::new();
     let mut trades_by_hour_count: HashMap<u32, usize> = HashMap::new();
     let mut pnl_by_hour_pips_sum_of_rounded: HashMap<u32, f64> = HashMap::new();
-
-    let mut total_duration_seconds: i64 = 0;
 
     for trade in &all_individual_trades {
         overall_total_trades += 1;
@@ -328,10 +358,8 @@ pub async fn run_multi_symbol_backtest(
             *trades_by_hour_count.entry(hour_val).or_insert(0) += 1;
             *pnl_by_hour_pips_sum_of_rounded.entry(hour_val).or_insert(0.0) += pnl_this_trade;
         }
-
-        // Calculate duration for this trade
-        if let Some(exit_t) = trade.exit_time { // trade.exit_time is Option<DateTime<Utc>>
-            let entry_t = trade.entry_time;     // trade.entry_time is DateTime<Utc>
+        if let Some(exit_t) = trade.exit_time {
+            let entry_t = trade.entry_time;
             let duration_for_this_trade = exit_t.signed_duration_since(entry_t);
             total_duration_seconds += duration_for_this_trade.num_seconds();
         }
@@ -343,26 +371,17 @@ pub async fn run_multi_symbol_backtest(
     if overall_total_trades > 0 && total_duration_seconds > 0 {
         let avg_seconds_per_trade = total_duration_seconds / overall_total_trades as i64;
         let avg_duration = chrono::Duration::seconds(avg_seconds_per_trade);
-        
-        // Format the duration
         let hours = avg_duration.num_hours();
         let minutes = avg_duration.num_minutes() % 60;
         let seconds = avg_duration.num_seconds() % 60;
-        if hours > 0 {
-            average_trade_duration_str = format!("{}h {}m {}s", hours, minutes, seconds);
-        } else if minutes > 0 {
-            average_trade_duration_str = format!("{}m {}s", minutes, seconds);
-        } else {
-            average_trade_duration_str = format!("{}s", seconds);
-        }
-    } else {
-        average_trade_duration_str = "N/A".to_string();
-    }
+        if hours > 0 { average_trade_duration_str = format!("{}h {}m {}s", hours, minutes, seconds); }
+        else if minutes > 0 { average_trade_duration_str = format!("{}m {}s", minutes, seconds); }
+        else { average_trade_duration_str = format!("{}s", seconds); }
+    } else { average_trade_duration_str = "N/A".to_string(); }
     debug!("[OverallSummary] Average trade duration: {}", average_trade_duration_str);
-    let overall_losing_trades = overall_total_trades - overall_winning_trades; 
-    
+
     let overall_win_rate_calc = if overall_total_trades > 0 { (overall_winning_trades as f64 / overall_total_trades as f64) * 100.0 } else { 0.0 };
-    let overall_profit_factor_calc = if overall_gross_loss_pips_sum_of_rounded > 0.0 { overall_gross_profit_pips_sum_of_rounded / overall_gross_loss_pips_sum_of_rounded } else if overall_gross_profit_pips_sum_of_rounded > 0.0 { f64::INFINITY } else { 0.0 };
+    let overall_profit_factor_calc = if overall_gross_loss_pips_sum_of_rounded > 1e-9 { overall_gross_profit_pips_sum_of_rounded / overall_gross_loss_pips_sum_of_rounded } else if overall_gross_profit_pips_sum_of_rounded > 1e-9 { f64::INFINITY } else { 0.0 };
     
     let calculate_percent = |count: usize, total: usize| {
         round_f64(if total > 0 { (count as f64 / total as f64) * 100.0 } else { 0.0 }, 2)
@@ -378,8 +397,8 @@ pub async fn run_multi_symbol_backtest(
 
     let overall_summary = OverallBacktestSummary {
         total_trades: overall_total_trades,
-        overall_winning_trades,
-        overall_losing_trades, 
+        overall_winning_trades, 
+        overall_losing_trades: overall_total_trades - overall_winning_trades,
         total_pnl_pips: round_f64(overall_total_pnl_pips_sum_of_rounded, 1),
         overall_win_rate_percent: round_f64(overall_win_rate_calc, 2),
         overall_profit_factor: round_f64(overall_profit_factor_calc, 2),
@@ -399,6 +418,26 @@ pub async fn run_multi_symbol_backtest(
     };
 
     Ok(HttpResponse::Ok().json(response_payload))
+}
+
+fn parse_allowed_days(day_strings: Option<Vec<String>>) -> Option<Vec<Weekday>> {
+    day_strings.map(|days| {
+        days.iter()
+            .filter_map(|day_str| match day_str.to_lowercase().as_str() {
+                "mon" | "monday" => Some(Weekday::Mon),
+                "tue" | "tuesday" => Some(Weekday::Tue),
+                "wed" | "wednesday" => Some(Weekday::Wed),
+                "thu" | "thursday" => Some(Weekday::Thu),
+                "fri" | "friday" => Some(Weekday::Fri),
+                "sat" | "saturday" => Some(Weekday::Sat),
+                "sun" | "sunday" => Some(Weekday::Sun),
+                _ => {
+                    warn!("Invalid day string provided: {}", day_str);
+                    None
+                }
+            })
+            .collect()
+    })
 }
 
 impl SymbolTimeframeSummary {

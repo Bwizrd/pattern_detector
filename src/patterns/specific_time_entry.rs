@@ -68,7 +68,11 @@ impl PatternRecognizer for SpecificTimeEntryRecognizer {
     fn trade(&self, candles: &[CandleData], config: TradeConfig) -> (Vec<Trade>, TradeSummary) {
         log::info!("Specific Time TRADE: Delegating to executor.");
         let pattern_data = self.detect(candles);
-        let mut executor = TradeExecutor::new(config);
+        let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
+        let mut executor = TradeExecutor::new(config, 
+            default_symbol_for_recognizer_trade,
+            None,
+            None);
         // Note: executor needs minute data set externally if needed for exits
         let trades = executor.execute_trades_for_pattern(
             "specific_time_entry", // Use correct pattern name

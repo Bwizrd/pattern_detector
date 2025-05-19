@@ -130,7 +130,11 @@ impl PatternRecognizer for PriceSmaCrossRecognizer {
         let pattern_data = self.detect(candles);
 
         // 2. Create executor instance (or receive one if framework changes)
-        let mut executor = TradeExecutor::new(config);
+        let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER";
+        let mut executor = TradeExecutor::new(config, 
+            default_symbol_for_recognizer_trade,
+            None,
+            None);
         log::warn!("Price/SMA TRADE: Creating new TradeExecutor. Minute candle context might be lost.");
 
         // 3. Call executor to handle trades based on this pattern's data

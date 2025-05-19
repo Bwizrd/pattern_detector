@@ -6,6 +6,8 @@ cargo test --test backtest -- --nocapture
 cargo test --test multithreaded_optimization -- --nocapture
 cargo test --test optimization/main -- --nocapture
 
+cargo test --test optimization multi_currency::run_multi_currency_optimization -- --nocapture
+
 I am building a forex data pattern recognizer in rust and displaying the results in an Angular App using SciCharts. The Data is stored in an Influx db.
 
 The Rust backend has 

@@ -10,6 +10,8 @@ pub struct MultiBacktestRequest {
     pub stop_loss_pips: f64,
     pub take_profit_pips: f64,
     pub lot_size: Option<f64>, // Or f64 if always required
+    pub allowed_trade_days: Option<Vec<String>>, // NEW: e.g., ["Mon", "Tue", "Wed"]
+    pub trade_end_hour_utc: Option<u32>, // NEW: e.g., 17 (for up to 17:59:59 UTC)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -49,7 +51,7 @@ pub struct OverallBacktestSummary {
     pub overall_profit_factor: f64,
     pub average_trade_duration_str: String,
     pub overall_winning_trades: usize,
-    pub overall_losing_trades: usize, 
+    pub overall_losing_trades: usize,
     pub trades_by_symbol_percent: std::collections::HashMap<String, f64>, // {"EURUSD_SB": 20.0, ...}
     pub trades_by_timeframe_percent: std::collections::HashMap<String, f64>, // {"30m": 10.0, ...}
     pub trades_by_day_of_week_percent: std::collections::HashMap<String, f64>, // {"Monday": 25.0, ...}

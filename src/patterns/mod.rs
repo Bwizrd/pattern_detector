@@ -13,7 +13,11 @@ pub trait PatternRecognizer {
             .unwrap_or("unknown")
             .to_string();
 
-        let executor = TradeExecutor::new(config);
+        let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER";
+        let executor = TradeExecutor::new(config, 
+            default_symbol_for_recognizer_trade,
+            None,
+            None);
         let trades = executor.execute_trades_for_pattern(&pattern_type, &pattern_data, candles);
         let summary = TradeSummary::from_trades(&trades);
 

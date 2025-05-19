@@ -269,7 +269,11 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
     // trade function remains the same
     fn trade(&self, candles: &[CandleData], config: TradeConfig) -> (Vec<Trade>, TradeSummary) {
         let pattern_data = self.detect(candles);
-        let executor = TradeExecutor::new(config);
+        let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
+        let executor = TradeExecutor::new(config, 
+            default_symbol_for_recognizer_trade,
+            None,
+            None);
         let trades = executor.execute_trades_for_pattern("fifty_percent_before_big_bar", &pattern_data, candles);
         let summary = TradeSummary::from_trades(&trades);
         (trades, summary)
