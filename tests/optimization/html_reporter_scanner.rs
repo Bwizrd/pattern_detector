@@ -82,23 +82,27 @@ pub fn generate_performance_scan_report(
     writeln!(writer, "<tr><th>Rank</th><th>Symbol</th><th>Pattern TF</th><th>Net Pips</th><th>Win Rate (%)</th><th>Profit Factor</th><th>Trades</th><th>Winners</th><th>Losers</th><th>Avg. Duration</th></tr>")?;
     for (i, res) in sorted_by_pips.iter().take(25).enumerate() { // Show top 25 or all if fewer
         let row_class = if i == 0 { "class='best-row'" } else { "" };
-        writeln!(writer, "<tr {}><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.2}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+        let pf_display = if res.profit_factor.is_infinite() { "inf".to_string() } else { format!("{:.2}", res.profit_factor) };
+        writeln!(writer, "<tr {}><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             row_class, i + 1, res.symbol, res.timeframe,
-            res.net_pips, res.win_rate_percent, res.profit_factor, res.total_trades,
+            res.net_pips, res.win_rate_percent, pf_display, res.total_trades,
             res.winning_trades, res.losing_trades, res.average_trade_duration_str)?;
     }
     writeln!(writer, "</table>")?;
 
     // --- Table 2: Sorted by Win Rate ---
     let mut sorted_by_wr = scan_results.to_vec();
-    sorted_by_wr.sort_by(|a, b| b.win_rate_percent.partial_cmp(&a.win_rate_percent).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_by_wr.sort_by(|a, b| b.win_rate_percent.partial_cmp(&a.win_rate_percent)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| b.net_pips.partial_cmp(&a.net_pips).unwrap_or(std::cmp::Ordering::Equal))); // Secondary sort by pips
     writeln!(writer, "<h2>Top Performing Combinations by Win Rate</h2><table>")?;
     writeln!(writer, "<tr><th>Rank</th><th>Symbol</th><th>Pattern TF</th><th>Win Rate (%)</th><th>Net Pips</th><th>Profit Factor</th><th>Trades</th><th>Winners</th><th>Losers</th><th>Avg. Duration</th></tr>")?;
      for (i, res) in sorted_by_wr.iter().take(25).enumerate() { // Show top 25
-        let row_class = if i == 0 { "class='best-row'" } else { "" };
-        writeln!(writer, "<tr {}><td>{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+        let row_class = if i == 0 && res.win_rate_percent > 0.0 { "class='best-row'" } else { "" }; // Highlight best only if WR > 0
+        let pf_display = if res.profit_factor.is_infinite() { "inf".to_string() } else { format!("{:.2}", res.profit_factor) };
+        writeln!(writer, "<tr {}><td>{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{:.1}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             row_class, i + 1, res.symbol, res.timeframe,
-            res.win_rate_percent, res.net_pips, res.profit_factor, res.total_trades,
+            res.win_rate_percent, res.net_pips, pf_display, res.total_trades,
             res.winning_trades, res.losing_trades, res.average_trade_duration_str)?;
     }
     writeln!(writer, "</table>")?;
@@ -107,16 +111,18 @@ pub fn generate_performance_scan_report(
     let mut sorted_by_pf = scan_results.to_vec();
     sorted_by_pf.sort_by(|a, b| {
         match (a.profit_factor.is_nan(), b.profit_factor.is_nan()) {
-            (true, true) => std::cmp::Ordering::Equal, (true, false) => std::cmp::Ordering::Greater,
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater, // NaNs go last
             (false, true) => std::cmp::Ordering::Less,
-            (false, false) => b.profit_factor.partial_cmp(&a.profit_factor).unwrap_or(std::cmp::Ordering::Equal),
+            (false, false) => b.profit_factor.partial_cmp(&a.profit_factor)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.net_pips.partial_cmp(&a.net_pips).unwrap_or(std::cmp::Ordering::Equal)), // Secondary sort by pips
         }
     });
     writeln!(writer, "<h2>Top Performing Combinations by Profit Factor</h2><table>")?;
     writeln!(writer, "<tr><th>Rank</th><th>Symbol</th><th>Pattern TF</th><th>Profit Factor</th><th>Net Pips</th><th>Win Rate (%)</th><th>Trades</th><th>Winners</th><th>Losers</th><th>Avg. Duration</th></tr>")?;
      for (i, res) in sorted_by_pf.iter().take(25).enumerate() { // Show top 25
-        let row_class = if i == 0 { "class='best-row'" } else { "" };
-        // Handle display of infinity for profit factor
+        let row_class = if i == 0 && res.profit_factor > 0.0 { "class='best-row'" } else { "" }; // Highlight best only if PF > 0
         let pf_display = if res.profit_factor.is_infinite() { "inf".to_string() } else { format!("{:.2}", res.profit_factor) };
         writeln!(writer, "<tr {}><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             row_class, i + 1, res.symbol, res.timeframe,
@@ -125,36 +131,53 @@ pub fn generate_performance_scan_report(
     }
     writeln!(writer, "</table>")?;
 
-     // --- NEW: Overall Summary of Top Performers ---
-    writeln!(writer, "<h2 class='section-header'>Strategy Portfolio Summary (Last Week)</h2>")?;
+     // --- Strategy Portfolio Summary ---
+    writeln!(writer, "<h2 class='section-header'>Strategy Portfolio Summary (Based on Profitable Combinations)</h2>")?;
     
-    // Find the single best result (Symbol/TF) by Net Pips
     let best_by_pips_overall = scan_results.iter()
-        .filter(|r| r.net_pips.is_finite()) // Exclude NaN/Infinity pips
+        .filter(|r| r.net_pips.is_finite())
         .max_by(|a, b| a.net_pips.partial_cmp(&b.net_pips).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Collect all Symbol/Timeframe combinations that were profitable (Net Pips > 0)
     let profitable_combinations: Vec<&PerformanceScanResult> = scan_results
         .iter()
-        .filter(|r| r.net_pips > 1e-9 && r.profit_factor > 1.0) // Consider PF > 1 as well
+        .filter(|r| r.net_pips > 1e-9 && r.profit_factor > 1.0)
         .collect();
-
-    let mut total_pips_from_profitable_portfolio: f64 = 0.0;
-    let mut total_trades_from_profitable_portfolio: usize = 0;
-    let mut total_wins_from_profitable_portfolio: usize = 0;
-    let mut total_losses_from_profitable_portfolio: usize = 0;
 
     if !profitable_combinations.is_empty() {
         writeln!(writer, "<p>The following Symbol/Timeframe combinations were profitable (Net Pips > 0, PF > 1.0) with SL {:.1} / TP {:.1} over the period:</p>", fixed_sl, fixed_tp)?;
         writeln!(writer, "<div class='sub-table'><table>")?;
         writeln!(writer, "<tr><th>Symbol</th><th>Pattern TF</th><th>Net Pips</th><th>Win Rate (%)</th><th>PF</th><th>Trades</th></tr>")?;
+        
+        let mut total_pips_from_profitable_portfolio: f64 = 0.0;
+        let mut total_trades_from_profitable_portfolio: usize = 0;
+        let mut total_wins_from_profitable_portfolio: usize = 0;
+        // total_losses_from_profitable_portfolio is not directly used for PF calculation here
+        // let mut total_losses_from_profitable_portfolio: usize = 0; // Not strictly needed for this summary
+        let mut portfolio_gross_profit_sum: f64 = 0.0;
+        let mut portfolio_gross_loss_sum: f64 = 0.0;
+
         for res in &profitable_combinations {
-            total_pips_from_profitable_portfolio += res.net_pips; // Summing already rounded net_pips
+            total_pips_from_profitable_portfolio += res.net_pips;
             total_trades_from_profitable_portfolio += res.total_trades;
             total_wins_from_profitable_portfolio += res.winning_trades;
-            total_losses_from_profitable_portfolio += res.losing_trades;
-            writeln!(writer, "<tr><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.2}</td><td>{:.2}</td><td>{}</td></tr>",
-                res.symbol, res.timeframe, res.net_pips, res.win_rate_percent, res.profit_factor, res.total_trades)?;
+            // total_losses_from_profitable_portfolio += res.losing_trades;
+
+            // Calculate gross profit and gross loss for each *profitable* combination
+            // Gross Profit = Wins * TP_pips
+            // Gross Loss = Losses * SL_pips
+            // Net Pips = (Wins * TP_pips) - (Losses * SL_pips)
+            // PF = (Wins * TP_pips) / (Losses * SL_pips)
+            // If PF is inf, gross_loss is 0.
+            // If PF is 0, gross_profit is 0.
+            let wins_pips = res.winning_trades as f64 * fixed_tp;
+            let losses_pips = res.losing_trades as f64 * fixed_sl;
+            
+            portfolio_gross_profit_sum += wins_pips;
+            portfolio_gross_loss_sum += losses_pips;
+
+            let pf_display = if res.profit_factor.is_infinite() { "inf".to_string() } else { format!("{:.2}", res.profit_factor) };
+            writeln!(writer, "<tr><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td><td>{}</td></tr>",
+                res.symbol, res.timeframe, res.net_pips, res.win_rate_percent, pf_display, res.total_trades)?;
         }
         writeln!(writer, "</table></div>")?;
 
@@ -162,54 +185,21 @@ pub fn generate_performance_scan_report(
             (total_wins_from_profitable_portfolio as f64 / total_trades_from_profitable_portfolio as f64) * 100.0
         } else { 0.0 };
         
-        let portfolio_gross_profit: f64 = profitable_combinations.iter().map(|r| {
-            // Estimate gross profit: NetPips + (Losses * SL) or (Wins * TP / PF) - (Losses * SL)
-            // Simpler: If WinRate > 0, (NetPips / (WR * TP - (1-WR)*SL)) * WR * TP
-            // For now, let's use a simpler approximation or just sum net pips.
-            // To calculate true portfolio PF, we'd need gross profit and gross loss sums.
-            // For simplicity in this summary, we'll report summed net pips and an average PF.
-            if r.profit_factor.is_finite() && r.profit_factor > 0.0 {
-                 r.net_pips * r.profit_factor / (r.profit_factor - 1.0) // Approximate gross profit if PF > 1
-            } else if r.net_pips > 0.0 && r.losing_trades == 0 { // All wins
-                r.net_pips
-            } else {
-                0.0
-            }
-        }).sum();
-
-        let portfolio_gross_loss: f64 = profitable_combinations.iter().map(|r| {
-             if r.profit_factor.is_finite() && r.profit_factor > 0.0 && r.profit_factor != 1.0 {
-                 r.net_pips / (r.profit_factor - 1.0) // Approximate gross loss if PF > 1 and PF != 1
-            } else if r.net_pips > 0.0 && r.losing_trades == 0 {
-                0.0
-            } else if r.net_pips < 0.0 && r.winning_trades == 0 { // All losses
-                r.net_pips.abs()
-            }
-             else { // Difficult to estimate if PF is 0 or 1 or inf without raw sums
-                if r.winning_trades > 0 && r.losing_trades > 0 {
-                    (r.winning_trades as f64 * fixed_tp) / r.profit_factor // Very rough
-                } else {
-                    0.0
-                }
-            }
-        }).sum();
-
-
-        let portfolio_pf = if portfolio_gross_loss > 1e-9 {
-            portfolio_gross_profit / portfolio_gross_loss
-        } else if portfolio_gross_profit > 1e-9 {
+        let portfolio_pf = if portfolio_gross_loss_sum > 1e-9 {
+            portfolio_gross_profit_sum / portfolio_gross_loss_sum
+        } else if portfolio_gross_profit_sum > 1e-9 {
             f64::INFINITY
         } else {
             0.0
         };
-
 
         writeln!(writer, "<h3>Portfolio Summary (Trading all profitable combinations above):</h3>")?;
         writeln!(writer, "<ul>")?;
         writeln!(writer, "<li><strong>Total Net Pips if all profitable combinations were traded: {:.1}</strong></li>", round_f64_report(total_pips_from_profitable_portfolio, 1))?;
         writeln!(writer, "<li>Total Trades from these combinations: {}</li>", total_trades_from_profitable_portfolio)?;
         writeln!(writer, "<li>Aggregate Win Rate: {:.2}%</li>", round_f64_report(portfolio_win_rate, 2))?;
-        writeln!(writer, "<li>Approximate Aggregate Profit Factor: {:.2}</li>", round_f64_report(portfolio_pf, 2))?;
+        let portfolio_pf_display = if portfolio_pf.is_infinite() { "inf".to_string() } else { format!("{:.2}", round_f64_report(portfolio_pf, 2)) };
+        writeln!(writer, "<li>Aggregate Profit Factor: {}</li>", portfolio_pf_display)?;
         writeln!(writer, "</ul>")?;
 
         if let Some(best) = best_by_pips_overall {
@@ -219,7 +209,67 @@ pub fn generate_performance_scan_report(
     } else {
         writeln!(writer, "<p>No Symbol/Timeframe combinations were profitable with SL {:.1} / TP {:.1} over the period.</p>", fixed_sl, fixed_tp)?;
     }
-    // --- End New Summary Section ---
+    // --- End Strategy Portfolio Summary Section ---
+
+    // --- NEW: Complete List of All Traded Combinations ---
+    writeln!(writer, "<h2>Complete List of All Traded Combinations</h2>")?;
+    let mut all_results_sorted = scan_results.to_vec();
+    all_results_sorted.sort_by(|a, b| {
+        a.symbol.cmp(&b.symbol)
+         .then_with(|| a.timeframe.cmp(&b.timeframe))
+    });
+
+    let mut grand_total_net_pips: f64 = 0.0;
+    let mut grand_total_trades: usize = 0;
+    let mut grand_total_winners: usize = 0;
+    let mut grand_total_gross_profit_pips: f64 = 0.0;
+    let mut grand_total_gross_loss_pips: f64 = 0.0;
+
+
+    writeln!(writer, "<table>")?;
+    writeln!(writer, "<tr><th>#</th><th>Symbol</th><th>Pattern TF</th><th>Net Pips</th><th>Win Rate (%)</th><th>Profit Factor</th><th>Trades</th><th>Winners</th><th>Losers</th><th>Avg. Duration</th></tr>")?;
+    for (idx, res) in all_results_sorted.iter().enumerate() {
+        grand_total_net_pips += res.net_pips; // net_pips is already rounded in PerformanceScanResult
+        grand_total_trades += res.total_trades;
+        grand_total_winners += res.winning_trades;
+        
+        // Recalculate gross profit/loss for overall PF
+        grand_total_gross_profit_pips += res.winning_trades as f64 * fixed_tp;
+        grand_total_gross_loss_pips += res.losing_trades as f64 * fixed_sl;
+
+        let pf_display = if res.profit_factor.is_infinite() { "inf".to_string() } else { format!("{:.2}", res.profit_factor) };
+        writeln!(writer, "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.1}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            idx + 1, res.symbol, res.timeframe, res.net_pips, res.win_rate_percent, pf_display,
+            res.total_trades, res.winning_trades, res.losing_trades, res.average_trade_duration_str)?;
+    }
+    writeln!(writer, "</table>")?;
+
+    let overall_win_rate = if grand_total_trades > 0 {
+        (grand_total_winners as f64 / grand_total_trades as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let overall_profit_factor = if grand_total_gross_loss_pips > 1e-9 {
+        grand_total_gross_profit_pips / grand_total_gross_loss_pips
+    } else if grand_total_gross_profit_pips > 1e-9 {
+        f64::INFINITY
+    } else {
+        0.0
+    };
+    let overall_pf_display = if overall_profit_factor.is_infinite() { "inf".to_string() } else { format!("{:.2}", round_f64_report(overall_profit_factor, 2)) };
+
+
+    writeln!(writer, "<div class='summary-box' style='margin-top: 20px; border-left-color: #27ae60;'>")?; // Using a different color for distinction
+    writeln!(writer, "<h3>Overall Performance (All {} Traded Combinations):</h3>", scan_results.len())?;
+    writeln!(writer, "<ul>")?;
+    writeln!(writer, "<li><strong>Total Net Pips (if every combination above was traded): {:.1}</strong></li>", round_f64_report(grand_total_net_pips, 1))?;
+    writeln!(writer, "<li>Total Trades: {}</li>", grand_total_trades)?;
+    writeln!(writer, "<li>Overall Win Rate: {:.2}%</li>", round_f64_report(overall_win_rate, 2))?;
+    writeln!(writer, "<li>Overall Profit Factor: {}</li>", overall_pf_display)?;
+    writeln!(writer, "</ul>")?;
+    writeln!(writer, "</div>")?;
+    // --- End NEW Complete List Section ---
 
 
     writeln!(writer, "<div class='footer'><p>Report Generated: {} UTC</p></div>", Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true))?;

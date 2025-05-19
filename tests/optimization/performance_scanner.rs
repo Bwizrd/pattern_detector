@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use futures::future::join_all;
 use log::{info, error, warn, debug}; // Ensure all log levels are imported
+use std::str::FromStr;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct PerformanceScanResult {
@@ -84,8 +85,17 @@ async fn run_performance_scan() -> Result<(), Box<dyn std::error::Error>> {
     info!("[PERF_SCAN] Scanning symbols: {:?}", symbols_to_scan);
     info!("[PERF_SCAN] Scanning pattern timeframes: {:?}", pattern_timeframes_to_scan);
 
-    let fixed_sl_pips = 10.0; 
-    let fixed_tp_pips = 50.0; 
+    // let fixed_sl_pips = 10.0; 
+    // let fixed_tp_pips = 50.0; 
+    let fixed_tp_pips_str = std::env::var("SCANNER_TP_PIPS").unwrap_or_else(|_| "50.0".to_string());
+    let fixed_sl_pips_str = std::env::var("SCANNER_SL_PIPS").unwrap_or_else(|_| "10.0".to_string());
+
+    let fixed_tp_pips = f64::from_str(&fixed_tp_pips_str)
+        .map_err(|e| format!("Invalid SCANNER_TP_PIPS value '{}': {}", fixed_tp_pips_str, e))?;
+    let fixed_sl_pips = f64::from_str(&fixed_sl_pips_str)
+        .map_err(|e| format!("Invalid SCANNER_SL_PIPS value '{}': {}", fixed_sl_pips_str, e))?;
+    
+    info!("[PERF_SCAN] Using Fixed SL: {} pips, Fixed TP: {} pips", fixed_sl_pips, fixed_tp_pips);
     let lot_size_to_use = 0.01;
 
     let all_scan_results_arc = Arc::new(TokioMutex::new(Vec::<PerformanceScanResult>::new()));
