@@ -161,16 +161,12 @@ pub async fn run_multi_symbol_backtest(
 ) -> Result<HttpResponse, ActixError> {
     info!("Received multi-symbol backtest request: {:?}", req.0);
 
-    // Parse allowed_trade_days from request strings to Weekday enums
-    // and get trade_end_hour_utc directly from the request.
     let parsed_allowed_days: Option<Vec<Weekday>> = parse_allowed_days(req.0.allowed_trade_days.clone());
     let parsed_trade_end_hour_utc: Option<u32> = req.0.trade_end_hour_utc;
 
     if req.0.allowed_trade_days.is_some() && parsed_allowed_days.is_none() {
         warn!("Request included allowed_trade_days, but all entries were invalid or list was empty.");
-        // Optionally, you could return a BadRequest here if strict parsing is required.
     }
-
 
     let host = std::env::var("INFLUXDB_HOST").unwrap_or_else(|_| "http://localhost:8086".to_string());
     let org = match std::env::var("INFLUXDB_ORG") {
@@ -199,11 +195,8 @@ pub async fn run_multi_symbol_backtest(
             let task_sl_pips = req.0.stop_loss_pips;
             let task_tp_pips = req.0.take_profit_pips;
             let task_lot_size = lot_size;
-
-            // Clone the parsed filter options for the task
             let task_allowed_days = parsed_allowed_days.clone();
             let task_trade_end_hour_utc = parsed_trade_end_hour_utc;
-
             let host_clone = host.clone();
             let org_clone = org.clone();
             let token_clone = token.clone();
@@ -246,7 +239,7 @@ pub async fn run_multi_symbol_backtest(
                 let mut trade_executor = TradeExecutor::new(
                     current_trade_config,
                     &task_symbol,
-                    task_allowed_days, // Pass the parsed and cloned filters
+                    task_allowed_days, 
                     task_trade_end_hour_utc
                 );
                 trade_executor.set_minute_candles(execution_candles.clone());
@@ -266,19 +259,42 @@ pub async fn run_multi_symbol_backtest(
                     let entry_dt = entry_dt_res.unwrap().with_timezone(&Utc);
                     let exit_dt = trade_internal.exit_time.as_ref().and_then(|et_str| DateTime::parse_from_rfc3339(et_str).ok() ).map(|dt| dt.with_timezone(&Utc)); 
                     
-                    let pnl_raw = trade_internal.profit_loss_pips.unwrap_or(0.0);
+                    let mut pnl_raw = trade_internal.profit_loss_pips.unwrap_or(0.0);
+
+                    // --- JPY PIP ADJUSTMENT ---
+                    // Get the main pair string, e.g., "USDJPY" from "USDJPY_SB"
+                    let main_pair_part = task_symbol.split('_').next().unwrap_or(&task_symbol);
+                    let is_jpy_pair = main_pair_part.to_uppercase().ends_with("JPY");
+
+                    if is_jpy_pair {
+                        // If profit_loss_pips was calculated assuming a 4-decimal pip (e.g., 0.0001 for EURUSD)
+                        // for JPY pairs (which use 2-decimal pip, e.g., 0.01 for USDJPY),
+                        // the reported pips will be 100 times too large.
+                        // Example: price_change = 0.50 JPY (which is 50 JPY pips)
+                        // Erroneous calculation: 0.50 / 0.0001 = 5000 "pips"
+                        // Correct calculation: 0.50 / 0.01 = 50 pips
+                        // To correct: 5000 * (0.0001 / 0.01) = 5000 * 0.01 = 50
+                        pnl_raw *= 0.01; 
+                        debug!("Adjusted PNL for JPY pair {}: original_pips_assuming_4dp={}, adjusted_pips={}", task_symbol, trade_internal.profit_loss_pips.unwrap_or(0.0), pnl_raw);
+                    }
+                    // --- END JPY PIP ADJUSTMENT ---
+                    
                     let pnl_for_individual_trade_struct = round_f64(pnl_raw, 1);
 
-                    total_pnl_pips_for_summary_raw += pnl_raw;
-                    if pnl_raw > 1e-9 { winning_trades_count += 1; total_gross_profit_pips_raw += pnl_raw; } // Use epsilon for float comparison
-                    else if pnl_raw < -1e-9 { total_gross_loss_pips_raw += pnl_raw.abs(); }
+                    total_pnl_pips_for_summary_raw += pnl_raw; // Use (potentially adjusted) pnl_raw
+                    if pnl_raw > 1e-9 { // Use epsilon for float comparison
+                        winning_trades_count += 1; 
+                        total_gross_profit_pips_raw += pnl_raw; 
+                    } else if pnl_raw < -1e-9 { // Use epsilon for float comparison
+                        total_gross_loss_pips_raw += pnl_raw.abs(); 
+                    }
                     
                     current_task_trades_result.push(IndividualTradeResult {
                         symbol: task_symbol.clone(), timeframe: task_pattern_tf.clone(),
                         direction: format!("{:?}", trade_internal.direction), entry_time: entry_dt,
                         entry_price: trade_internal.entry_price, exit_time: exit_dt,
                         exit_price: trade_internal.exit_price,
-                        pnl_pips: Some(pnl_for_individual_trade_struct),
+                        pnl_pips: Some(pnl_for_individual_trade_struct), // This now uses the adjusted and rounded value
                         exit_reason: trade_internal.exit_reason.clone(),
                         entry_day_of_week: Some(entry_dt.weekday().to_string()),
                         entry_hour_of_day: Some(entry_dt.hour()),
@@ -293,7 +309,7 @@ pub async fn run_multi_symbol_backtest(
                     total_trades: total_trades_for_summary, winning_trades: winning_trades_count,
                     losing_trades: total_trades_for_summary - winning_trades_count,
                     win_rate_percent: round_f64(win_rate, 2),
-                    total_pnl_pips: round_f64(total_pnl_pips_for_summary_raw, 1),
+                    total_pnl_pips: round_f64(total_pnl_pips_for_summary_raw, 1), // Uses sum of (potentially adjusted) raw pips
                     profit_factor: round_f64(profit_factor_val, 2),
                 };
                 (task_symbol, task_pattern_tf, current_task_trades_result, summary_for_task)
@@ -309,7 +325,7 @@ pub async fn run_multi_symbol_backtest(
         match result_outcome {
             Ok((_symbol, _pattern_tf, individual_trades_from_task, summary_from_task)) => {
                 all_individual_trades.extend(individual_trades_from_task);
-                if summary_from_task.total_trades > 0 {
+                if summary_from_task.total_trades > 0 { // Only add summary if trades occurred
                     detailed_summaries.push(summary_from_task);
                 }
             }
@@ -335,9 +351,9 @@ pub async fn run_multi_symbol_backtest(
     let mut trades_by_hour_count: HashMap<u32, usize> = HashMap::new();
     let mut pnl_by_hour_pips_sum_of_rounded: HashMap<u32, f64> = HashMap::new();
 
-    for trade in &all_individual_trades {
+    for trade in &all_individual_trades { // `trade.pnl_pips` is now corrected for JPY pairs
         overall_total_trades += 1;
-        let pnl_this_trade = trade.pnl_pips.unwrap_or(0.0);
+        let pnl_this_trade = trade.pnl_pips.unwrap_or(0.0); // This is already adjusted and rounded to 1 decimal
         
         overall_total_pnl_pips_sum_of_rounded += pnl_this_trade;
 
@@ -436,9 +452,18 @@ fn parse_allowed_days(day_strings: Option<Vec<String>>) -> Option<Vec<Weekday>> 
                     None
                 }
             })
-            .collect()
+            .collect::<Vec<Weekday>>() // Explicitly collect into Vec<Weekday>
+            // Ensure an empty vector is returned if no valid days, rather than None, if that's preferred.
+            // Or, if the vec is empty after filter_map, then map it to None if parsed_allowed_days must be None.
+            // Current behavior: if day_strings is Some but all are invalid, parsed_allowed_days will be Some(empty_vec)
+            // The check `parsed_allowed_days.is_none()` might need adjustment based on this.
+            // For now, the given logic is fine; if all day_strings are invalid, it results in Some([]).
+            // The warning "Request included allowed_trade_days, but all entries were invalid or list was empty."
+            // should ideally check if the resulting vec is empty, not if parsed_allowed_days is None.
+            // However, this is outside the scope of the JPY pip fix.
     })
 }
+
 
 impl SymbolTimeframeSummary {
     fn default_new(symbol: &str, timeframe: &str) -> Self {

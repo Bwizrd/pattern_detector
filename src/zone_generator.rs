@@ -310,6 +310,8 @@ async fn write_zones_batch(
     zones_to_store: &[StoredZone],
 ) -> Result<(), BoxedError> {
     // Return generic Box<dyn Error>
+    log::info!("[WZB_ENTRY_DEBUG] Writing batch for symbol: '{}', timeframe: '{}', pattern: '{}'",
+        symbol, timeframe, pattern);
     if zones_to_store.is_empty() {
         info!(
             "No zones provided to write_zones_batch for {}/{}",
@@ -656,7 +658,7 @@ pub async fn run_zone_generation(
 
     let http_client = Client::new();
 
-    let discovered_symbols = fetch_distinct_tag_values(
+    let discovered_symbols_from_fetch = fetch_distinct_tag_values(
         &http_client,
         &host,
         &org,
@@ -666,9 +668,36 @@ pub async fn run_zone_generation(
         "symbol",
     )
     .await?;
-    if discovered_symbols.is_empty() {
-        return Err("No symbols found in trendbar measurement.".into());
+    if discovered_symbols_from_fetch.is_empty() {
+        info!("[RZG] No symbols found in trendbar measurement '{}'. Zone generation will not proceed.", trendbar_measurement);
+        return Ok(());
     }
+
+    log::info!("[RZG_DEBUG] Initially discovered {} symbols from trendbar: {:?}",
+        discovered_symbols_from_fetch.len(),
+        discovered_symbols_from_fetch // Log all symbols found BEFORE filtering
+    );
+
+    let filtered_discovered_symbols: Vec<String> = discovered_symbols_from_fetch // Use the fetched list
+        .into_iter()
+        .filter(|s| {
+            let ends_with_sb = s.ends_with("_SB");
+            // Optional: Very verbose trace logging for each symbol being checked by the filter
+            // log::trace!("[RZG_SYMBOL_FILTER_TRACE] Checking symbol: '{}', ends_with_SB: {}", s, ends_with_sb);
+            ends_with_sb
+        })
+        .collect();
+
+    // Check after filtering
+    if filtered_discovered_symbols.is_empty() {
+        log::warn!("[RZG] After filtering, no symbols ending with _SB remain from trendbar measurement '{}'. Zone generation will not proceed for any symbols.", trendbar_measurement);
+        return Ok(());
+    }
+    // THIS IS THE CRITICAL LOG: It shows what symbols will actually be processed.
+    log::info!("[RZG_DEBUG] Will process the following {} _SB symbols: {:?}",
+        filtered_discovered_symbols.len(),
+        filtered_discovered_symbols
+    );
 
     let all_timeframes = fetch_distinct_tag_values(
         &http_client,
@@ -705,11 +734,11 @@ pub async fn run_zone_generation(
         return Err("No supported timeframes (1m-1d, excluding GENERATOR_EXCLUDE_TIMEFRAMES) found after filtering.".into());
         // MODIFIED: Clarified error
     }
-    info!("Will process symbols: {:?}", discovered_symbols);
+    info!("Will process symbols: {:?}", filtered_discovered_symbols);
     info!("Will process timeframes: {:?}", allowed_timeframes);
 
     let mut all_combinations = Vec::new();
-    for symbol in discovered_symbols.iter() {
+    for symbol in filtered_discovered_symbols.iter() {
         for timeframe in allowed_timeframes.iter() {
             for pattern_name in patterns.iter() {
                 all_combinations.push((symbol.clone(), timeframe.clone(), pattern_name.clone()));
@@ -802,6 +831,9 @@ async fn process_symbol_timeframe_pattern(
     influx_org: &str,
     influx_token: &str,
 ) -> Result<(), BoxedError> {
+    // Add this log at the very top:
+    log::info!("[PSP_ENTRY_DEBUG] Processing with symbol: '{}', timeframe: '{}', pattern: '{}'",
+        symbol, timeframe, pattern_name);
     let chart_query = ChartQuery {
         symbol: symbol.to_string(),
         timeframe: timeframe.to_string(),
