@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Zone Monitor</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; color: #333; display: flex; flex-direction: column; align-items: center; }
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 10px; }
+        .connection-status { text-align: center; width: 100%; max-width: 900px; margin-bottom: 15px; padding: 10px; background-color: #e9ecef; border-radius: 5px; font-size: 0.9em; }
+        .status-connected { color: #28a745; font-weight: bold; }
+        .status-disconnected { color: #dc3545; font-weight: bold; }
+
+        .main-content { display: flex; flex-direction: column; align-items: center; width: 100%; }
+        
+        .price-container {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            width: 100%;
+            max-width: 900px;
+        }
+        .price-container h2 { margin-top: 0; color: #495057; text-align: center; font-size: 1.2em; }
+        #priceList { list-style-type: none; padding: 0; column-count: 2; -webkit-column-count: 2; -moz-column-count: 2; column-gap: 20px; -webkit-column-gap: 20px; -moz-column-gap: 20px; }
+        #priceList li { padding: 3px 0; font-size: 0.85em; border-bottom: 1px solid #eee; }
+        #priceList li:last-child { border-bottom: none; }
+
+        .zone-container { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; width: 100%; max-width: 1280px;}
+        .zone {
+            background-color: #ffffff;
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            padding: 15px;
+            width: 280px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.08);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+            font-size: 0.85em;
+        }
+        .zone:hover { transform: translateY(-3px); box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
+        .zone h3 { margin-top: 0; margin-bottom: 10px; color: #007bff; font-size: 1.1em; word-break: break-all; }
+        .zone p { margin: 4px 0; }
+        .zone .label { font-weight: 600; color: #6c757d; }
+        .zone .value { color: #495057; }
+        .zone.supply { border-left: 5px solid #e74c3c; } /* Red for supply */
+        .zone.demand { border-left: 5px solid #2ecc71; } /* Green for demand */
+        .status-active { color: #28a745; font-weight: bold; }
+        .status-inactive { color: #dc3545; font-weight: bold; opacity: 0.7; }
+        
+        /* Style for clickable zone ID */
+        .clickable-zone-id {
+            cursor: pointer;
+            text-decoration: underline;
+            color: #0056b3; /* A slightly different blue to indicate clickability */
+            word-break: break-all; /* Ensure long IDs wrap */
+        }
+        .clickable-zone-id:hover {
+            color: #003d80;
+        }
+        .copy-feedback { /* For a small "Copied!" message */
+            font-size: 0.8em;
+            color: green;
+            margin-left: 5px;
+            display: inline-block; /* To sit next to the ID */
+        }
+    </style>
+</head>
+<body>
+    <h1>Real-Time Zone Monitor</h1>
+    <div class="connection-status" id="connectionStatus">Connecting to WebSocket...</div>
+
+    <div class="main-content">
+        <div class="price-container">
+            <h2>Live Prices</h2>
+            <ul id="priceList"></ul>
+        </div>
+
+        <div class="zone-container" id="zoneContainer">
+            <!-- Zones will be dynamically inserted here -->
+        </div>
+    </div>
+
+    <script>
+        const zoneContainer = document.getElementById('zoneContainer');
+        const connectionStatusEl = document.getElementById('connectionStatus');
+        const priceListEl = document.getElementById('priceList');
+        const RUST_API_BASE_URL = 'http://localhost:8080';
+        const TS_WEBSOCKET_URL = 'ws://localhost:8081';
+
+        let activeZones = {}; 
+        let currentPrices = {}; 
+
+        const CURRENCIES_MAP_JS = [
+          { name: "EURUSD_SB", value: 185 }, { name: "GBPUSD_SB", value: 199 },
+          { name: "USDJPY_SB", value: 226 }, { name: "USDCHF_SB", value: 222 },
+          { name: "AUDUSD_SB", value: 158 }, { name: "USDCAD_SB", value: 221 },
+          { name: "NZDUSD_SB", value: 211 }, { name: "EURGBP_SB", value: 175 },
+          { name: "EURJPY_SB", value: 177 }, { name: "EURCHF_SB", value: 173 },
+          { name: "EURAUD_SB", value: 171 }, { name: "EURCAD_SB", value: 172 },
+          { name: "EURNZD_SB", value: 180 }, { name: "GBPJPY_SB", value: 192 },
+          { name: "GBPCHF_SB", value: 191 }, { name: "GBPAUD_SB", value: 189 },
+          { name: "GBPCAD_SB", value: 190 }, { name: "GBPNZD_SB", value: 195 },
+          { name: "AUDJPY_SB", value: 155 }, { name: "AUDNZD_SB", value: 156 },
+          { name: "AUDCAD_SB", value: 153 }, { name: "NZDJPY_SB", value: 210 },
+          { name: "CADJPY_SB", value: 162 }, { name: "CHFJPY_SB", value: 163 },
+          { name: "NAS100_SB", value: 205 }, { name: "US500_SB", value: 220 },
+        ];
+
+        function getSymbolIdFromName(symbolName) {
+            const entry = CURRENCIES_MAP_JS.find(c => c.name === symbolName);
+            return entry ? entry.value : null;
+        }
+
+        function updateConnectionStatus(isConnected, message = '') {
+            if (isConnected) {
+                connectionStatusEl.textContent = message || 'WebSocket Connected';
+                connectionStatusEl.className = 'connection-status status-connected';
+            } else {
+                connectionStatusEl.textContent = message || 'WebSocket Disconnected. Retrying...';
+                connectionStatusEl.className = 'connection-status status-disconnected';
+            }
+        }
+
+        function copyToClipboard(text, targetElement) {
+            navigator.clipboard.writeText(text).then(() => {
+                console.log('Zone ID copied to clipboard:', text);
+                const originalText = targetElement.textContent;
+                targetElement.textContent = 'Copied!';
+                targetElement.classList.add('copy-feedback');
+                setTimeout(() => {
+                    targetElement.textContent = originalText;
+                    targetElement.classList.remove('copy-feedback');
+                }, 1500); // Revert after 1.5 seconds
+            }).catch(err => {
+                console.error('Failed to copy Zone ID: ', err);
+                alert('Failed to copy ID. See console for details.');
+            });
+        }
+
+        function renderZone(zoneData) {
+            const zoneId = zoneData.zone_id || `unknown-${Date.now()}`; // Use full zoneId for logic
+            const displayZoneId = zoneData.zone_id || 'N/A'; // For display
+
+            let zoneDiv = document.getElementById(zoneId);
+            let isNew = false;
+            if (!zoneDiv) {
+                isNew = true;
+                zoneDiv = document.createElement('div');
+                zoneDiv.id = zoneId; // Use full zoneId as the element ID
+            }
+            
+            const actualZoneType = zoneData.type || zoneData.zone_type;
+            const zoneTypeClass = actualZoneType?.toLowerCase().includes('supply') ? 'supply' : 'demand';
+            
+            zoneDiv.className = 'zone'; 
+            zoneDiv.classList.add(zoneTypeClass);
+
+            if (!zoneData.is_active) {
+                 zoneDiv.style.opacity = "0.6";
+                 zoneDiv.style.backgroundColor = "#f8f9fa";
+            } else {
+                 zoneDiv.style.opacity = "1";
+                 zoneDiv.style.backgroundColor = "#ffffff";
+            }
+
+            const priceDecimalPlaces = zoneData.symbol?.includes("JPY") ? 3 : 5;
+            const priceInfo = currentPrices[zoneData.symbol];
+            const currentClosePrice = priceInfo ? priceInfo.close : null;
+
+            let proximalLineDisplay = 'N/A';
+            let distalLineDisplay = 'N/A';
+            let proximalLineValue; 
+            let distanceToProximal = 'N/A';
+
+            if (typeof zoneData.zone_low === 'number' && typeof zoneData.zone_high === 'number') {
+                if (zoneTypeClass === 'supply') {
+                    proximalLineValue = zoneData.zone_low;
+                    proximalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
+                    distalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
+                    if (currentClosePrice !== null && zoneData.is_active) {
+                        distanceToProximal = (currentClosePrice - proximalLineValue).toFixed(priceDecimalPlaces);
+                    }
+                } else if (zoneTypeClass === 'demand') {
+                    proximalLineValue = zoneData.zone_high;
+                    proximalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
+                    distalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
+                    if (currentClosePrice !== null && zoneData.is_active) {
+                        distanceToProximal = (proximalLineValue - currentClosePrice).toFixed(priceDecimalPlaces);
+                    }
+                }
+            }
+            
+            const slPips = 4.0;
+            const tpPips = 70.0;
+            const pipFactor = zoneData.symbol?.includes("JPY") ? 0.01 : 0.0001;
+            let slPrice = 'N/A';
+            let tpPrice = 'N/A';
+
+            if (zoneData.is_active) {
+                if (zoneTypeClass === 'supply' && typeof zoneData.zone_high === 'number' && typeof zoneData.zone_low === 'number') {
+                    slPrice = (zoneData.zone_high + slPips * pipFactor).toFixed(priceDecimalPlaces);
+                    tpPrice = (zoneData.zone_low - tpPips * pipFactor).toFixed(priceDecimalPlaces);
+                } else if (zoneTypeClass === 'demand' && typeof zoneData.zone_low === 'number' && typeof zoneData.zone_high === 'number') {
+                    slPrice = (zoneData.zone_low - slPips * pipFactor).toFixed(priceDecimalPlaces);
+                    tpPrice = (zoneData.zone_high + tpPips * pipFactor).toFixed(priceDecimalPlaces);
+                }
+            }
+
+            // Make zone ID clickable
+            const zoneIdHTML = `<span class="clickable-zone-id" title="Click to copy ID">${displayZoneId}</span>`;
+
+            zoneDiv.innerHTML = `
+                <h3>${zoneData.symbol || 'N/A'} - ${zoneData.timeframe || 'N/A'} (${zoneTypeClass})</h3>
+                <p><span class="label">ID:</span> <span class="value" id="zoneIdValue-${zoneId}">${zoneIdHTML}</span></p>
+                <p><span class="label">Range:</span> <span class="value">${(typeof zoneData.zone_low === 'number' ? zoneData.zone_low.toFixed(priceDecimalPlaces) : 'N/A')} - ${(typeof zoneData.zone_high === 'number' ? zoneData.zone_high.toFixed(priceDecimalPlaces) : 'N/A')}</span></p>
+                <p><span class="label">Proximal:</span> <span class="value">${proximalLineDisplay}</span></p>
+                <p><span class="label">Distal:</span> <span class="value">${distalLineDisplay}</span></p>
+                <p><span class="label">Formed:</span> <span class="value">${zoneData.start_time ? new Date(zoneData.start_time).toLocaleString() : 'N/A'}</span></p>
+                <p><span class="label">Status:</span> <span class="value ${zoneData.is_active ? 'status-active' : 'status-inactive'}">${zoneData.is_active ? 'Active' : 'Inactive'}</span></p>
+                <p><span class="label">Touches:</span> <span class="value" id="touches-${zoneId}">${zoneData.touch_count === null || zoneData.touch_count === undefined ? '0' : zoneData.touch_count}</span></p>
+                <p><span class="label">Current Price:</span> <span class="value" id="price-display-${zoneId}">${currentClosePrice?.toFixed(priceDecimalPlaces) || 'N/A'}</span></p>
+                <p><span class="label">Distance to Proximal:</span> <span class="value" id="dist-${zoneId}">${distanceToProximal}</span></p>
+                <p><span class="label">SL (Approx):</span> <span class="value">${slPrice}</span></p>
+                <p><span class="label">TP (Approx):</span> <span class="value">${tpPrice}</span></p>
+            `;
+
+            if (isNew) {
+                zoneContainer.appendChild(zoneDiv);
+            }
+            
+            // Add click listener for copying AFTER innerHTML is set
+            const zoneIdElement = zoneDiv.querySelector(`#zoneIdValue-${zoneId} .clickable-zone-id`);
+            if (zoneIdElement) {
+                zoneIdElement.onclick = function() {
+                    copyToClipboard(displayZoneId, this);
+                };
+            }
+            return zoneDiv;
+        }
+
+        async function fetchInitialZonesAndSubscribe(wsInstance) {
+            try {
+                const response = await fetch(`${RUST_API_BASE_URL}/ui/active-zones`);
+                if (!response.ok) {
+                    console.error('Failed to fetch initial zones:', response.status, await response.text());
+                    zoneContainer.innerHTML = `<p>Error loading initial zones. Status: ${response.status}</p>`;
+                    return;
+                }
+                const zones = await response.json();
+                zoneContainer.innerHTML = ''; 
+                activeZones = {}; 
+                const symbolsToSubscribeForWSS = new Set();
+
+                if (zones && zones.length > 0) {
+                    zones.forEach(zone => {
+                        if (zone.zone_id) { // Ensure zone_id exists
+                            const elem = renderZone(zone); // renderZone now returns the element
+                            activeZones[zone.zone_id] = { zoneData: zone, element: elem }; // Store element too
+                            if (zone.symbol) {
+                                symbolsToSubscribeForWSS.add(zone.symbol);
+                            }
+                        } else {
+                            console.warn("Zone data missing zone_id:", zone);
+                        }
+                    });
+                } else {
+                    zoneContainer.innerHTML = '<p>No active zones found initially.</p>';
+                }
+                console.log('Initial zones loaded:', activeZones);
+
+                if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+                    console.log("Attempting to subscribe to symbols on WebSocket:", Array.from(symbolsToSubscribeForWSS));
+                    symbolsToSubscribeForWSS.forEach(symbolName => {
+                        const symbolId = getSymbolIdFromName(symbolName);
+                        if (symbolId) {
+                            const timeframeForPriceSubscription = "1m";
+                            console.log(`Sending SUBSCRIBE for ${symbolName} (ID: ${symbolId}), Timeframe: ${timeframeForPriceSubscription} for price updates.`);
+                            wsInstance.send(JSON.stringify({
+                                type: "SUBSCRIBE",
+                                symbolId: symbolId,
+                                timeframe: timeframeForPriceSubscription
+                            }));
+                        } else {
+                            console.warn(`Could not find symbolId for ${symbolName} to subscribe via WebSocket.`);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error fetching initial zones or subscribing:', error);
+                zoneContainer.innerHTML = '<p>Error loading initial zones (catch block).</p>';
+            }
+        }
+
+        function connectWebSocket() {
+            const ws = new WebSocket(TS_WEBSOCKET_URL);
+
+            ws.onopen = () => {
+                console.log('Connected to TypeScript WebSocket server.');
+                updateConnectionStatus(true, 'WebSocket Connected to Price Stream');
+                fetchInitialZonesAndSubscribe(ws);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+
+                    if (message.type === 'BAR_UPDATE' && message.data) {
+                        const bar = message.data;
+                        
+                        if (bar.timeframe === "1m") { 
+                            currentPrices[bar.symbol] = { close: bar.close, time: bar.time };
+
+                            let symbolPriceLi = document.getElementById(`price-${bar.symbol}`);
+                            if (!symbolPriceLi) {
+                                symbolPriceLi = document.createElement('li');
+                                symbolPriceLi.id = `price-${bar.symbol}`;
+                                priceListEl.appendChild(symbolPriceLi);
+                            }
+                            const priceDecimalPlacesList = bar.symbol?.includes("JPY") ? 3 : 5;
+                            symbolPriceLi.textContent = `${bar.symbol}: ${bar.close.toFixed(priceDecimalPlacesList)} (at ${new Date(bar.time).toLocaleTimeString()})`;
+
+                            Object.values(activeZones).forEach(activeZoneEntry => {
+                                if (activeZoneEntry.zoneData.symbol === bar.symbol) {
+                                    renderZone(activeZoneEntry.zoneData); 
+                                }
+                            });
+                        }
+                    } else if (message.type === 'SUBSCRIPTION_CONFIRMED') {
+                        console.log(`Subscription confirmed by TS WSS: SymbolID ${message.symbolId}, Timeframe ${message.timeframe}`);
+                    } else if (message.type === 'ZONE_EVENT' && message.zone_id) {
+                        console.log('Received ZONE_EVENT:', message);
+                        const zoneIdToUpdate = message.zone_id;
+                        
+                        if (activeZones[zoneIdToUpdate]) {
+                            if (message.zone) { 
+                                activeZones[zoneIdToUpdate].zoneData = { ...activeZones[zoneIdToUpdate].zoneData, ...message.zone };
+                            } else { 
+                                if (message.eventType === "ZONE_INVALIDATED") {
+                                    activeZones[zoneIdToUpdate].zoneData.is_active = false;
+                                    if (message.invalidation_time) activeZones[zoneIdToUpdate].zoneData.invalidation_time = message.invalidation_time;
+                                } else if (message.eventType?.includes("TOUCH")) { 
+                                    if (typeof message.new_touch_count === 'number') {
+                                        activeZones[zoneIdToUpdate].zoneData.touch_count = message.new_touch_count;
+                                    }
+                                }
+                            }
+                            renderZone(activeZones[zoneIdToUpdate].zoneData); 
+
+                            if(message.eventType === "FIRST_TOUCH_TRADE_ATTEMPTED"){
+                                const zone = activeZones[zoneIdToUpdate].zoneData;
+                                alert(`Trade Attempted for Zone: ${zone.zone_id?.substring(0,12)}... (${zone.symbol})`);
+                            }
+                        } else if (message.eventType?.includes("FORMED") && message.zone) { 
+                             const newZoneData = message.zone;
+                             if (newZoneData.zone_id) {
+                                const elem = renderZone(newZoneData);
+                                activeZones[newZoneData.zone_id] = { zoneData: newZoneData, element: elem };
+                             }
+                        }
+                    } else if (message.type === 'HOT_ZONES_UPDATE' && message.zones) {
+                        console.log('Received HOT_ZONES_UPDATE:', message.zones);
+                    }
+
+                } catch (error) {
+                    console.error('Error processing WebSocket message:', error, event.data);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected from TypeScript WebSocket server. Attempting to reconnect...');
+                updateConnectionStatus(false);
+                setTimeout(connectWebSocket, 5000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus(false, 'WebSocket Error');
+            };
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>

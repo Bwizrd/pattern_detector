@@ -35,6 +35,10 @@ pub struct TouchPoint {
 pub struct EnrichedZone {
     // --- Fields typically set by the recognizer ---
     pub zone_id: Option<String>, // Unique ID for the zone
+    #[serde(skip_serializing_if = "Option::is_none")] // Add this for consistency
+    pub symbol: Option<String>, // <<< ADDED
+    #[serde(skip_serializing_if = "Option::is_none")] // Add this for consistency
+    pub timeframe: Option<String>, // <<< ADDED
     pub start_idx: Option<u64>,  // Index of the first candle forming the zone
     pub end_idx: Option<u64>,    // Index of the LAST candle forming the zone (e.g., the big bar)
     pub start_time: Option<String>, // ISO 8601 format string of start_idx candle
