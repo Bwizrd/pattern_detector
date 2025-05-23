@@ -1,4 +1,4 @@
 /target
 .env
 /reports
-logs/backend.log
+logs/backend.logdetected_raw_zones.txt
