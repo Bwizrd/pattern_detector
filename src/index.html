@@ -39,13 +39,15 @@
             padding: 15px; width: 280px; box-shadow: 0 2px 5px rgba(0,0,0,0.08);
             transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out; font-size: 0.85em;
         }
-        .zone:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
+        .zone:hover { transform: translateY(-3px); box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
         .zone h3 { margin-top: 0; margin-bottom: 10px; color: #007bff; font-size: 1.1em; word-break: break-all; }
         .zone p { margin: 4px 0; }
         .zone .label { font-weight: 600; color: #6c757d; }
         .zone .value { color: #495057; }
         .zone.supply { border-left: 5px solid #e74c3c; } 
         .zone.demand { border-left: 5px solid #2ecc71; } 
+        .zone.touched { background-color: #fff3cd !important; border-color: #856404 !important; }
+        .zone.invalidated { background-color: #f8d7da !important; border-color: #721c24 !important; opacity: 0.7; }
         .status-active { color: #28a745; font-weight: bold; }
         .status-inactive { color: #dc3545; font-weight: bold; opacity: 0.7; }
         .clickable-zone-id { cursor: pointer; text-decoration: underline; color: #0056b3; word-break: break-all; }
@@ -94,6 +96,7 @@
 
         let activeTradeableZones = {}; // { zone_id: { zoneData, element, distancePips } }
         let currentPrices = {}; // { symbol: { close: price, time: timestamp_str } }
+        let allLatestZones = []; // Store all latest zones for sorting
 
         const CURRENCIES_MAP_JS = [
           { name: "EURUSD_SB", value: 185 }, { name: "GBPUSD_SB", value: 199 },
@@ -123,6 +126,39 @@
             } else {
                 connectionStatusEl.textContent = message || 'WebSocket Disconnected. Retrying...';
                 connectionStatusEl.className = 'connection-status status-disconnected';
+            }
+        }
+
+        function calculateStandardizedDistance(currentPrice, zoneLow, zoneHigh, zoneType, pipFactor) {
+            // Standardized distance calculation:
+            // Negative = moving towards proximal (approaching zone)
+            // Positive = inside zone or beyond distal (invalidated)
+            
+            if (zoneType === 'supply') {
+                // Supply zone: proximal = zone_low, distal = zone_high
+                // Negative when price is below proximal (approaching from below)
+                // Positive when price is above proximal (inside zone or beyond)
+                return (currentPrice - zoneLow) / pipFactor;
+            } else {
+                // Demand zone: proximal = zone_high, distal = zone_low  
+                // Negative when price is above proximal (approaching from above)
+                // Positive when price is below proximal (inside zone or beyond)
+                return (zoneHigh - currentPrice) / pipFactor;
+            }
+        }
+
+        function checkZoneStatus(currentPrice, zoneLow, zoneHigh, zoneType) {
+            // Check if price has invalidated the zone (gone beyond distal)
+            if (zoneType === 'supply') {
+                // Supply invalidated if price goes above distal (zone_high)
+                if (currentPrice > zoneHigh) return 'invalidated';
+                if (currentPrice >= zoneLow && currentPrice <= zoneHigh) return 'touched';
+                return 'active';
+            } else {
+                // Demand invalidated if price goes below distal (zone_low)
+                if (currentPrice < zoneLow) return 'invalidated';
+                if (currentPrice >= zoneLow && currentPrice <= zoneHigh) return 'touched';
+                return 'active';
             }
         }
         
@@ -187,26 +223,48 @@
                 const currentClosePrice = priceInfo ? priceInfo.close : null;
 
                 let proximalLineDisplay = 'N/A', distalLineDisplay = 'N/A', distanceToProximalPips = 'N/A';
-                let proximalLineValue;
+                let proximalLineValue, zoneStatus = 'active';
 
                 if (typeof zoneData.zone_low === 'number' && typeof zoneData.zone_high === 'number') {
                     if (zoneTypeClass === 'supply') {
                         proximalLineValue = zoneData.zone_low;
                         proximalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
                         distalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
-                        // FIXED: Removed the zoneData.is_active condition - calculate distance for all zones
-                        if (currentClosePrice !== null) {
-                            distanceToProximalPips = ((currentClosePrice - proximalLineValue) / pipFactor).toFixed(1);
-                        }
                     } else if (zoneTypeClass === 'demand') {
                         proximalLineValue = zoneData.zone_high;
                         proximalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
                         distalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
-                        // FIXED: Removed the zoneData.is_active condition - calculate distance for all zones
-                        if (currentClosePrice !== null) {
-                            distanceToProximalPips = ((proximalLineValue - currentClosePrice) / pipFactor).toFixed(1);
+                    }
+
+                    // Calculate standardized distance and check zone status
+                    if (currentClosePrice !== null) {
+                        const distance = calculateStandardizedDistance(
+                            currentClosePrice, 
+                            zoneData.zone_low, 
+                            zoneData.zone_high, 
+                            zoneTypeClass, 
+                            pipFactor
+                        );
+                        distanceToProximalPips = distance.toFixed(1);
+                        
+                        zoneStatus = checkZoneStatus(
+                            currentClosePrice,
+                            zoneData.zone_low,
+                            zoneData.zone_high,
+                            zoneTypeClass
+                        );
+                        
+                        if (zoneStatus === 'invalidated') {
+                            distanceToProximalPips = 'INVALIDATED';
                         }
                     }
+                }
+
+                // Apply visual styling based on zone status
+                if (zoneStatus === 'touched') {
+                    zoneDiv.classList.add('touched');
+                } else if (zoneStatus === 'invalidated') {
+                    zoneDiv.classList.add('invalidated');
                 }
                 
                 const slPips = 4.0, tpPips = 70.0;
@@ -263,6 +321,51 @@
                 targetContainerElement.appendChild(errorDiv);
                 return errorDiv;
             }
+        }
+
+        function renderSortedLatestZones() {
+            if (!allLatestZones || allLatestZones.length === 0) {
+                newZonesTodayContainer.innerHTML = '<p>No zones found in the recent window.</p>';
+                return;
+            }
+
+            // Calculate distances and sort by proximity to proximal
+            const zonesWithDistance = allLatestZones.map(zone => {
+                let distancePips = null;
+                const currentPrice = currentPrices[zone.symbol]?.close;
+                
+                if (currentPrice && typeof zone.zone_low === 'number' && typeof zone.zone_high === 'number') {
+                    const pipFactor = zone.symbol?.includes("JPY") ? 0.01 : 0.0001;
+                    const actualZoneType = zone.type || zone.zone_type || "";
+                    const zoneTypeClass = actualZoneType.toLowerCase().includes('supply') ? 'supply' : 'demand';
+                    
+                    distancePips = calculateStandardizedDistance(
+                        currentPrice,
+                        zone.zone_low,
+                        zone.zone_high,
+                        zoneTypeClass,
+                        pipFactor
+                    );
+                }
+                
+                return { ...zone, calculatedDistance: distancePips };
+            });
+
+            // Sort by distance (closest to proximal first)
+            zonesWithDistance.sort((a, b) => {
+                const distA = a.calculatedDistance;
+                const distB = b.calculatedDistance;
+                if (distA === null && distB === null) return 0;
+                if (distA === null) return 1;
+                if (distB === null) return -1;
+                return Math.abs(distA) - Math.abs(distB);
+            });
+
+            // Clear and render sorted zones
+            newZonesTodayContainer.innerHTML = '';
+            zonesWithDistance.forEach(zone => {
+                renderZoneToDOM(zone, newZonesTodayContainer);
+            });
         }
 
         async function fetchAndDisplayInitialData(wsInstance) {
@@ -355,24 +458,28 @@
                             await new Promise(resolve => setTimeout(resolve, 1000));
                         }
                         
-                        // Second pass: render the zones
-                        newZones.forEach(zone => {
-                            renderZoneToDOM(zone, newZonesTodayContainer); 
-                        });
+                        // Store all latest zones for sorting
+                        allLatestZones = newZones || [];
+                        
+                        // Sort and render zones
+                        renderSortedLatestZones();
                     } else {
                         newZonesTodayContainer.innerHTML = '<p>No new zones found in the recent window.</p>';
+                        allLatestZones = [];
                     }
                     console.log('Latest formed zones loaded:', newZones ? newZones.length : 0);
                 } else {
                     const errorText = await newZonesResponse.text();
                     console.error('Failed to fetch latest formed zones:', newZonesResponse.status, errorText);
                     newZonesTodayContainer.innerHTML = `<p>Error loading latest formed zones. Status: ${newZonesResponse.status}</p>`;
-                     if (newZonesTitleEl) newZonesTitleEl.textContent = "Latest Formed Zones (Error)";
+                    if (newZonesTitleEl) newZonesTitleEl.textContent = "Latest Formed Zones (Error)";
+                    allLatestZones = [];
                 }
             } catch (error) {
                 console.error('Error fetching latest formed zones:', error);
                 newZonesTodayContainer.innerHTML = '<p>Error loading latest formed zones (catch block).</p>';
                 if (newZonesTitleEl) newZonesTitleEl.textContent = "Latest Formed Zones (Error)";
+                allLatestZones = [];
             }
 
             if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
@@ -403,7 +510,7 @@
             
             zonesArrayForSorting.forEach(activeZoneEntry => {
                 const zd = activeZoneEntry.zoneData;
-                const actualZT = zd.type || zd.zone_type; // Check 'type' first, then 'zone_type'
+                const actualZT = zd.type || zd.zone_type;
                 const ztc = actualZT?.toLowerCase().includes('supply') ? 'supply' : 'demand';
                 const pcf = zd.symbol?.includes("JPY") ? 0.01 : 0.0001;
                 let newDistPips = null;
@@ -411,18 +518,19 @@
 
                 if (typeof zd.zone_low === 'number' && typeof zd.zone_high === 'number' && 
                     currentPriceForZone !== undefined && currentPriceForZone !== null && zd.is_active) {
-                    let pLineVal;
-                    if (ztc === 'supply') {
-                        pLineVal = zd.zone_low;
-                        newDistPips = parseFloat(((currentPriceForZone - pLineVal) / pcf).toFixed(1));
-                    } else if (ztc === 'demand') {
-                        pLineVal = zd.zone_high;
-                        newDistPips = parseFloat(((pLineVal - currentPriceForZone) / pcf).toFixed(1));
-                    }
+                    
+                    newDistPips = calculateStandardizedDistance(
+                        currentPriceForZone,
+                        zd.zone_low,
+                        zd.zone_high,
+                        ztc,
+                        pcf
+                    );
                 }
                 activeZoneEntry.distancePips = newDistPips;
             });
 
+            // Sort by distance to proximal (closest first, regardless of sign)
             zonesArrayForSorting.sort((a, b) => {
                 const distA = a.distancePips;
                 const distB = b.distancePips;
@@ -468,15 +576,29 @@
                             
                             // Determine if supply or demand based on the title
                             const isSupply = zoneTitle.textContent.includes('(supply)');
-                            let distancePips = 'N/A';
+                            const zoneTypeClass = isSupply ? 'supply' : 'demand';
                             
-                            if (isSupply) {
-                                distancePips = ((currentPrice - zoneLow) / pipFactor).toFixed(1);
+                            const distance = calculateStandardizedDistance(
+                                currentPrice,
+                                zoneLow,
+                                zoneHigh,
+                                zoneTypeClass,
+                                pipFactor
+                            );
+                            
+                            const zoneStatus = checkZoneStatus(currentPrice, zoneLow, zoneHigh, zoneTypeClass);
+                            
+                            // Update visual styling
+                            zoneCard.classList.remove('touched', 'invalidated');
+                            if (zoneStatus === 'touched') {
+                                zoneCard.classList.add('touched');
+                                distDisplay.textContent = `${distance.toFixed(1)} pips`;
+                            } else if (zoneStatus === 'invalidated') {
+                                zoneCard.classList.add('invalidated');
+                                distDisplay.textContent = 'INVALIDATED';
                             } else {
-                                distancePips = ((zoneHigh - currentPrice) / pipFactor).toFixed(1);
+                                distDisplay.textContent = `${distance.toFixed(1)} pips`;
                             }
-                            
-                            distDisplay.textContent = `${distancePips} pips`;
                         }
                     }
                 }
@@ -513,6 +635,11 @@
                             // Update all zones that use this symbol, not just tradeable ones
                             updateAllZonesForSymbol(bar.symbol);
                             reRenderTradeableZonesAndSort();
+                            
+                            // Re-sort latest zones if needed
+                            if (allLatestZones.length > 0) {
+                                renderSortedLatestZones();
+                            }
                         }
                     } else if (message.type === 'SUBSCRIPTION_CONFIRMED') {
                         console.log(`Subscription confirmed by TS WSS: SymbolID ${message.symbolId}, Timeframe ${message.timeframe}`);
