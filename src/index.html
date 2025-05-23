@@ -59,6 +59,19 @@
             transition: all 0.3s ease;
             transform: scale(1.05);
         }
+        .filter-controls { 
+            background: #f8f9fa; 
+            padding: 10px; 
+            border-radius: 5px; 
+            border: 1px solid #dee2e6;
+            text-align: center; 
+            margin-bottom: 15px;
+        }
+        .filter-controls label {
+            font-weight: 500;
+            cursor: pointer;
+            margin-right: 15px;
+        }
     </style>
 </head>
 <body>
@@ -79,6 +92,17 @@
         </div>
 
         <h2 class="zone-section-title" id="newZonesTitle">Latest Formed Zones (Recent Window)</h2>
+        <div class="filter-controls">
+            <label>
+                <input type="radio" name="zoneFilter" value="active" checked> Active
+            </label>
+            <label>
+                <input type="radio" name="zoneFilter" value="inactive"> Inactive
+            </label>
+            <label>
+                <input type="radio" name="zoneFilter" value="all"> All
+            </label>
+        </div>
         <div class="zone-container" id="newZonesTodayContainer">
             <p>Loading latest formed zones...</p>
         </div>
@@ -113,6 +137,21 @@
           { name: "CADJPY_SB", value: 162 }, { name: "CHFJPY_SB", value: 163 },
           { name: "NAS100_SB", value: 205 }, { name: "US500_SB", value: 220 },
         ];
+
+        // Set up event delegation immediately when script loads
+        tradeableZoneContainer.addEventListener('click', (e) => {
+            if (e.target.classList.contains('clickable-zone-id')) {
+                e.stopPropagation();
+                copyToClipboard(e.target.textContent, e.target);
+            }
+        });
+        
+        newZonesTodayContainer.addEventListener('click', (e) => {
+            if (e.target.classList.contains('clickable-zone-id')) {
+                e.stopPropagation();
+                copyToClipboard(e.target.textContent, e.target);
+            }
+        });
 
         function getSymbolIdFromName(symbolName) {
             const entry = CURRENCIES_MAP_JS.find(c => c.name === symbolName);
@@ -303,13 +342,7 @@
                 
                 targetContainerElement.appendChild(zoneDiv);
                 
-                const zoneIdClickableElement = zoneDiv.querySelector(`#zoneIdValue-${zoneId} .clickable-zone-id`);
-                if (zoneIdClickableElement) {
-                    zoneIdClickableElement.onclick = function(event) {
-                        event.stopPropagation();
-                        copyToClipboard(displayZoneId, this);
-                    };
-                }
+                // NO MORE INDIVIDUAL CLICK HANDLERS - using event delegation instead
                 return zoneDiv;
             } catch (error) {
                 console.error("Error in renderZoneToDOM for zone ID:", zoneData.zone_id, error);
@@ -323,14 +356,53 @@
             }
         }
 
-        function renderSortedLatestZones() {
+        function renderSortedLatestZones(filter = 'active') {
             if (!allLatestZones || allLatestZones.length === 0) {
                 newZonesTodayContainer.innerHTML = '<p>No zones found in the recent window.</p>';
                 return;
             }
 
+            // Filter zones based on selection
+            let filteredZones = [];
+            switch(filter) {
+                case 'active':
+                    filteredZones = allLatestZones.filter(zone => {
+                        // Check if zone is truly active (not invalidated by current price)
+                        if (zone.is_active !== true) return false;
+                        
+                        const currentPrice = currentPrices[zone.symbol]?.close;
+                        if (currentPrice && typeof zone.zone_low === 'number' && typeof zone.zone_high === 'number') {
+                            const actualZoneType = zone.type || zone.zone_type || "";
+                            const zoneTypeClass = actualZoneType.toLowerCase().includes('supply') ? 'supply' : 'demand';
+                            const zoneStatus = checkZoneStatus(currentPrice, zone.zone_low, zone.zone_high, zoneTypeClass);
+                            return zoneStatus !== 'invalidated';
+                        }
+                        return true; // If no price data, assume active
+                    });
+                    break;
+                case 'inactive':
+                    filteredZones = allLatestZones.filter(zone => {
+                        // Zone is inactive if backend says so OR if price has invalidated it
+                        if (zone.is_active === false) return true;
+                        
+                        const currentPrice = currentPrices[zone.symbol]?.close;
+                        if (currentPrice && typeof zone.zone_low === 'number' && typeof zone.zone_high === 'number') {
+                            const actualZoneType = zone.type || zone.zone_type || "";
+                            const zoneTypeClass = actualZoneType.toLowerCase().includes('supply') ? 'supply' : 'demand';
+                            const zoneStatus = checkZoneStatus(currentPrice, zone.zone_low, zone.zone_high, zoneTypeClass);
+                            return zoneStatus === 'invalidated';
+                        }
+                        return false;
+                    });
+                    break;
+                case 'all':
+                default:
+                    filteredZones = allLatestZones;
+                    break;
+            }
+
             // Calculate distances and sort by proximity to proximal
-            const zonesWithDistance = allLatestZones.map(zone => {
+            const zonesWithDistance = filteredZones.map(zone => {
                 let distancePips = null;
                 const currentPrice = currentPrices[zone.symbol]?.close;
                 
@@ -361,11 +433,77 @@
                 return Math.abs(distA) - Math.abs(distB);
             });
 
-            // Clear and render sorted zones
-            newZonesTodayContainer.innerHTML = '';
-            zonesWithDistance.forEach(zone => {
-                renderZoneToDOM(zone, newZonesTodayContainer);
+            // Get existing zone elements to preserve them if possible
+            const existingZones = {};
+            Array.from(newZonesTodayContainer.children).forEach(child => {
+                if (child.id) {
+                    existingZones[child.id] = child;
+                }
             });
+
+            // Clear container
+            newZonesTodayContainer.innerHTML = '';
+            
+            if (zonesWithDistance.length > 0) {
+                zonesWithDistance.forEach(zone => {
+                    const zoneId = zone.zone_id;
+                    let zoneElement = existingZones[zoneId];
+                    
+                    if (zoneElement) {
+                        // Update existing element instead of recreating
+                        updateZoneElement(zoneElement, zone);
+                        newZonesTodayContainer.appendChild(zoneElement);
+                    } else {
+                        // Create new element only if it doesn't exist
+                        renderZoneToDOM(zone, newZonesTodayContainer);
+                    }
+                });
+            } else {
+                newZonesTodayContainer.innerHTML = `<p>No ${filter} zones found in the recent window.</p>`;
+            }
+        }
+
+        function updateZoneElement(zoneElement, zoneData) {
+            // Update only the dynamic content without destroying the element
+            const priceDecimalPlaces = zoneData.symbol?.includes("JPY") ? 3 : 5;
+            const pipFactor = zoneData.symbol?.includes("JPY") ? 0.01 : 0.0001;
+            const priceInfo = currentPrices[zoneData.symbol];
+            const currentClosePrice = priceInfo ? priceInfo.close : null;
+            
+            // Update current price
+            const priceDisplay = zoneElement.querySelector(`#price-display-${zoneData.zone_id}`);
+            if (priceDisplay && currentClosePrice) {
+                priceDisplay.textContent = currentClosePrice.toFixed(priceDecimalPlaces);
+            }
+            
+            // Update distance and status
+            const distDisplay = zoneElement.querySelector(`#dist-${zoneData.zone_id}`);
+            if (distDisplay && currentClosePrice && typeof zoneData.zone_low === 'number' && typeof zoneData.zone_high === 'number') {
+                const actualZoneType = zoneData.type || zoneData.zone_type || "";
+                const zoneTypeClass = actualZoneType.toLowerCase().includes('supply') ? 'supply' : 'demand';
+                
+                const distance = calculateStandardizedDistance(
+                    currentClosePrice,
+                    zoneData.zone_low,
+                    zoneData.zone_high,
+                    zoneTypeClass,
+                    pipFactor
+                );
+                
+                const zoneStatus = checkZoneStatus(currentClosePrice, zoneData.zone_low, zoneData.zone_high, zoneTypeClass);
+                
+                // Update visual styling
+                zoneElement.classList.remove('touched', 'invalidated');
+                if (zoneStatus === 'touched') {
+                    zoneElement.classList.add('touched');
+                    distDisplay.textContent = `${distance.toFixed(1)} pips`;
+                } else if (zoneStatus === 'invalidated') {
+                    zoneElement.classList.add('invalidated');
+                    distDisplay.textContent = 'INVALIDATED';
+                } else {
+                    distDisplay.textContent = `${distance.toFixed(1)} pips`;
+                }
+            }
         }
 
         async function fetchAndDisplayInitialData(wsInstance) {
@@ -638,7 +776,8 @@
                             
                             // Re-sort latest zones if needed
                             if (allLatestZones.length > 0) {
-                                renderSortedLatestZones();
+                                const activeFilter = document.querySelector('input[name="zoneFilter"]:checked')?.value || 'active';
+                                renderSortedLatestZones(activeFilter);
                             }
                         }
                     } else if (message.type === 'SUBSCRIPTION_CONFIRMED') {
