@@ -43,27 +43,13 @@
         .zone p { margin: 4px 0; }
         .zone .label { font-weight: 600; color: #6c757d; }
         .zone .value { color: #495057; }
-        .zone.supply { border-left: 5px solid #e74c3c; } /* Red for supply */
-        .zone.demand { border-left: 5px solid #2ecc71; } /* Green for demand */
+        .zone.supply { border-left: 5px solid #e74c3c; } 
+        .zone.demand { border-left: 5px solid #2ecc71; } 
         .status-active { color: #28a745; font-weight: bold; }
         .status-inactive { color: #dc3545; font-weight: bold; opacity: 0.7; }
-        
-        /* Style for clickable zone ID */
-        .clickable-zone-id {
-            cursor: pointer;
-            text-decoration: underline;
-            color: #0056b3; /* A slightly different blue to indicate clickability */
-            word-break: break-all; /* Ensure long IDs wrap */
-        }
-        .clickable-zone-id:hover {
-            color: #003d80;
-        }
-        .copy-feedback { /* For a small "Copied!" message */
-            font-size: 0.8em;
-            color: green;
-            margin-left: 5px;
-            display: inline-block; /* To sit next to the ID */
-        }
+        .clickable-zone-id { cursor: pointer; text-decoration: underline; color: #0056b3; word-break: break-all; }
+        .clickable-zone-id:hover { color: #003d80; }
+        .copy-feedback { font-size: 0.8em; color: green; margin-left: 5px; display: inline-block; }
     </style>
 </head>
 <body>
@@ -75,10 +61,7 @@
             <h2>Live Prices</h2>
             <ul id="priceList"></ul>
         </div>
-
-        <div class="zone-container" id="zoneContainer">
-            <!-- Zones will be dynamically inserted here -->
-        </div>
+        <div class="zone-container" id="zoneContainer"></div>
     </div>
 
     <script>
@@ -88,8 +71,8 @@
         const RUST_API_BASE_URL = 'http://localhost:8080';
         const TS_WEBSOCKET_URL = 'ws://localhost:8081';
 
-        let activeZones = {}; 
-        let currentPrices = {}; 
+        let activeZones = {}; // { zone_id: { zoneData, element, distancePips: null | number } }
+        let currentPrices = {}; // { symbol: { close: price, time: timestamp_str } }
 
         const CURRENCIES_MAP_JS = [
           { name: "EURUSD_SB", value: 185 }, { name: "GBPUSD_SB", value: 199 },
@@ -121,57 +104,63 @@
                 connectionStatusEl.className = 'connection-status status-disconnected';
             }
         }
-
+        
         function copyToClipboard(text, targetElement) {
             navigator.clipboard.writeText(text).then(() => {
-                console.log('Zone ID copied to clipboard:', text);
-                const originalText = targetElement.textContent;
+                const originalText = targetElement.textContent; // Store original ID text
                 targetElement.textContent = 'Copied!';
                 targetElement.classList.add('copy-feedback');
                 setTimeout(() => {
-                    targetElement.textContent = originalText;
+                    targetElement.textContent = originalText; // Revert to original ID text
                     targetElement.classList.remove('copy-feedback');
-                }, 1500); // Revert after 1.5 seconds
+                }, 1500);
             }).catch(err => {
                 console.error('Failed to copy Zone ID: ', err);
-                alert('Failed to copy ID. See console for details.');
+                // Fallback for older browsers or if permission denied, though less common now
+                try {
+                    const textArea = document.createElement("textarea");
+                    textArea.value = text;
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    // Provide feedback for fallback if needed
+                } catch (execErr) {
+                    console.error('Fallback copy failed: ', execErr);
+                    alert('Failed to copy ID.');
+                }
             });
         }
 
-        function renderZone(zoneData) {
-            const zoneId = zoneData.zone_id || `unknown-${Date.now()}`; // Use full zoneId for logic
-            const displayZoneId = zoneData.zone_id || 'N/A'; // For display
+         function renderZone(zoneData, existingElement = null) {
+            const zoneId = zoneData.zone_id || `unknown-zone-${Date.now()}`;
+            const displayZoneId = zoneData.zone_id || 'N/A';
+            let zoneDiv = existingElement || document.getElementById(zoneId);
+            let isNewElement = false;
 
-            let zoneDiv = document.getElementById(zoneId);
-            let isNew = false;
             if (!zoneDiv) {
-                isNew = true;
+                isNewElement = true;
                 zoneDiv = document.createElement('div');
-                zoneDiv.id = zoneId; // Use full zoneId as the element ID
+                zoneDiv.id = zoneId;
             }
-            
+
             const actualZoneType = zoneData.type || zoneData.zone_type;
             const zoneTypeClass = actualZoneType?.toLowerCase().includes('supply') ? 'supply' : 'demand';
-            
-            zoneDiv.className = 'zone'; 
+
+            zoneDiv.className = 'zone';
             zoneDiv.classList.add(zoneTypeClass);
 
-            if (!zoneData.is_active) {
-                 zoneDiv.style.opacity = "0.6";
-                 zoneDiv.style.backgroundColor = "#f8f9fa";
-            } else {
-                 zoneDiv.style.opacity = "1";
-                 zoneDiv.style.backgroundColor = "#ffffff";
-            }
+            zoneDiv.style.opacity = zoneData.is_active ? "1" : "0.6";
+            zoneDiv.style.backgroundColor = zoneData.is_active ? "#ffffff" : "#f8f9fa";
 
             const priceDecimalPlaces = zoneData.symbol?.includes("JPY") ? 3 : 5;
+            const pipFactor = zoneData.symbol?.includes("JPY") ? 0.01 : 0.0001;
             const priceInfo = currentPrices[zoneData.symbol];
             const currentClosePrice = priceInfo ? priceInfo.close : null;
 
-            let proximalLineDisplay = 'N/A';
-            let distalLineDisplay = 'N/A';
-            let proximalLineValue; 
-            let distanceToProximal = 'N/A';
+            let proximalLineDisplay = 'N/A', distalLineDisplay = 'N/A', distanceToProximalPips = 'N/A';
+            let proximalLineValue;
 
             if (typeof zoneData.zone_low === 'number' && typeof zoneData.zone_high === 'number') {
                 if (zoneTypeClass === 'supply') {
@@ -179,36 +168,34 @@
                     proximalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
                     distalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
                     if (currentClosePrice !== null && zoneData.is_active) {
-                        distanceToProximal = (currentClosePrice - proximalLineValue).toFixed(priceDecimalPlaces);
+                        distanceToProximalPips = ((currentClosePrice - proximalLineValue) / pipFactor).toFixed(1);
                     }
                 } else if (zoneTypeClass === 'demand') {
                     proximalLineValue = zoneData.zone_high;
                     proximalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
                     distalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
                     if (currentClosePrice !== null && zoneData.is_active) {
-                        distanceToProximal = (proximalLineValue - currentClosePrice).toFixed(priceDecimalPlaces);
+                        distanceToProximalPips = ((proximalLineValue - currentClosePrice) / pipFactor).toFixed(1);
                     }
                 }
             }
-            
-            const slPips = 4.0;
-            const tpPips = 70.0;
-            const pipFactor = zoneData.symbol?.includes("JPY") ? 0.01 : 0.0001;
-            let slPrice = 'N/A';
-            let tpPrice = 'N/A';
 
-            if (zoneData.is_active) {
-                if (zoneTypeClass === 'supply' && typeof zoneData.zone_high === 'number' && typeof zoneData.zone_low === 'number') {
+            const slPips = 4.0, tpPips = 70.0;
+            let slPrice = 'N/A', tpPrice = 'N/A';
+
+            if (zoneData.is_active && typeof proximalLineValue === 'number') {
+                if (zoneTypeClass === 'supply') {
                     slPrice = (zoneData.zone_high + slPips * pipFactor).toFixed(priceDecimalPlaces);
                     tpPrice = (zoneData.zone_low - tpPips * pipFactor).toFixed(priceDecimalPlaces);
-                } else if (zoneTypeClass === 'demand' && typeof zoneData.zone_low === 'number' && typeof zoneData.zone_high === 'number') {
+                } else if (zoneTypeClass === 'demand') {
                     slPrice = (zoneData.zone_low - slPips * pipFactor).toFixed(priceDecimalPlaces);
                     tpPrice = (zoneData.zone_high + tpPips * pipFactor).toFixed(priceDecimalPlaces);
                 }
             }
 
-            // Make zone ID clickable
             const zoneIdHTML = `<span class="clickable-zone-id" title="Click to copy ID">${displayZoneId}</span>`;
+            const barsActiveDisplay = zoneData.bars_active === null || zoneData.bars_active === undefined ? 'N/A' : zoneData.bars_active;
+
 
             zoneDiv.innerHTML = `
                 <h3>${zoneData.symbol || 'N/A'} - ${zoneData.timeframe || 'N/A'} (${zoneTypeClass})</h3>
@@ -219,20 +206,21 @@
                 <p><span class="label">Formed:</span> <span class="value">${zoneData.start_time ? new Date(zoneData.start_time).toLocaleString() : 'N/A'}</span></p>
                 <p><span class="label">Status:</span> <span class="value ${zoneData.is_active ? 'status-active' : 'status-inactive'}">${zoneData.is_active ? 'Active' : 'Inactive'}</span></p>
                 <p><span class="label">Touches:</span> <span class="value" id="touches-${zoneId}">${zoneData.touch_count === null || zoneData.touch_count === undefined ? '0' : zoneData.touch_count}</span></p>
+                <p><span class="label">Bars Active:</span> <span class="value">${barsActiveDisplay}</span></p> <!-- ADDED THIS LINE -->
                 <p><span class="label">Current Price:</span> <span class="value" id="price-display-${zoneId}">${currentClosePrice?.toFixed(priceDecimalPlaces) || 'N/A'}</span></p>
-                <p><span class="label">Distance to Proximal:</span> <span class="value" id="dist-${zoneId}">${distanceToProximal}</span></p>
+                <p><span class="label">Distance to Proximal:</span> <span class="value" id="dist-${zoneId}">${distanceToProximalPips} pips</span></p>
                 <p><span class="label">SL (Approx):</span> <span class="value">${slPrice}</span></p>
                 <p><span class="label">TP (Approx):</span> <span class="value">${tpPrice}</span></p>
             `;
 
-            if (isNew) {
+            if (isNewElement) {
                 zoneContainer.appendChild(zoneDiv);
             }
             
-            // Add click listener for copying AFTER innerHTML is set
-            const zoneIdElement = zoneDiv.querySelector(`#zoneIdValue-${zoneId} .clickable-zone-id`);
-            if (zoneIdElement) {
-                zoneIdElement.onclick = function() {
+            const zoneIdClickableElement = zoneDiv.querySelector(`#zoneIdValue-${zoneId} .clickable-zone-id`);
+            if (zoneIdClickableElement) {
+                zoneIdClickableElement.onclick = function(event) {
+                    event.stopPropagation();
                     copyToClipboard(displayZoneId, this);
                 };
             }
@@ -254,9 +242,9 @@
 
                 if (zones && zones.length > 0) {
                     zones.forEach(zone => {
-                        if (zone.zone_id) { // Ensure zone_id exists
-                            const elem = renderZone(zone); // renderZone now returns the element
-                            activeZones[zone.zone_id] = { zoneData: zone, element: elem }; // Store element too
+                        if (zone.zone_id) {
+                            const elem = renderZone(zone); // renderZone creates and returns the element
+                            activeZones[zone.zone_id] = { zoneData: zone, element: elem, distancePips: null };
                             if (zone.symbol) {
                                 symbolsToSubscribeForWSS.add(zone.symbol);
                             }
@@ -320,11 +308,55 @@
                             const priceDecimalPlacesList = bar.symbol?.includes("JPY") ? 3 : 5;
                             symbolPriceLi.textContent = `${bar.symbol}: ${bar.close.toFixed(priceDecimalPlacesList)} (at ${new Date(bar.time).toLocaleTimeString()})`;
 
+                            let zonesToReSort = [];
                             Object.values(activeZones).forEach(activeZoneEntry => {
                                 if (activeZoneEntry.zoneData.symbol === bar.symbol) {
-                                    renderZone(activeZoneEntry.zoneData); 
+                                    // Recalculate distance for this zone before re-rendering
+                                    const zd = activeZoneEntry.zoneData;
+                                    const actualZT = zd.type || zd.zone_type;
+                                    const ztc = actualZT?.toLowerCase().includes('supply') ? 'supply' : 'demand';
+                                    const pcf = zd.symbol?.includes("JPY") ? 0.01 : 0.0001;
+                                    let newDistPips = null;
+                                    if (typeof zd.zone_low === 'number' && typeof zd.zone_high === 'number' && currentPrices[zd.symbol]?.close !== null && zd.is_active) {
+                                        let pLineVal;
+                                        if (ztc === 'supply') {
+                                            pLineVal = zd.zone_low;
+                                            newDistPips = parseFloat(((currentPrices[zd.symbol].close - pLineVal) / pcf).toFixed(1));
+                                        } else if (ztc === 'demand') {
+                                            pLineVal = zd.zone_high;
+                                            newDistPips = parseFloat(((pLineVal - currentPrices[zd.symbol].close) / pcf).toFixed(1));
+                                        }
+                                    }
+                                    activeZoneEntry.distancePips = newDistPips;
                                 }
+                                zonesToReSort.push(activeZoneEntry); // Add all zones to be re-sorted
                             });
+
+                            // Sort all displayable zones by distance
+                            zonesToReSort.sort((a, b) => {
+                                const distA = a.distancePips;
+                                const distB = b.distancePips;
+                                if (distA === null && distB === null) return 0;
+                                if (distA === null) return 1; // Nulls at the bottom
+                                if (distB === null) return -1;
+                                return Math.abs(distA) - Math.abs(distB); // Sort by smallest absolute distance
+                            });
+
+                            zoneContainer.innerHTML = ''; // Clear container
+                            zonesToReSort.forEach(entry => {
+                                // renderZone will re-create or update the element and append it
+                                const newElement = renderZone(entry.zoneData, entry.element); // Pass existing element to update
+                                entry.element = newElement; // Update the stored element reference
+                                // No need to appendChild here if renderZone handles it, or if it always re-creates
+                                // If renderZone always re-creates, then this.appendChild(newElement) in renderZone is fine.
+                                // For simplicity, let renderZone handle append if it's a new element.
+                                // If not new, it just updates innerHTML. This is simpler for now than DOM reordering.
+                                // Let's stick to re-creating via innerHTML for simplicity in renderZone
+                                // and re-appending.
+                                zoneContainer.appendChild(newElement);
+                            });
+
+
                         }
                     } else if (message.type === 'SUBSCRIPTION_CONFIRMED') {
                         console.log(`Subscription confirmed by TS WSS: SymbolID ${message.symbolId}, Timeframe ${message.timeframe}`);
@@ -345,7 +377,9 @@
                                     }
                                 }
                             }
-                            renderZone(activeZones[zoneIdToUpdate].zoneData); 
+                            renderZone(activeZones[zoneIdToUpdate].zoneData, activeZones[zoneIdToUpdate].element); 
+                            // Potentially re-sort if a ZONE_EVENT could change sort order significantly
+                            // For now, only BAR_UPDATE triggers a full re-sort.
 
                             if(message.eventType === "FIRST_TOUCH_TRADE_ATTEMPTED"){
                                 const zone = activeZones[zoneIdToUpdate].zoneData;
@@ -354,8 +388,9 @@
                         } else if (message.eventType?.includes("FORMED") && message.zone) { 
                              const newZoneData = message.zone;
                              if (newZoneData.zone_id) {
-                                const elem = renderZone(newZoneData);
-                                activeZones[newZoneData.zone_id] = { zoneData: newZoneData, element: elem };
+                                const elem = renderZone(newZoneData); // Creates new element
+                                activeZones[newZoneData.zone_id] = { zoneData: newZoneData, element: elem, distancePips: null };
+                                // No need to re-sort immediately, next BAR_UPDATE will handle it.
                              }
                         }
                     } else if (message.type === 'HOT_ZONES_UPDATE' && message.zones) {

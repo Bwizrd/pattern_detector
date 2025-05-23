@@ -26,6 +26,7 @@ use dotenv::dotenv;
 use futures::future::join_all;
 use log::{debug, error, info, warn};
 use reqwest;
+use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -33,8 +34,9 @@ use std::error::Error;
 use std::io::Cursor;
 
 // --- Structs ---
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
 pub struct CandleData {
+     #[serde(rename = "_time")]
     pub time: String,
     pub open: f64,
     pub high: f64,
@@ -1943,4 +1945,88 @@ async fn execute_find_and_verify_zone_logic(
         error_details: None,
         recognizer_raw_output_for_target_zone: Some(raw_zone_to_enrich.clone()), // Include the specific zone's JSON
     })
+}
+
+pub async fn fetch_candles_direct(
+    http_client: &HttpClient,
+    influx_host: &str,
+    influx_org: &str,
+    influx_token: &str,
+    bucket: &str,
+    measurement: &str, // This would be your trendbar measurement, e.g., "trendbar"
+    symbol: &str,
+    timeframe: &str,
+    start_time: &str, // Can be relative like "-10d" or RFC3339
+    end_time: &str,   // Can be "now()" or RFC3339
+) -> Result<Vec<CandleData>, String> {
+    if symbol.is_empty() || timeframe.is_empty() {
+        warn!("[FETCH_CANDLES_DIRECT] Symbol or timeframe is empty, returning no candles.");
+        return Ok(vec![]);
+    }
+
+    // Construct the Flux query to fetch candles
+    // This assumes your trendbar data has fields: open, high, low, close, volume
+    // and tags: symbol, timeframe. Adjust if your schema is different.
+    let flux_query = format!(
+        r#"from(bucket: "{}")
+           |> range(start: {}, stop: {})
+           |> filter(fn: (r) => r["_measurement"] == "{}")
+           |> filter(fn: (r) => r["symbol"] == "{}")
+           |> filter(fn: (r) => r["timeframe"] == "{}")
+           |> toFloat() // Ensure numeric fields are float
+           |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+           |> sort(columns: ["_time"])"#,
+        bucket, start_time, end_time, measurement, symbol, timeframe
+    );
+
+    debug!("[FETCH_CANDLES_DIRECT] Fetching candles for {}/{}, Query: {}", symbol, timeframe, flux_query);
+    let query_url = format!("{}/api/v2/query?org={}", influx_host, influx_org);
+
+    let response = match http_client.post(&query_url)
+        .bearer_auth(influx_token)
+        .header("Accept", "application/csv")
+        .header("Content-Type", "application/json")
+        .json(&json!({"query": flux_query, "type": "flux"}))
+        .send().await
+    {
+        Ok(resp) => resp,
+        Err(e) => return Err(format!("HTTP request to InfluxDB failed: {}", e)),
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        let err_body = response.text().await.unwrap_or_else(|_| "Failed to read error body".to_string());
+        error!("[FETCH_CANDLES_DIRECT] InfluxDB query failed (status {}): {}. Query: {}", status, err_body, flux_query);
+        return Err(format!("InfluxDB query failed (status {}): {}", status, err_body));
+    }
+
+    let csv_text = match response.text().await {
+        Ok(text) => text,
+        Err(e) => return Err(format!("Failed to read InfluxDB response text: {}", e)),
+    };
+
+    let mut candles = Vec::new();
+    if csv_text.lines().skip_while(|l| l.starts_with('#') || l.is_empty()).count() > 1 { // Check if more than just header
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(true) // Useful if there are extra columns in CSV not in CandleData
+            .comment(Some(b'#'))
+            .from_reader(csv_text.as_bytes());
+
+        // CandleData needs to derive Deserialize and its fields must match
+        // the pivoted CSV column names (e.g., _time, open, high, low, close, volume)
+        // or use #[serde(rename = "...")]
+        for result in rdr.deserialize::<CandleData>() {
+            match result {
+                Ok(candle) => candles.push(candle),
+                Err(e) => {
+                    warn!("[FETCH_CANDLES_DIRECT] CSV deserialize error for a candle: {}. Row might be skipped.", e);
+                }
+            }
+        }
+    } else {
+        debug!("[FETCH_CANDLES_DIRECT] No data rows in CSV response for {}/{}", symbol, timeframe);
+    }
+    debug!("[FETCH_CANDLES_DIRECT] Parsed {} candles for {}/{}", candles.len(), symbol, timeframe);
+    Ok(candles)
 }

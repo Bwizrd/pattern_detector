@@ -9,7 +9,7 @@ use csv::ReaderBuilder;
 use chrono::{DateTime, Utc, Duration}; // Duration might be needed
 
 // Import necessary types from your project structure
-use crate::types::StoredZone; // Assuming StoredZone is in crate::types
+use crate::types::{map_csv_to_stored_zone, StoredZone, ZoneCsvRecord};
 use std::collections::HashMap; 
 
 // --- Structs specific to this handler's response ---
@@ -30,103 +30,6 @@ pub struct LatestZonesApiResponse { // Made pub for use in main.rs routing
     pub query_executed: String,
 }
 
-#[derive(serde::Deserialize, Debug, Clone, Default)]
-pub struct ZoneCsvRecord {
-    // --- Columns from pivot rowKey ---
-    // These MUST match the column names produced by the pivot if they are part of rowKey
-    #[serde(rename = "_time")]
-    pub time: Option<String>,
-    pub symbol: Option<String>,
-    pub timeframe: Option<String>,
-    pub pattern: Option<String>,
-    pub zone_type: Option<String>,
-
-    // --- Columns from pivot columnKey (original _field values) ---
-    // Add ALL fields you expect after pivot. Use Option<String> for initial parsing.
-    pub bars_active: Option<String>,
-    pub detection_method: Option<String>,
-    pub end_time_rfc3339: Option<String>,
-    pub fifty_percent_line: Option<String>,
-    pub formation_candles_json: Option<String>,
-    pub is_active: Option<String>, // Will be "0" or "1"
-    pub start_time_rfc3339: Option<String>,
-    pub strength_score: Option<String>,
-    pub touch_count: Option<String>,
-    pub zone_high: Option<String>,
-    pub zone_id: Option<String>, // zone_id is now a regular column
-    pub zone_low: Option<String>,
-
-    // --- Standard InfluxDB meta columns (often present in CSV, can be ignored) ---
-    #[serde(default, rename = "_start")]
-    pub _start: Option<String>,
-    #[serde(default, rename = "_stop")]
-    pub _stop: Option<String>,
-    #[serde(default, rename = "result")]
-    pub _result_influx: Option<String>, // Avoid conflict if StoredZone has 'result'
-    #[serde(default)]
-    pub table: Option<u32>, // Table ID is usually numeric
-    #[serde(default, rename = "_measurement")]
-    pub _measurement: Option<String>,
-}
-
-pub fn map_csv_to_stored_zone(csv_record: ZoneCsvRecord) -> crate::types::StoredZone {
-    // Use fully qualified StoredZone
-    let parse_optional_f64 = |s: Option<String>| -> Option<f64> {
-        s.and_then(|str_val| str_val.trim().parse::<f64>().ok())
-    };
-    let parse_optional_i64 = |s: Option<String>| -> Option<i64> {
-        s.and_then(|str_val| str_val.trim().parse::<i64>().ok())
-    };
-    let parse_optional_u64 = |s: Option<String>| -> Option<u64> {
-        s.and_then(|str_val| str_val.trim().parse::<u64>().ok())
-    };
-    let is_active_bool = csv_record
-        .is_active
-        .as_deref()
-        .map_or(false, |s| s.trim() == "1");
-
-    let formation_candles_vec: Vec<crate::types::CandleData> = csv_record
-        .formation_candles_json
-        .as_ref()
-        .and_then(|json_str| match serde_json::from_str(json_str.trim()) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                log::warn!(
-                    "[MAP_CSV] Failed to parse formation_candles_json string: {}. JSON: '{}'",
-                    e,
-                    json_str
-                );
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    crate::types::StoredZone {
-        zone_id: csv_record
-            .zone_id
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-        symbol: csv_record.symbol.map(|s| s.trim().to_string()),
-        timeframe: csv_record.timeframe.map(|s| s.trim().to_string()),
-        pattern: csv_record.pattern.map(|s| s.trim().to_string()),
-        zone_type: csv_record.zone_type.map(|s| s.trim().to_string()),
-        start_time: csv_record.time.map(|s| s.trim().to_string()), // Map Influx _time
-        end_time: csv_record.end_time_rfc3339.map(|s| s.trim().to_string()),
-        zone_high: parse_optional_f64(csv_record.zone_high),
-        zone_low: parse_optional_f64(csv_record.zone_low),
-        fifty_percent_line: parse_optional_f64(csv_record.fifty_percent_line),
-        detection_method: csv_record.detection_method.map(|s| s.trim().to_string()),
-        is_active: is_active_bool,
-        bars_active: parse_optional_u64(csv_record.bars_active),
-        touch_count: parse_optional_i64(csv_record.touch_count),
-        strength_score: parse_optional_f64(csv_record.strength_score),
-        formation_candles: formation_candles_vec,
-        start_idx: None,
-        end_idx: None,
-        extended: None,
-        extension_percent: None,
-    }
-}
 
 // --- The Handler Function ---
 pub async fn get_latest_formed_zones_handler() -> impl Responder { // Renamed slightly to avoid conflict if main still has it
