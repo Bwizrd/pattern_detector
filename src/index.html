@@ -39,7 +39,7 @@
             padding: 15px; width: 280px; box-shadow: 0 2px 5px rgba(0,0,0,0.08);
             transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out; font-size: 0.85em;
         }
-        .zone:hover { transform: translateY(-3px); box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
+        .zone:hover { box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
         .zone h3 { margin-top: 0; margin-bottom: 10px; color: #007bff; font-size: 1.1em; word-break: break-all; }
         .zone p { margin: 4px 0; }
         .zone .label { font-weight: 600; color: #6c757d; }
@@ -51,6 +51,12 @@
         .clickable-zone-id { cursor: pointer; text-decoration: underline; color: #0056b3; word-break: break-all; }
         .clickable-zone-id:hover { color: #003d80; }
         .copy-feedback { font-size: 0.8em; color: green; margin-left: 5px; display: inline-block; }
+        .copied-animation { 
+            background-color: #d4edda !important; 
+            color: #155724 !important; 
+            transition: all 0.3s ease;
+            transform: scale(1.05);
+        }
     </style>
 </head>
 <body>
@@ -65,28 +71,29 @@
             <ul id="priceList"></ul>
         </div>
 
-        <h2 class="zone-section-title">Tradeable Active Zones</h2>
+        <h2 class="zone-section-title">Tradeable Active Zones (From Zone Monitor Cache)</h2>
         <div class="zone-container" id="tradeableZoneContainer">
             <p>Loading tradeable zones...</p>
         </div>
 
-        <h2 class="zone-section-title">Newly Formed Zones Today (All Types)</h2>
+        <h2 class="zone-section-title" id="newZonesTitle">Latest Formed Zones (Recent Window)</h2>
         <div class="zone-container" id="newZonesTodayContainer">
-            <p>Loading new zones...</p>
+            <p>Loading latest formed zones...</p>
         </div>
     </div>
 
     <script>
         const tradeableZoneContainer = document.getElementById('tradeableZoneContainer');
         const newZonesTodayContainer = document.getElementById('newZonesTodayContainer');
+        const newZonesTitleEl = document.getElementById('newZonesTitle');
         const connectionStatusEl = document.getElementById('connectionStatus');
         const priceListEl = document.getElementById('priceList');
         const strategyInfoEl = document.getElementById('strategyInfo');
         const RUST_API_BASE_URL = 'http://localhost:8080';
         const TS_WEBSOCKET_URL = 'ws://localhost:8081';
 
-        let activeTradeableZones = {}; // { zone_id: { zoneData, element, distancePips } } - ONLY tradeable zones
-        let currentPrices = {}; 
+        let activeTradeableZones = {}; // { zone_id: { zoneData, element, distancePips } }
+        let currentPrices = {}; // { symbol: { close: price, time: timestamp_str } }
 
         const CURRENCIES_MAP_JS = [
           { name: "EURUSD_SB", value: 185 }, { name: "GBPUSD_SB", value: 199 },
@@ -121,22 +128,38 @@
         
         function copyToClipboard(text, targetElement) {
             navigator.clipboard.writeText(text).then(() => {
+                // Add visual feedback
+                targetElement.classList.add('copied-animation');
                 const originalText = targetElement.textContent;
                 targetElement.textContent = 'Copied!';
-                targetElement.classList.add('copy-feedback');
+                
                 setTimeout(() => {
-                    targetElement.textContent = originalText;
-                    targetElement.classList.remove('copy-feedback');
+                    if (targetElement) {
+                        targetElement.textContent = originalText;
+                        targetElement.classList.remove('copied-animation');
+                    }
                 }, 1500);
             }).catch(err => {
                 console.error('Failed to copy Zone ID: ', err);
-                try {
+                try { 
                     const textArea = document.createElement("textarea");
                     textArea.value = text; document.body.appendChild(textArea);
                     textArea.focus(); textArea.select(); document.execCommand('copy');
                     document.body.removeChild(textArea);
+                    
+                    // Still show feedback for fallback
+                    targetElement.classList.add('copied-animation');
+                    const originalText = targetElement.textContent;
+                    targetElement.textContent = 'Copied!';
+                    setTimeout(() => {
+                        if (targetElement) {
+                            targetElement.textContent = originalText;
+                            targetElement.classList.remove('copied-animation');
+                        }
+                    }, 1500);
                 } catch (execErr) {
-                    console.error('Fallback copy failed: ', execErr); alert('Failed to copy ID.');
+                    console.error('Fallback copy failed: ', execErr); 
+                    alert('Failed to copy ID.');
                 }
             });
         }
@@ -171,20 +194,22 @@
                         proximalLineValue = zoneData.zone_low;
                         proximalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
                         distalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
-                        if (currentClosePrice !== null && zoneData.is_active) {
+                        // FIXED: Removed the zoneData.is_active condition - calculate distance for all zones
+                        if (currentClosePrice !== null) {
                             distanceToProximalPips = ((currentClosePrice - proximalLineValue) / pipFactor).toFixed(1);
                         }
                     } else if (zoneTypeClass === 'demand') {
                         proximalLineValue = zoneData.zone_high;
                         proximalLineDisplay = zoneData.zone_high.toFixed(priceDecimalPlaces);
                         distalLineDisplay = zoneData.zone_low.toFixed(priceDecimalPlaces);
-                        if (currentClosePrice !== null && zoneData.is_active) {
+                        // FIXED: Removed the zoneData.is_active condition - calculate distance for all zones
+                        if (currentClosePrice !== null) {
                             distanceToProximalPips = ((proximalLineValue - currentClosePrice) / pipFactor).toFixed(1);
                         }
                     }
                 }
                 
-                const slPips = 4.0, tpPips = 70.0; // These could come from applied_filters later
+                const slPips = 4.0, tpPips = 70.0;
                 let slPrice = 'N/A', tpPrice = 'N/A';
 
                 if (zoneData.is_active && typeof proximalLineValue === 'number') {
@@ -218,7 +243,7 @@
                     <p><span class="label">TP (Approx):</span> <span class="value">${tpPrice}</span></p>
                 `;
                 
-                targetContainerElement.appendChild(zoneDiv); // Append to the specified container
+                targetContainerElement.appendChild(zoneDiv);
                 
                 const zoneIdClickableElement = zoneDiv.querySelector(`#zoneIdValue-${zoneId} .clickable-zone-id`);
                 if (zoneIdClickableElement) {
@@ -241,6 +266,7 @@
         }
 
         async function fetchAndDisplayInitialData(wsInstance) {
+            const symbolsToSubscribeForWSS = new Set();
             // 1. Fetch Tradeable Active Zones AND Strategy Filters
             try {
                 const response = await fetch(`${RUST_API_BASE_URL}/ui/active-zones`);
@@ -248,84 +274,127 @@
                     const errorText = await response.text();
                     console.error('Failed to fetch tradeable zones:', response.status, errorText);
                     tradeableZoneContainer.innerHTML = `<p>Error loading tradeable zones. Status: ${response.status}.</p>`;
-                    strategyInfoEl.textContent = 'Failed to load monitoring criteria.';
-                    return; 
-                }
-                const apiData = await response.json();
-                const tradeableZonesData = apiData.tradeable_zones; 
-                const filtersForDisplay = apiData.monitoring_filters;
-
-                if (strategyInfoEl && filtersForDisplay) {
-                    strategyInfoEl.innerHTML = `
-                        <p><strong>Zone Monitor Tracking Criteria:</strong></p>
-                        <p><span class="label">Symbols:</span> ${filtersForDisplay.symbols || 'Default'}</p>
-                        <p><span class="label">Timeframes:</span> ${filtersForDisplay.patternTimeframes || 'Default'}</p>
-                        <p><span class="label">Allowed Days:</span> ${filtersForDisplay.allowedTradeDays || 'Default'}</p>
-                    `;
-                } else if (strategyInfoEl) {
-                     strategyInfoEl.textContent = 'Monitoring criteria not available.';
-                }
-                
-                tradeableZoneContainer.innerHTML = ''; 
-                activeTradeableZones = {}; 
-                const symbolsToSubscribeForWSS = new Set();
-
-                if (tradeableZonesData && tradeableZonesData.length > 0) {
-                    tradeableZonesData.forEach(zone => {
-                        if (zone.zone_id) {
-                            const elem = renderZoneToDOM(zone, tradeableZoneContainer);
-                            activeTradeableZones[zone.zone_id] = { zoneData: zone, element: elem, distancePips: null };
-                            if (zone.symbol) { symbolsToSubscribeForWSS.add(zone.symbol); }
-                        }
-                    });
+                    if (strategyInfoEl) strategyInfoEl.textContent = 'Failed to load monitoring criteria.';
                 } else {
-                    tradeableZoneContainer.innerHTML = '<p>No tradeable active zones found matching criteria.</p>';
-                }
-                console.log('Initial tradeable zones loaded:', Object.keys(activeTradeableZones).length);
+                    const apiData = await response.json();
+                    const tradeableZonesData = apiData.tradeable_zones; 
+                    const filtersForDisplay = apiData.monitoring_filters;
 
-                // 2. Fetch Newly Formed Zones Today
-                const newZonesResponse = await fetch(`${RUST_API_BASE_URL}/ui/new-zones-today`);
+                    if (strategyInfoEl && filtersForDisplay) {
+                        strategyInfoEl.innerHTML = `
+                            <p><strong>Zone Monitor Tracking Criteria (for Tradeable Zones & Live Trading):</strong></p>
+                            <p><span class="label">Symbols:</span> ${filtersForDisplay.symbols || 'Default'}</p>
+                            <p><span class="label">Timeframes:</span> ${filtersForDisplay.patternTimeframes || 'Default'}</p>
+                            <p><span class="label">Allowed Days:</span> ${filtersForDisplay.allowedTradeDays || 'Default'}</p>
+                        `;
+                    } else if (strategyInfoEl) {
+                         strategyInfoEl.textContent = 'Monitoring criteria not available.';
+                    }
+                    
+                    tradeableZoneContainer.innerHTML = ''; 
+                    activeTradeableZones = {}; 
+
+                    if (tradeableZonesData && tradeableZonesData.length > 0) {
+                        tradeableZonesData.forEach(zone => {
+                            if (zone.zone_id) {
+                                const elem = renderZoneToDOM(zone, tradeableZoneContainer);
+                                activeTradeableZones[zone.zone_id] = { zoneData: zone, element: elem, distancePips: null };
+                                if (zone.symbol) { symbolsToSubscribeForWSS.add(zone.symbol); }
+                            }
+                        });
+                    } else {
+                        tradeableZoneContainer.innerHTML = '<p>No tradeable active zones found matching criteria.</p>';
+                    }
+                    console.log('Initial tradeable zones loaded:', Object.keys(activeTradeableZones).length);
+                }
+            } catch (error) {
+                console.error('Error fetching tradeable zones:', error);
+                tradeableZoneContainer.innerHTML = '<p>Error loading tradeable zones (catch block).</p>';
+                if (strategyInfoEl) strategyInfoEl.textContent = 'Error loading monitoring criteria.';
+            }
+
+            // 2. Fetch Latest Formed Zones (using /latest-formed-zones)
+            try {
+                const newZonesResponse = await fetch(`${RUST_API_BASE_URL}/latest-formed-zones`);
                 if (newZonesResponse.ok) {
-                    const newZones = await newZonesResponse.json();
+                    const latestZonesApiData = await newZonesResponse.json();
+                    const newZones = latestZonesApiData.zones; 
+                    const summary = latestZonesApiData.summary;
+
+                    if (newZonesTitleEl && summary && summary.query_start_time_utc && summary.query_end_time_utc) {
+                        const startDate = new Date(summary.query_start_time_utc).toLocaleString();
+                        const endDate = new Date(summary.query_end_time_utc).toLocaleString();
+                        newZonesTitleEl.textContent = `Latest Formed Zones (Window: ${startDate} to ${endDate})`;
+                    } else if (newZonesTitleEl) {
+                        newZonesTitleEl.textContent = "Latest Formed Zones (Recent Window)";
+                    }
+
                     newZonesTodayContainer.innerHTML = '';
                     if (newZones && newZones.length > 0) {
+                        // First pass: collect all symbols for subscription
                         newZones.forEach(zone => {
-                            renderZoneToDOM(zone, newZonesTodayContainer); 
                             if (zone.symbol && !symbolsToSubscribeForWSS.has(zone.symbol)) {
                                 symbolsToSubscribeForWSS.add(zone.symbol);
                             }
                         });
-                    } else {
-                        newZonesTodayContainer.innerHTML = '<p>No new zones formed today yet.</p>';
-                    }
-                    console.log('Newly formed zones today loaded:', newZones ? newZones.length : 0);
-                } else {
-                    const errorText = await newZonesResponse.text();
-                    console.error('Failed to fetch newly formed zones:', newZonesResponse.status, errorText);
-                    newZonesTodayContainer.innerHTML = `<p>Error loading newly formed zones. Status: ${newZonesResponse.status}</p>`;
-                }
-
-                if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
-                    if (symbolsToSubscribeForWSS.size > 0) {
-                        console.log("Attempting to subscribe to symbols for price updates:", Array.from(symbolsToSubscribeForWSS));
-                        symbolsToSubscribeForWSS.forEach(symbolName => {
-                            const symbolId = getSymbolIdFromName(symbolName);
-                            if (symbolId) {
-                                const timeframeForPriceSubscription = "1m";
-                                wsInstance.send(JSON.stringify({ type: "SUBSCRIBE", symbolId: symbolId, timeframe: timeframeForPriceSubscription }));
-                            } else {
-                                console.warn(`Could not find symbolId for ${symbolName} to subscribe.`);
-                            }
+                        
+                        // Subscribe to new symbols immediately if WebSocket is ready
+                        if (wsInstance && wsInstance.readyState === WebSocket.OPEN && symbolsToSubscribeForWSS.size > 0) {
+                            console.log("Subscribing to new symbols before rendering latest zones:", Array.from(symbolsToSubscribeForWSS));
+                            symbolsToSubscribeForWSS.forEach(symbolName => {
+                                const symbolId = getSymbolIdFromName(symbolName);
+                                if (symbolId) {
+                                    const timeframeForPriceSubscription = "1m";
+                                    wsInstance.send(JSON.stringify({ type: "SUBSCRIBE", symbolId: symbolId, timeframe: timeframeForPriceSubscription }));
+                                } else {
+                                    console.warn(`Could not find symbolId for ${symbolName} to subscribe.`);
+                                }
+                            });
+                            
+                            // Wait a moment for initial price data before rendering
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                        
+                        // Second pass: render the zones
+                        newZones.forEach(zone => {
+                            renderZoneToDOM(zone, newZonesTodayContainer); 
                         });
                     } else {
-                        console.log("No symbols to subscribe to for price updates initially.");
+                        newZonesTodayContainer.innerHTML = '<p>No new zones found in the recent window.</p>';
                     }
+                    console.log('Latest formed zones loaded:', newZones ? newZones.length : 0);
+                } else {
+                    const errorText = await newZonesResponse.text();
+                    console.error('Failed to fetch latest formed zones:', newZonesResponse.status, errorText);
+                    newZonesTodayContainer.innerHTML = `<p>Error loading latest formed zones. Status: ${newZonesResponse.status}</p>`;
+                     if (newZonesTitleEl) newZonesTitleEl.textContent = "Latest Formed Zones (Error)";
                 }
             } catch (error) {
-                console.error('Error in fetchAndDisplayInitialData:', error);
-                tradeableZoneContainer.innerHTML = '<p>Error loading initial page data.</p>';
-                newZonesTodayContainer.innerHTML = '';
-                if (strategyInfoEl) strategyInfoEl.textContent = 'Error loading monitoring criteria.';
+                console.error('Error fetching latest formed zones:', error);
+                newZonesTodayContainer.innerHTML = '<p>Error loading latest formed zones (catch block).</p>';
+                if (newZonesTitleEl) newZonesTitleEl.textContent = "Latest Formed Zones (Error)";
+            }
+
+            if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
+                // Note: We may have already subscribed to some symbols above for latest zones
+                const remainingSymbols = Array.from(symbolsToSubscribeForWSS).filter(symbol => 
+                    !currentPrices.hasOwnProperty(symbol)
+                );
+                
+                if (remainingSymbols.length > 0) {
+                    console.log("Subscribing to remaining symbols for price updates:", remainingSymbols);
+                    remainingSymbols.forEach(symbolName => {
+                        const symbolId = getSymbolIdFromName(symbolName);
+                        if (symbolId) {
+                            const timeframeForPriceSubscription = "1m";
+                            wsInstance.send(JSON.stringify({ type: "SUBSCRIBE", symbolId: symbolId, timeframe: timeframeForPriceSubscription }));
+                        } else {
+                            console.warn(`Could not find symbolId for ${symbolName} to subscribe.`);
+                        }
+                    });
+                } else {
+                    console.log("All symbols already subscribed or no new symbols to subscribe to.");
+                }
             }
         }
 
@@ -334,7 +403,7 @@
             
             zonesArrayForSorting.forEach(activeZoneEntry => {
                 const zd = activeZoneEntry.zoneData;
-                const actualZT = zd.type || zd.zone_type;
+                const actualZT = zd.type || zd.zone_type; // Check 'type' first, then 'zone_type'
                 const ztc = actualZT?.toLowerCase().includes('supply') ? 'supply' : 'demand';
                 const pcf = zd.symbol?.includes("JPY") ? 0.01 : 0.0001;
                 let newDistPips = null;
@@ -372,8 +441,52 @@
             });
         }
 
+        function updateAllZonesForSymbol(symbol) {
+            // Update all zone cards in the Latest Formed Zones section for this symbol
+            const latestZoneCards = newZonesTodayContainer.querySelectorAll('.zone');
+            latestZoneCards.forEach(zoneCard => {
+                const zoneTitle = zoneCard.querySelector('h3');
+                if (zoneTitle && zoneTitle.textContent.includes(symbol)) {
+                    const zoneId = zoneCard.id;
+                    const priceDisplay = zoneCard.querySelector(`#price-display-${zoneId}`);
+                    const distDisplay = zoneCard.querySelector(`#dist-${zoneId}`);
+                    
+                    if (priceDisplay && currentPrices[symbol]) {
+                        const priceDecimalPlaces = symbol?.includes("JPY") ? 3 : 5;
+                        priceDisplay.textContent = currentPrices[symbol].close.toFixed(priceDecimalPlaces);
+                    }
+                    
+                    if (distDisplay && currentPrices[symbol]) {
+                        // Recalculate distance for this specific zone
+                        const rangeText = zoneCard.querySelector('.zone p:nth-of-type(2) .value').textContent;
+                        const rangeParts = rangeText.split(' - ');
+                        if (rangeParts.length === 2) {
+                            const zoneLow = parseFloat(rangeParts[0]);
+                            const zoneHigh = parseFloat(rangeParts[1]);
+                            const currentPrice = currentPrices[symbol].close;
+                            const pipFactor = symbol?.includes("JPY") ? 0.01 : 0.0001;
+                            
+                            // Determine if supply or demand based on the title
+                            const isSupply = zoneTitle.textContent.includes('(supply)');
+                            let distancePips = 'N/A';
+                            
+                            if (isSupply) {
+                                distancePips = ((currentPrice - zoneLow) / pipFactor).toFixed(1);
+                            } else {
+                                distancePips = ((zoneHigh - currentPrice) / pipFactor).toFixed(1);
+                            }
+                            
+                            distDisplay.textContent = `${distancePips} pips`;
+                        }
+                    }
+                }
+            });
+        }
+
+        let ws = null; // Define ws in a scope accessible by the interval
         function connectWebSocket() {
-            const ws = new WebSocket(TS_WEBSOCKET_URL);
+            console.log("Attempting to connect to WebSocket at " + TS_WEBSOCKET_URL);
+            ws = new WebSocket(TS_WEBSOCKET_URL);
 
             ws.onopen = () => {
                 console.log('Connected to TypeScript WebSocket server.');
@@ -384,12 +497,10 @@
             ws.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-
                     if (message.type === 'BAR_UPDATE' && message.data) {
                         const bar = message.data;
                         if (bar.timeframe === "1m") { 
                             currentPrices[bar.symbol] = { close: bar.close, time: bar.time };
-
                             let symbolPriceLi = document.getElementById(`price-${bar.symbol}`);
                             if (!symbolPriceLi) {
                                 symbolPriceLi = document.createElement('li');
@@ -399,6 +510,8 @@
                             const priceDecimalPlacesList = bar.symbol?.includes("JPY") ? 3 : 5;
                             symbolPriceLi.textContent = `${bar.symbol}: ${bar.close.toFixed(priceDecimalPlacesList)} (at ${new Date(bar.time).toLocaleTimeString()})`;
                             
+                            // Update all zones that use this symbol, not just tradeable ones
+                            updateAllZonesForSymbol(bar.symbol);
                             reRenderTradeableZonesAndSort();
                         }
                     } else if (message.type === 'SUBSCRIPTION_CONFIRMED') {
@@ -406,51 +519,38 @@
                     } else if (message.type === 'ZONE_EVENT' && message.zone_id) {
                         console.log('Received ZONE_EVENT:', message);
                         const zoneIdToUpdate = message.zone_id;
-                        let needsResort = false;
+                        let needsUiResort = false;
                         
-                        if (activeTradeableZones[zoneIdToUpdate]) { // If it's a tradeable zone
-                            if (message.zone) { 
-                                activeTradeableZones[zoneIdToUpdate].zoneData = { ...activeTradeableZones[zoneIdToUpdate].zoneData, ...message.zone };
-                            } else { 
+                        if (activeTradeableZones[zoneIdToUpdate]) {
+                            if (message.zone) { activeTradeableZones[zoneIdToUpdate].zoneData = { ...activeTradeableZones[zoneIdToUpdate].zoneData, ...message.zone }; }
+                            else { 
                                 if (message.eventType === "ZONE_INVALIDATED") {
                                     activeTradeableZones[zoneIdToUpdate].zoneData.is_active = false;
                                     if (message.invalidation_time) activeTradeableZones[zoneIdToUpdate].zoneData.invalidation_time = message.invalidation_time;
                                 } else if (message.eventType?.includes("TOUCH")) { 
-                                    if (typeof message.new_touch_count === 'number') {
-                                        activeTradeableZones[zoneIdToUpdate].zoneData.touch_count = message.new_touch_count;
-                                    }
+                                    if (typeof message.new_touch_count === 'number') { activeTradeableZones[zoneIdToUpdate].zoneData.touch_count = message.new_touch_count; }
                                 }
                             }
-                            needsResort = true; // Its data changed, might affect sort or display
+                            needsUiResort = true; 
                         }
                         
-                        // Also check/update if it's in the "newly formed today" list
                         const newZoneCardElement = newZonesTodayContainer.querySelector(`#${zoneIdToUpdate}`);
                         if (newZoneCardElement) {
-                            let dataToRenderForNewZone = message.zone; // Prefer full data from event if available
-                            if (!dataToRenderForNewZone && activeTradeableZones[zoneIdToUpdate]) { // If it was also tradeable, use its updated data
-                                dataToRenderForNewZone = activeTradeableZones[zoneIdToUpdate].zoneData;
-                            } else if (!dataToRenderForNewZone) { // If only partial event and not in tradeable, try to apply partial
-                                // This part is tricky for partial updates on a list we don't keep in JS memory fully.
-                                // For simplicity, if message.zone is not provided for a newZoneToday update, we might skip detailed update or fetch it.
-                                // For now, only re-render if full message.zone is available.
-                                console.warn("Partial ZONE_EVENT for a 'newly formed' zone not in activeTradeableZones - detailed update skipped for now.");
-                            }
-
+                            let dataToRenderForNewZone = message.zone; 
+                            if (!dataToRenderForNewZone && activeTradeableZones[zoneIdToUpdate]) { dataToRenderForNewZone = activeTradeableZones[zoneIdToUpdate].zoneData; }
                             if (dataToRenderForNewZone) {
                                 const updatedElement = renderZoneToDOM(dataToRenderForNewZone, newZonesTodayContainer);
-                                newZoneCardElement.parentNode.replaceChild(updatedElement, newZoneCardElement);
+                                if (newZoneCardElement.parentNode) newZoneCardElement.parentNode.replaceChild(updatedElement, newZoneCardElement);
+                                if (activeTradeableZones[zoneIdToUpdate]) activeTradeableZones[zoneIdToUpdate].element = updatedElement; // If it was also tradeable
                             }
                         } else if (message.eventType?.includes("FORMED") && message.zone) { 
                              const newZoneData = message.zone;
-                             if (newZoneData.zone_id && !document.getElementById(newZoneData.zone_id)) { // Check if not already rendered anywhere
+                             if (newZoneData.zone_id && !document.getElementById(newZoneData.zone_id)) {
                                 renderZoneToDOM(newZoneData, newZonesTodayContainer);
                              }
                         }
 
-                        if(needsResort){
-                             reRenderTradeableZonesAndSort(); // Re-sort and re-render tradeable zones
-                        }
+                        if(needsUiResort) { reRenderTradeableZonesAndSort(); }
 
                         if(message.eventType === "FIRST_TOUCH_TRADE_ATTEMPTED" && activeTradeableZones[zoneIdToUpdate]){
                             const zone = activeTradeableZones[zoneIdToUpdate].zoneData;
@@ -459,10 +559,7 @@
                     } else if (message.type === 'HOT_ZONES_UPDATE' && message.zones) {
                         console.log('Received HOT_ZONES_UPDATE:', message.zones);
                     }
-
-                } catch (error) {
-                    console.error('Error processing WebSocket message:', error, event.data);
-                }
+                } catch (error) { console.error('Error processing WebSocket message:', error, event.data); }
             };
 
             ws.onclose = () => {
@@ -478,6 +575,13 @@
         }
 
         connectWebSocket();
+
+        const UI_REFRESH_INTERVAL_MS = 60000; 
+        setInterval(async () => {
+            console.log("Periodically re-fetching all zone data for UI...");
+            // Pass the current WebSocket instance for potential re-subscriptions
+            await fetchAndDisplayInitialData(ws); 
+        }, UI_REFRESH_INTERVAL_MS);
     </script>
 </body>
 </html>
