@@ -29,7 +29,7 @@ mod zone_revalidator_util;
 
 // --- Use necessary types ---
 use crate::types::StoredZone; // Used by map_csv_to_stored_zone
-
+use crate::zone_monitor_service::ActiveZoneCache;
 // --- API & Background Tasking Globals ---
 static ZONE_GENERATION_QUEUED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -56,19 +56,40 @@ struct QueryParams {
 }
 
 pub async fn get_ui_active_zones_handler(
-    zone_cache: web::Data<zone_monitor_service::ActiveZoneCache>,
+    zone_cache: web::Data<ActiveZoneCache>, // Injects the shared cache
 ) -> impl Responder {
     log::info!("[UI_ACTIVE_ZONES_HANDLER] Request for active zones for UI received.");
+
     let cache_guard = zone_cache.lock().await;
-    let zones_list: Vec<StoredZone> = cache_guard
+    let zones_list: Vec<StoredZone> = cache_guard // Assuming LiveZoneState.zone_data is StoredZone
         .values()
         .map(|live_state| live_state.zone_data.clone())
         .collect();
-    log::info!(
-        "[UI_ACTIVE_ZONES_HANDLER] Returning {} active zones.",
-        zones_list.len()
-    );
-    HttpResponse::Ok().json(zones_list)
+    
+    // The zones in zones_list are ALREADY the ones the Zone Monitor Service
+    // deemed relevant based on its ZONE_MONITOR_SYMBOLS and ZONE_MONITOR_PATTERNTFS
+    // when it populated its cache from InfluxDB (after filtering for is_active=true).
+
+    log::info!("[UI_ACTIVE_ZONES_HANDLER] Returning {} active zones from Zone Monitor's cache.", zones_list.len());
+
+    // For the UI to display what filters the *Zone Monitor* is using,
+    // those env vars could be read once and stored, or simply understood by the user.
+    // If you want to display them, this handler could read them.
+    let monitor_symbols_for_display = env::var("ZONE_MONITOR_SYMBOLS")
+        .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+    let monitor_timeframes_for_display = env::var("ZONE_MONITOR_PATTERNTFS")
+        .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+    let monitor_allowed_days_for_display = env::var("STRATEGY_ALLOWED_DAYS")
+        .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "tradeable_zones": zones_list, // These are the zones the monitor is actively tracking
+        "monitoring_filters": { // Filters used by the Zone Monitor service itself
+            "symbols": monitor_symbols_for_display,
+            "patternTimeframes": monitor_timeframes_for_display,
+            "allowedTradeDays": monitor_allowed_days_for_display
+        }
+    }))
 }
 
 async fn echo(query: web::Query<QueryParams>) -> impl Responder {

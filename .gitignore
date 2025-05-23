@@ -1,4 +1,8 @@
 /target
 .env
 /reports
-logs/backend.logdetected_raw_zones.txt
+logs/backend.log
+detected_raw_zones.txt
+/logs
+stale_zone_checker_log.txt
+

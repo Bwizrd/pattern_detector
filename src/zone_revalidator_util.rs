@@ -101,7 +101,7 @@ fn perform_enrichment_for_revalidation(
     (current_is_active, new_total_touch_count, Some(new_total_bars_active), invalidation_time_found, new_strength_score)
 }
 
-async fn update_zone_in_influxdb(
+pub async fn update_zone_in_influxdb(
     updated_zone: &StoredZone,
     http_client: &HttpClient,
     influx_host: &str, influx_org: &str, influx_token: &str,
