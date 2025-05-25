@@ -339,8 +339,8 @@ impl CombinedDemandRecognizer {
                    (start_idx <= existing_start && end_idx >= existing_end) {
                     
                     // If they overlap substantially, keep only the stronger one
-                    let current_score = m["strength_score"].as_f64().unwrap_or(0.0);
-                    let existing_score = existing["strength_score"].as_f64().unwrap_or(0.0);
+                    // let current_score = m["strength_score"].as_f64().unwrap_or(0.0);
+                    // let existing_score = existing["strength_score"].as_f64().unwrap_or(0.0);
                     
                     overlaps = true;
                     break;

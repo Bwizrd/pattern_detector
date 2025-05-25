@@ -2,7 +2,7 @@
 
 use crate::detect::CandleData; // Assuming CandleData is in detect.rs
 use crate::patterns::PatternRecognizer;
-use crate::trades::{Trade, TradeConfig, TradeDirection, TradeSummary, TradeStatus}; // Keep for trade method stub
+use crate::trades::{Trade, TradeConfig, TradeSummary}; // Keep for trade method stub
 use crate::trading::TradeExecutor; // Keep for trade method stub
 use serde_json::{json, Value};
 
@@ -131,7 +131,7 @@ impl PatternRecognizer for PriceSmaCrossRecognizer {
 
         // 2. Create executor instance (or receive one if framework changes)
         let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER";
-        let mut executor = TradeExecutor::new(config, 
+        let executor = TradeExecutor::new(config, 
             default_symbol_for_recognizer_trade,
             None,
             None);

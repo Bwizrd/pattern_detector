@@ -65,21 +65,21 @@ mod specific_time_entry; // Add declaration
 use crate::trades::{Trade, TradeConfig, TradeSummary};
 use crate::trading::TradeExecutor;
 
-// Export recognizers
-pub use big_bar::BigBarRecognizer;
-pub use bullish_engulfing::BullishEngulfingRecognizer;
-pub use combined_demand::CombinedDemandRecognizer;
-pub use consolidation::ConsolidationRecognizer;
-pub use demand_move_away::DemandMoveAwayRecognizer;
-pub use demand_zone::FlexibleDemandZoneRecognizer;
-pub use drop_base_rally::DropBaseRallyRecognizer;
-pub use pin_bar::PinBarRecognizer;
-pub use rally::RallyRecognizer;
-pub use supply_demand::EnhancedSupplyDemandZoneRecognizer;
-pub use supply_demand_zone_simple::SimpleSupplyDemandZoneRecognizer;
-pub use supply_zone::SupplyZoneRecognizer;
+// // Export recognizers
+// pub use big_bar::BigBarRecognizer;
+// pub use bullish_engulfing::BullishEngulfingRecognizer;
+// pub use combined_demand::CombinedDemandRecognizer;
+// pub use consolidation::ConsolidationRecognizer;
+// pub use demand_move_away::DemandMoveAwayRecognizer;
+// pub use demand_zone::FlexibleDemandZoneRecognizer;
+// pub use drop_base_rally::DropBaseRallyRecognizer;
+// pub use pin_bar::PinBarRecognizer;
+// pub use rally::RallyRecognizer;
+// pub use supply_demand::EnhancedSupplyDemandZoneRecognizer;
+// pub use supply_demand_zone_simple::SimpleSupplyDemandZoneRecognizer;
+// pub use supply_zone::SupplyZoneRecognizer;
 pub use FiftyPercentBeforeBigBar::FiftyPercentBeforeBigBarRecognizer;
-pub use FiftyPercentBodyCandle::FiftyPercentBodyCandleRecognizer;
+// pub use FiftyPercentBodyCandle::FiftyPercentBodyCandleRecognizer;
 pub use ma_crossover::PriceSmaCrossRecognizer;
 pub use specific_time_entry::SpecificTimeEntryRecognizer; 
 // Array of all recognizers - use later when we combine patterns

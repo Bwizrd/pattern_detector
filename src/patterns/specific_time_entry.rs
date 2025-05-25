@@ -2,7 +2,7 @@
 
 use crate::detect::CandleData;
 use crate::patterns::PatternRecognizer;
-use crate::trades::{Trade, TradeConfig, TradeDirection, TradeSummary, TradeStatus};
+use crate::trades::{Trade, TradeConfig, TradeSummary};
 use crate::trading::TradeExecutor;
 use serde_json::{json, Value};
 use chrono::{DateTime, Timelike, Datelike, Utc, Weekday}; // Import needed chrono items
@@ -69,7 +69,7 @@ impl PatternRecognizer for SpecificTimeEntryRecognizer {
         log::info!("Specific Time TRADE: Delegating to executor.");
         let pattern_data = self.detect(candles);
         let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
-        let mut executor = TradeExecutor::new(config, 
+        let executor = TradeExecutor::new(config, 
             default_symbol_for_recognizer_trade,
             None,
             None);

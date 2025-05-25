@@ -46,7 +46,7 @@ impl PatternRecognizer for FiftyPercentBodyCandleRecognizer {
         // Identify all 50% body candles
         let mut fifty_percent_candles = Vec::new();
         
-        for (i, candle) in candles.iter().enumerate() {
+        for (_i, candle) in candles.iter().enumerate() {
             let body_size = (candle.close - candle.open).abs();
             let candle_range = candle.high - candle.low;
             

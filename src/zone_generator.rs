@@ -595,7 +595,7 @@ pub async fn run_zone_generation(
     let read_bucket = env::var("INFLUXDB_BUCKET")?;
     let write_bucket = env::var("GENERATOR_WRITE_BUCKET")?;
     let trendbar_measurement = env::var("GENERATOR_TRENDBAR_MEASUREMENT")?;
-    let zone_measurement = env::var("GENERATOR_ZONE_MEASUREMENT")?;
+    // let zone_measurement = env::var("GENERATOR_ZONE_MEASUREMENT")?;
 
     let patterns_str = env::var("GENERATOR_PATTERNS")?;
     let patterns: Vec<String> = patterns_str

@@ -4,7 +4,7 @@ use crate::trades::{Trade, TradeConfig, TradeDirection, TradeStatus};
 use serde_json::Value;
 // use std::collections::HashMap; // Commented out as zone_trade_counts is not used currently
 use chrono::{DateTime, Utc, Weekday, Timelike, Datelike}; // Added Datelike
-use log::{debug, error, info, warn, trace}; // Added log macros
+use log::{debug, info, warn, trace}; // Added log macros
 
 // Commenting out PendingZoneTrade as it's not directly used in the current flow
 // #[derive(Debug, Clone)]

@@ -152,7 +152,7 @@ pub struct BulkActiveZonesResponse {
 pub fn deserialize_raw_zone_value(zone_json: &Value) -> Result<EnrichedZone, String> {
     // Attempt direct deserialization first
     match serde_json::from_value::<EnrichedZone>(zone_json.clone()) {
-        Ok(mut zone) => {
+        Ok(zone) => {
             // Post-deserialization checks or defaults if needed
             if zone.zone_id.is_none() {
                 // We expect the enrichment logic to add this now if missing

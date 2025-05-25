@@ -1,10 +1,10 @@
 // src/admin_handlers.rs
-use actix_web::{web, HttpResponse, Responder, post};
+use actix_web::{web, HttpResponse, Responder};
 use std::sync::Arc;
 use reqwest::Client as HttpClient;
 use std::env;
 use crate::zone_revalidator_util::revalidate_one_zone_activity_by_id;
-use crate::types::StoredZone; // Import StoredZone if not already
+// use crate::types::StoredZone; // Import StoredZone if not already
 use log::{info, error};
 use serde_json::json;
 

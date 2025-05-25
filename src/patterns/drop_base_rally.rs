@@ -213,7 +213,7 @@ impl DropBaseRallyRecognizer {
         let drop_idx = start_idx;
         
         // Find base candles
-        let mut base_start_idx = drop_idx + 1;
+        let base_start_idx = drop_idx + 1;
         let mut base_end_idx = base_start_idx;
         let mut base_high = f64::MIN;
         let mut base_low = f64::MAX;

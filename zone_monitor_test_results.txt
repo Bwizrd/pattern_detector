@@ -1,0 +1,328 @@
+
+=== Testing Supply Zone Touch Counting Consistency ===
+=====================================================
+
+Generator Analysis:
+Generator: Zone test_supply_123 touched (total touches: 1)
+Generator: Zone test_supply_123 invalidated by candle at 2025-05-16T13:00:00Z
+Generator Result: Active=false, Touches=1, Bars=Some(4)
+
+Zone Monitor Analysis (ACTUAL REAL CODE):
+🧪 TEST: Starting test_actual_zone_monitor_logic
+🧪 TEST: Processing 4 candles
+🧪 TEST: Processing candle 1/4: 2025-05-16T10:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.081,"high":1.082,"isNewBar":true,"low":1.079,"open":1.08,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T10:00:00Z","timeframe":"1h","volume":1000}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T10:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T10:00:00Z
+   Bar: High=1.082000, Low=1.079000
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.082000 > 1.085000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: false
+   Touch check: entry_price=1.082000, proximal=1.083000, touched=false
+   Was outside zone: true
+   📍 No touch detected
+   Updated outside_zone status: true
+   Final zone active status: true
+---
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T10:00:00Z -> Active: true, Touches: 0
+🧪 TEST: Processing candle 2/4: 2025-05-16T11:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0825,"high":1.0835,"isNewBar":true,"low":1.08,"open":1.081,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T11:00:00Z","timeframe":"1h","volume":1100}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T11:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T11:00:00Z
+   Bar: High=1.083500, Low=1.080000
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.083500 > 1.085000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: false
+   Touch check: entry_price=1.083500, proximal=1.083000, touched=true
+   Was outside zone: true
+   ✨ TOUCH COUNTED! Live touches: 1, Historical: 0
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T11:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Processing candle 3/4: 2025-05-16T12:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.084,"high":1.0845,"isNewBar":true,"low":1.0815,"open":1.0825,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T12:00:00Z","timeframe":"1h","volume":1200}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T12:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T12:00:00Z
+   Bar: High=1.084500, Low=1.081500
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.084500 > 1.085000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: true
+   ⏭️ SKIPPING: Trade already attempted this cycle
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T12:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Processing candle 4/4: 2025-05-16T13:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0855,"high":1.086,"isNewBar":true,"low":1.083,"open":1.084,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T13:00:00Z","timeframe":"1h","volume":1300}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T13:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T13:00:00Z
+   Bar: High=1.086000, Low=1.083000
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.086000 > 1.085000 = true
+🚨 INVALIDATION TRIGGERED! Setting zone inactive.
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T13:00:00Z -> Active: false, Touches: 1
+🧪 TEST: Zone became inactive, stopping processing
+Zone Monitor Result: Active=false, Live Touches=1
+
+Consistency Check:
+Active Status: Generator=false, Monitor=false -> MATCH
+Touch Count: Generator=1, Monitor=1 -> MATCH
+
+=== Testing Demand Zone Touch Counting Consistency ===
+======================================================
+
+Generator Analysis:
+Generator: Zone test_demand_456 touched (total touches: 1)
+Generator: Zone test_demand_456 invalidated by candle at 2025-05-16T12:00:00Z
+Generator Result: Active=false, Touches=1, Bars=Some(3)
+
+Zone Monitor Analysis (ACTUAL REAL CODE):
+🧪 TEST: Starting test_actual_zone_monitor_logic
+🧪 TEST: Processing 3 candles
+🧪 TEST: Processing candle 1/3: 2025-05-16T10:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0818,"high":1.083,"isNewBar":true,"low":1.0815,"open":1.0825,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T10:00:00Z","timeframe":"1h","volume":1000}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T10:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_demand_456"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_demand_456")
+   Zone Type: demand_zone (is_supply: false)
+   Bar Time: 2025-05-16T10:00:00Z
+   Bar: High=1.083000, Low=1.081500
+   Zone: High=1.082000, Low=1.080000
+   Proximal Line: 1.082000
+   Distal Line: 1.080000
+   Demand invalidation check: 1.081500 < 1.080000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: false
+   Touch check: entry_price=1.081500, proximal=1.082000, touched=true
+   Was outside zone: true
+   ✨ TOUCH COUNTED! Live touches: 1, Historical: 0
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T10:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Processing candle 2/3: 2025-05-16T11:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0815,"high":1.0825,"isNewBar":true,"low":1.081,"open":1.0818,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T11:00:00Z","timeframe":"1h","volume":1100}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T11:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_demand_456"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_demand_456")
+   Zone Type: demand_zone (is_supply: false)
+   Bar Time: 2025-05-16T11:00:00Z
+   Bar: High=1.082500, Low=1.081000
+   Zone: High=1.082000, Low=1.080000
+   Proximal Line: 1.082000
+   Distal Line: 1.080000
+   Demand invalidation check: 1.081000 < 1.080000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: true
+   ⏭️ SKIPPING: Trade already attempted this cycle
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T11:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Processing candle 3/3: 2025-05-16T12:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0798,"high":1.082,"isNewBar":true,"low":1.0795,"open":1.0815,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T12:00:00Z","timeframe":"1h","volume":1200}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T12:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_demand_456"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_demand_456")
+   Zone Type: demand_zone (is_supply: false)
+   Bar Time: 2025-05-16T12:00:00Z
+   Bar: High=1.082000, Low=1.079500
+   Zone: High=1.082000, Low=1.080000
+   Proximal Line: 1.082000
+   Distal Line: 1.080000
+   Demand invalidation check: 1.079500 < 1.080000 = true
+🚨 INVALIDATION TRIGGERED! Setting zone inactive.
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T12:00:00Z -> Active: false, Touches: 1
+🧪 TEST: Zone became inactive, stopping processing
+Zone Monitor Result: Active=false, Live Touches=1
+
+Consistency Check:
+Active Status: Generator=false, Monitor=false -> MATCH
+Touch Count: Generator=1, Monitor=1 -> MATCH
+
+=== Testing Zone Invalidation Timing ===
+========================================
+Generator: Zone test_supply_123 touched (total touches: 1)
+Generator: Zone test_supply_123 invalidated by candle at 2025-05-16T11:00:00Z
+🧪 TEST: Starting test_actual_zone_monitor_logic
+🧪 TEST: Processing 3 candles
+🧪 TEST: Processing candle 1/3: 2025-05-16T10:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0835,"high":1.0845,"isNewBar":true,"low":1.0825,"open":1.083,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T10:00:00Z","timeframe":"1h","volume":1000}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T10:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T10:00:00Z
+   Bar: High=1.084500, Low=1.082500
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.084500 > 1.085000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: false
+   Touch check: entry_price=1.084500, proximal=1.083000, touched=true
+   Was outside zone: true
+   ✨ TOUCH COUNTED! Live touches: 1, Historical: 0
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T10:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Processing candle 2/3: 2025-05-16T11:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0845,"high":1.0855,"isNewBar":true,"low":1.083,"open":1.0835,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T11:00:00Z","timeframe":"1h","volume":1100}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T11:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T11:00:00Z
+   Bar: High=1.085500, Low=1.083000
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.085500 > 1.085000 = true
+🚨 INVALIDATION TRIGGERED! Setting zone inactive.
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T11:00:00Z -> Active: false, Touches: 1
+🧪 TEST: Zone became inactive, stopping processing
+Invalidation Test Results:
+Generator: Active=false, Touches=1
+Monitor: Active=false, Touches=1
+
+=== Testing Edge Case: Exact Price Touches ===
+==============================================
+Generator: Zone test_supply_123 touched (total touches: 1)
+🧪 TEST: Starting test_actual_zone_monitor_logic
+🧪 TEST: Processing 2 candles
+🧪 TEST: Processing candle 1/2: 2025-05-16T10:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.0825,"high":1.083,"isNewBar":true,"low":1.082,"open":1.0825,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T10:00:00Z","timeframe":"1h","volume":1000}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T10:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T10:00:00Z
+   Bar: High=1.083000, Low=1.082000
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.083000 > 1.085000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: false
+   Touch check: entry_price=1.083000, proximal=1.083000, touched=true
+   Was outside zone: true
+   ✨ TOUCH COUNTED! Live touches: 1, Historical: 0
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T10:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Processing candle 2/2: 2025-05-16T11:00:00Z
+🧪 TEST: Created bar JSON: {"close":1.084,"high":1.085,"isNewBar":true,"low":1.082,"open":1.0825,"symbol":"EURUSD_SB","symbolId":185,"time":"2025-05-16T11:00:00Z","timeframe":"1h","volume":1100}
+🧪 TEST: Successfully deserialized BarUpdateData
+🧪 TEST: About to call process_bar_live_touch
+🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: EURUSD_SB at 2025-05-16T11:00:00Z
+📦 Cache has 1 zones
+🎯 Processing zone: "test_supply_123"
+   Zone active: true
+   Zone symbol: Some("EURUSD_SB")
+   Bar symbol: EURUSD_SB
+🔍 INVALIDATION CHECK
+   Zone ID: Some("test_supply_123")
+   Zone Type: supply_zone (is_supply: true)
+   Bar Time: 2025-05-16T11:00:00Z
+   Bar: High=1.085000, Low=1.082000
+   Zone: High=1.085000, Low=1.083000
+   Proximal Line: 1.083000
+   Distal Line: 1.085000
+   Supply invalidation check: 1.085000 > 1.085000 = false
+✅ No invalidation - zone remains active
+   Trade attempted: true
+   ⏭️ SKIPPING: Trade already attempted this cycle
+🧪 TEST: Returned from process_bar_live_touch
+Processed bar: 2025-05-16T11:00:00Z -> Active: true, Touches: 1
+🧪 TEST: Finished processing all candles
+Exact Touch Test Results:
+Generator: Active=true, Touches=1
+Monitor: Active=true, Touches=1

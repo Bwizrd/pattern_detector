@@ -26,7 +26,7 @@ const ORDER_PLACEMENT_URL_BASE: &str = "http://localhost:"; // Port will be adde
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct BarUpdateData {
+pub struct BarUpdateData {
     time: String,
     open: f64,
     high: f64,
@@ -51,6 +51,7 @@ pub struct LiveZoneState {
     pub zone_data: StoredZone,
     pub live_touches_this_cycle: i64,
     pub trade_attempted_this_cycle: bool,
+    pub is_outside_zone: bool,
 }
 
 pub type ActiveZoneCache = Arc<Mutex<HashMap<String, LiveZoneState>>>;
@@ -163,6 +164,7 @@ async fn fetch_and_cache_active_zones(
                 zone_data: zone_db,
                 live_touches_this_cycle: 0,
                 trade_attempted_this_cycle: false,
+                is_outside_zone: true,  // Initialize as outside zone - FIX APPLIED
             });
         }
     }
@@ -281,7 +283,7 @@ pub async fn run_zone_monitor_service(passed_in_cache: ActiveZoneCache) {
     }
 }
 
-async fn process_bar_live_touch(
+pub async fn process_bar_live_touch(
     bar: BarUpdateData,
     zone_cache: ActiveZoneCache,
     _sl_pips: f64,
@@ -292,14 +294,44 @@ async fn process_bar_live_touch(
     order_placement_url: &str,
     http_client: &Arc<HttpClient>,
 ) {
+    // Add debug function for writing to test file
+    let write_debug = |msg: &str| {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("zone_monitor_test_results.txt") {
+            let _ = writeln!(file, "{}", msg);
+        }
+    };
+    
+    write_debug(&format!("🚀 PROCESS_BAR_LIVE_TOUCH CALLED - Bar: {} at {}", bar.symbol, bar.time));
+    
     let mut cache_guard = zone_cache.lock().await;
+    
+    write_debug(&format!("📦 Cache has {} zones", cache_guard.len()));
+    
+    if cache_guard.is_empty() {
+        write_debug("❌ CACHE IS EMPTY - NO ZONES TO PROCESS!");
+        return;
+    }
 
-    for (_zone_id, live_zone_state) in cache_guard.iter_mut() {
-        if live_zone_state.trade_attempted_this_cycle { continue; }
-        if !live_zone_state.zone_data.is_active { continue; }
+    for (zone_id, live_zone_state) in cache_guard.iter_mut() {
+        write_debug(&format!("🎯 Processing zone: {:?}", zone_id));
+        write_debug(&format!("   Zone active: {}", live_zone_state.zone_data.is_active));
+        write_debug(&format!("   Zone symbol: {:?}", live_zone_state.zone_data.symbol));
+        write_debug(&format!("   Bar symbol: {}", bar.symbol));
+        
+        // CRITICAL FIX: Only check active status and symbol match first
+        // DO NOT check trade_attempted_this_cycle yet - invalidation must be checked first
+        if !live_zone_state.zone_data.is_active { 
+            write_debug("   ⏭️ SKIPPING: Zone is not active");
+            continue; 
+        }
 
         if let Some(zone_symbol) = &live_zone_state.zone_data.symbol {
-            if zone_symbol != &bar.symbol { continue; }
+            if zone_symbol != &bar.symbol { 
+                write_debug(&format!("   ⏭️ SKIPPING: Symbol mismatch - zone: {}, bar: {}", zone_symbol, bar.symbol));
+                continue; 
+            }
 
             if let (Some(zone_high_val), Some(zone_low_val), Some(zone_type_str)) =
                 (&live_zone_state.zone_data.zone_high, &live_zone_state.zone_data.zone_low, &live_zone_state.zone_data.zone_type)
@@ -317,15 +349,69 @@ async fn process_bar_live_touch(
                     continue;
                 }
 
-                let mut touched_this_bar = false;
-                if (trade_side_for_api == 1 && entry_price_check_against_bar >= proximal_line) ||
-                   (trade_side_for_api == 0 && entry_price_check_against_bar <= proximal_line) {
-                    touched_this_bar = true;
+                // CRITICAL FIX: Check for invalidation FIRST (matches Generator logic)
+                let zone_type_is_supply = zone_type_str.eq_ignore_ascii_case("supply") || 
+                                         zone_type_str.eq_ignore_ascii_case("supply_zone");
+
+                let distal_line = if zone_type_is_supply {
+                    *zone_high_val  // For supply zones, distal line is the high
+                } else {
+                    *zone_low_val   // For demand zones, distal line is the low
+                };
+
+                // DEBUG: Write all values to test file
+                write_debug("🔍 INVALIDATION CHECK");
+                write_debug(&format!("   Zone ID: {:?}", live_zone_state.zone_data.zone_id));
+                write_debug(&format!("   Zone Type: {} (is_supply: {})", zone_type_str, zone_type_is_supply));
+                write_debug(&format!("   Bar Time: {}", bar.time));
+                write_debug(&format!("   Bar: High={:.6}, Low={:.6}", bar.high, bar.low));
+                write_debug(&format!("   Zone: High={:.6}, Low={:.6}", zone_high_val, zone_low_val));
+                write_debug(&format!("   Proximal Line: {:.6}", proximal_line));
+                write_debug(&format!("   Distal Line: {:.6}", distal_line));
+
+                // Check if zone should be invalidated
+                let should_invalidate = if zone_type_is_supply {
+                    let result = bar.high > distal_line;
+                    write_debug(&format!("   Supply invalidation check: {:.6} > {:.6} = {}", bar.high, distal_line, result));
+                    result
+                } else {
+                    let result = bar.low < distal_line;
+                    write_debug(&format!("   Demand invalidation check: {:.6} < {:.6} = {}", bar.low, distal_line, result));
+                    result
+                };
+
+                if should_invalidate {
+                    write_debug("🚨 INVALIDATION TRIGGERED! Setting zone inactive.");
+                    live_zone_state.zone_data.is_active = false;
+                    info!("[ZONE_INVALIDATED] Zone {} invalidated by bar high/low: {:.5}/{:.5}, distal: {:.5}",
+                          live_zone_state.zone_data.zone_id.as_deref().unwrap_or("N/A"), 
+                          bar.high, bar.low, distal_line);
+                    continue; // Skip to next zone, this one is invalidated
+                } else {
+                    write_debug("✅ No invalidation - zone remains active");
                 }
 
-                if touched_this_bar {
+                // CRITICAL FIX: NOW check trade attempt status AFTER invalidation check
+                write_debug(&format!("   Trade attempted: {}", live_zone_state.trade_attempted_this_cycle));
+                if live_zone_state.trade_attempted_this_cycle { 
+                    write_debug("   ⏭️ SKIPPING: Trade already attempted this cycle");
+                    continue; 
+                }
+
+                let touched_this_bar = (trade_side_for_api == 1 && entry_price_check_against_bar >= proximal_line) ||
+                                      (trade_side_for_api == 0 && entry_price_check_against_bar <= proximal_line);
+
+                write_debug(&format!("   Touch check: entry_price={:.6}, proximal={:.6}, touched={}", 
+                         entry_price_check_against_bar, proximal_line, touched_this_bar));
+                write_debug(&format!("   Was outside zone: {}", live_zone_state.is_outside_zone));
+
+                // MAJOR FIX: Only count touch if we were previously outside the zone (matches Generator logic)
+                if touched_this_bar && live_zone_state.is_outside_zone {
                     live_zone_state.live_touches_this_cycle += 1;
                     let historical_touches = live_zone_state.zone_data.touch_count.unwrap_or(0);
+
+                    write_debug(&format!("   ✨ TOUCH COUNTED! Live touches: {}, Historical: {}", 
+                             live_zone_state.live_touches_this_cycle, historical_touches));
 
                     info!("[LIVE_TOUCH] Zone {} ({}) for {} LIVE touched. Live/Hist Touches: {}/{}. Bar Price: {:.5}, Proximal: {:.5}",
                           live_zone_state.zone_data.zone_id.as_deref().unwrap_or("N/A"), zone_type_str, bar.symbol,
@@ -339,7 +425,10 @@ async fn process_bar_live_touch(
                         if !allowed_days.contains(&now_utc.weekday()) {
                             info!("[TRADE_REJECT] Zone {}: Today ({:?}) not in allowed days ({:?}).",
                                   live_zone_state.zone_data.zone_id.as_deref().unwrap_or("N/A"), now_utc.weekday(), allowed_days);
-                            live_zone_state.trade_attempted_this_cycle = true; continue;
+                            live_zone_state.trade_attempted_this_cycle = true; 
+                            // Update outside zone state and continue
+                            live_zone_state.is_outside_zone = !touched_this_bar;
+                            continue;
                         }
 
                         info!("[TRADE_ATTEMPT] Placing trade for zone {} (Symbol: {}, Side: {})!",
@@ -377,7 +466,17 @@ async fn process_bar_live_touch(
                               live_zone_state.zone_data.zone_id.as_deref().unwrap_or("N/A"),
                               live_zone_state.live_touches_this_cycle, historical_touches);
                     }
+                } else if touched_this_bar {
+                    write_debug("   📍 Touch detected but was already inside zone - not counting");
+                } else {
+                    write_debug("   📍 No touch detected");
                 }
+
+                // CRITICAL FIX: Always update the outside zone state after processing (matches Generator logic)
+                live_zone_state.is_outside_zone = !touched_this_bar;
+                write_debug(&format!("   Updated outside_zone status: {}", live_zone_state.is_outside_zone));
+                write_debug(&format!("   Final zone active status: {}", live_zone_state.zone_data.is_active));
+                write_debug("---");
             }
         }
     }
