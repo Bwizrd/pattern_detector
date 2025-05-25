@@ -65,18 +65,21 @@ pub async fn get_ui_active_zones_handler(
         .values()
         .map(|live_state| live_state.zone_data.clone())
         .collect();
-    
+
     // The zones in zones_list are ALREADY the ones the Zone Monitor Service
     // deemed relevant based on its ZONE_MONITOR_SYMBOLS and ZONE_MONITOR_PATTERNTFS
     // when it populated its cache from InfluxDB (after filtering for is_active=true).
 
-    log::info!("[UI_ACTIVE_ZONES_HANDLER] Returning {} active zones from Zone Monitor's cache.", zones_list.len());
+    log::info!(
+        "[UI_ACTIVE_ZONES_HANDLER] Returning {} active zones from Zone Monitor's cache.",
+        zones_list.len()
+    );
 
     // For the UI to display what filters the *Zone Monitor* is using,
     // those env vars could be read once and stored, or simply understood by the user.
     // If you want to display them, this handler could read them.
-    let monitor_symbols_for_display = env::var("ZONE_MONITOR_SYMBOLS")
-        .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+    let monitor_symbols_for_display =
+        env::var("ZONE_MONITOR_SYMBOLS").unwrap_or_else(|_| "Defaults used by monitor".to_string());
     let monitor_timeframes_for_display = env::var("ZONE_MONITOR_PATTERNTFS")
         .unwrap_or_else(|_| "Defaults used by monitor".to_string());
     let monitor_allowed_days_for_display = env::var("STRATEGY_ALLOWED_DAYS")
@@ -150,11 +153,22 @@ async fn main() -> std::io::Result<()> {
 
     let shared_http_client = Arc::new(HttpClient::new());
 
-    let http_client_for_stale_checker = Arc::clone(&shared_http_client);
-    tokio::spawn(stale_zone_checker::run_stale_zone_check_service(
-        http_client_for_stale_checker,
-    ));
-    log::info!("[MAIN] Stale Zone Check Service spawned.");
+    let enable_stale_checker = env::var("STALE_ZONE_CHECKER_ON")
+        .map(|val| val.trim().to_lowercase() == "true")
+        .unwrap_or(true); // Default to true if not set
+
+    if enable_stale_checker {
+        let http_client_for_stale_checker = Arc::clone(&shared_http_client);
+        tokio::spawn(stale_zone_checker::run_stale_zone_check_service(
+            http_client_for_stale_checker,
+        ));
+        log::info!("[MAIN] Stale Zone Check Service spawned.");
+    } else {
+        log::info!(
+            "[MAIN] Stale Zone Check Service is DISABLED via STALE_ZONE_CHECKER_ON='{}'.",
+            env::var("STALE_ZONE_CHECKER_ON").unwrap_or_else(|_| "not set".to_string())
+        );
+    }
 
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port_str = env::var("PORT").unwrap_or_else(|_| "8080".to_string());

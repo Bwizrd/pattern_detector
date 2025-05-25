@@ -2030,3 +2030,223 @@ pub async fn fetch_candles_direct(
     debug!("[FETCH_CANDLES_DIRECT] Parsed {} candles for {}/{}", candles.len(), symbol, timeframe);
     Ok(candles)
 }
+
+// Add this to detect.rs - extracted from get_bulk_multi_tf_active_zones_handler
+pub fn enrich_zones_with_activity(
+    zones_option: Option<&Vec<Value>>,
+    is_supply: bool,
+    candles: &[CandleData],
+    candle_count: usize,
+    last_candle_time: Option<String>,
+    symbol: &str,
+    timeframe: &str,
+) -> Result<Vec<crate::types::EnrichedZone>, String> {
+    let mut processed_zones: Vec<crate::types::EnrichedZone> = Vec::new();
+    let zone_type_str = if is_supply { "supply" } else { "demand" };
+    let mut zone_counter = 0;
+
+    if let Some(zones) = zones_option {
+        info!(
+            "[ENRICH_ZONES] Processing {} {} zones for {}/{}",
+            zones.len(), zone_type_str, symbol, timeframe
+        );
+        
+        for zone_json in zones.iter() {
+            zone_counter += 1;
+            // --- 1. Deserialize the base zone ---
+            let mut enriched_zone_struct = match crate::types::deserialize_raw_zone_value(zone_json) {
+                Ok(mut z) => {
+                    if z.zone_id.is_none() {
+                        let symbol_for_id = symbol;
+                        let zone_type_for_id = if is_supply { "supply" } else { "demand" };
+                        let id = generate_deterministic_zone_id(
+                            symbol_for_id,
+                            timeframe,
+                            zone_type_for_id,
+                            z.start_time.as_deref(),
+                            z.zone_high,
+                            z.zone_low,
+                        );
+                        info!("[ENRICH_ZONES] Generated Zone ID {} for {} zone #{}", id, zone_type_str, zone_counter);
+                        z.zone_id = Some(id);
+                    }
+                    if z.zone_type.is_none() {
+                        z.zone_type = Some(format!("{}_zone", zone_type_str));
+                    }
+                    z
+                }
+                Err(e) => {
+                    error!("[ENRICH_ZONES] Deserialize failed for {} zone #{}: {}. Value: {:?}", zone_type_str, zone_counter, e, zone_json);
+                    continue; // Skip this zone if deserialization fails
+                }
+            };
+            
+            enriched_zone_struct.last_data_candle = last_candle_time.clone();
+            let zone_id_log = enriched_zone_struct.zone_id.as_deref().unwrap_or("UNKNOWN");
+
+            // --- 2. Get Essential Info for Tracking ---
+            let formation_end_idx = match enriched_zone_struct.end_idx {
+                Some(idx) => idx as usize,
+                None => {
+                    warn!("[ENRICH_ZONES] {} zone {} (ID: {}) missing 'end_idx'. Skipping.", zone_type_str, zone_counter, zone_id_log);
+                    continue;
+                }
+            };
+            let zone_high = match enriched_zone_struct.zone_high {
+                Some(val) if val.is_finite() => val,
+                _ => {
+                    warn!("[ENRICH_ZONES] {} zone {} (ID: {}) missing/invalid 'zone_high'. Skipping.", zone_type_str, zone_counter, zone_id_log);
+                    continue;
+                }
+            };
+            let zone_low = match enriched_zone_struct.zone_low {
+                Some(val) if val.is_finite() => val,
+                _ => {
+                    warn!("[ENRICH_ZONES] {} zone {} (ID: {}) missing/invalid 'zone_low'. Skipping.", zone_type_str, zone_counter, zone_id_log);
+                    continue;
+                }
+            };
+            let (proximal_line, distal_line) = if is_supply {
+                (zone_low, zone_high) // Supply: Proximal=Low, Distal=High
+            } else {
+                (zone_high, zone_low) // Demand: Proximal=High, Distal=Low
+            };
+
+            debug!("[ENRICH_ZONES] Enriching {} zone #{} (ID: {}), FormedEndIdx: {}, H: {}, L: {}, P: {}, D: {}", zone_type_str, zone_counter, zone_id_log, formation_end_idx, zone_high, zone_low, proximal_line, distal_line);
+
+            // --- 3. Initialize Tracking Variables ---
+            let mut is_currently_active = true; // Assume active initially
+            let mut touch_count: i64 = 0;
+            let mut first_invalidation_idx: Option<usize> = None; // Distal break ONLY
+            // **** STATE FLAG: Initialize to true, price is outside right after formation ****
+            let mut is_outside_zone = true;
+            let mut current_touch_points: Vec<crate::types::TouchPoint> = Vec::new();
+
+            // --- 4. Loop Through Candles *After* Formation ---
+            let check_start_idx = formation_end_idx + 1;
+            if check_start_idx < candle_count {
+                for i in check_start_idx..candle_count {
+                    // Stop checking if the zone is no longer active (distal break)
+                    if !is_currently_active {
+                        break;
+                    }
+
+                    let candle = &candles[i];
+                    if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+                        continue; // Skip malformed candles
+                    }
+
+                    let mut interaction_occurred = false;
+                    let mut interaction_price = 0.0;
+
+                    // --- Check for Invalidation (Distal Breach) ---
+                    // This check determines if the zone is *still* active
+                    if is_supply {
+                        // Supply invalidated if candle HIGH goes ABOVE distal line (zone_high)
+                        if candle.high > distal_line {
+                            is_currently_active = false;
+                            if first_invalidation_idx.is_none() {
+                                first_invalidation_idx = Some(i);
+                            }
+                            debug!("[ENRICH_ZONES] Supply zone {} (ID: {}) invalidated at index {}", zone_counter, zone_id_log, i);
+                            break; // Stop processing this zone after invalidation
+                        }
+                    } else {
+                        // Demand invalidated if candle LOW goes BELOW distal line (zone_low)
+                        if candle.low < distal_line {
+                            is_currently_active = false;
+                            if first_invalidation_idx.is_none() {
+                                first_invalidation_idx = Some(i);
+                            }
+                            debug!("[ENRICH_ZONES] Demand zone {} (ID: {}) invalidated at index {}", zone_counter, zone_id_log, i);
+                            break; // Stop processing this zone after invalidation
+                        }
+                    }
+
+                    // --- Check for Interaction (Proximal Breach) ---
+                    // This check determines if the candle *entered* or *touched* the zone
+                    // Only check if the zone hasn't been invalidated by the distal check above
+                    if is_supply {
+                        // Supply interaction if candle HIGH reaches or crosses proximal line (zone_low)
+                        if candle.high >= proximal_line {
+                            interaction_occurred = true;
+                            interaction_price = candle.high; // Price at interaction point
+                        }
+                    } else {
+                        // Demand interaction if candle LOW reaches or crosses proximal line (zone_high)
+                        if candle.low <= proximal_line {
+                            interaction_occurred = true;
+                            interaction_price = candle.low; // Price at interaction point
+                        }
+                    }
+
+                    // --- Record Interaction and Increment Count ONLY IF transitioning from OUTSIDE ---
+                    if interaction_occurred && is_outside_zone {
+                        touch_count += 1; // Count this as one "touch" event (entry)
+                        current_touch_points.push(crate::types::TouchPoint {
+                            time: candle.time.clone(),
+                            price: interaction_price,
+                        });
+                        debug!("[ENRICH_ZONES] Zone {} (ID: {}) ENTRY recorded at index {}. Price: {}. Total Touches: {}", zone_counter, zone_id_log, i, interaction_price, touch_count);
+                    }
+
+                    // --- Update State for the NEXT candle's check ---
+                    // If interaction occurred, we are now inside/touching, so not "outside" for the next candle.
+                    // If no interaction occurred, we remain outside.
+                    is_outside_zone = !interaction_occurred;
+
+                } // End candle loop (for i in check_start_idx..candle_count)
+            } else {
+                debug!("[ENRICH_ZONES] Zone {} (ID: {}) - No candles after formation index {}.", zone_counter, zone_id_log, formation_end_idx);
+            }
+
+            // --- 5. Finalize Enrichment ---
+            enriched_zone_struct.is_active = is_currently_active;
+            enriched_zone_struct.touch_count = Some(touch_count); // Set the final calculated touch count
+            if !current_touch_points.is_empty() {
+                enriched_zone_struct.touch_points = Some(current_touch_points);
+            } else {
+                enriched_zone_struct.touch_points = None; // Explicitly set to None if no touches were recorded
+            }
+
+            // Populate invalidation/end fields only if the zone was invalidated
+            if !is_currently_active {
+                enriched_zone_struct.invalidation_time = first_invalidation_idx
+                    .and_then(|idx| candles.get(idx)) // Safely get candle
+                    .map(|c| c.time.clone());
+                enriched_zone_struct.zone_end_idx = first_invalidation_idx.map(|idx| idx as u64);
+                enriched_zone_struct.zone_end_time = enriched_zone_struct.invalidation_time.clone(); // Reuse invalidation time
+            } else {
+                // Ensure these are None if the zone is still active
+                enriched_zone_struct.invalidation_time = None;
+                enriched_zone_struct.zone_end_idx = None;
+                enriched_zone_struct.zone_end_time = None;
+            }
+
+            // Calculate bars_active based on when invalidation happened or end of data
+            let end_event_idx = first_invalidation_idx.unwrap_or(candle_count); // End index is invalidation or last candle index + 1
+            if end_event_idx > check_start_idx { // Ensure end is after start
+                enriched_zone_struct.bars_active = Some((end_event_idx - check_start_idx) as u64);
+            } else {
+                enriched_zone_struct.bars_active = Some(0); // 0 bars if invalidated immediately or no candles after
+            }
+
+            // Calculate strength score based on the corrected touch count
+            let score_raw = 100.0 - (touch_count as f64 * 10.0); // Example scoring
+            enriched_zone_struct.strength_score = Some(score_raw.max(0.0)); // Ensure score is not negative
+
+            debug!("[ENRICH_ZONES] Zone {} (ID: {}) Final Status: Active={}, Touches={}, BarsActive={:?}, InvalidatedT={:?}",
+                zone_counter, zone_id_log,
+                enriched_zone_struct.is_active, enriched_zone_struct.touch_count.unwrap_or(0), enriched_zone_struct.bars_active,
+                enriched_zone_struct.invalidation_time.is_some()
+            );
+
+            processed_zones.push(enriched_zone_struct);
+        } // End loop through zones (for zone_json in zones.iter())
+    } else {
+        // This case means the key (e.g., "supply_zones") existed, but its "zones" array was null or missing.
+        info!("[ENRICH_ZONES] No raw {} zones found in detection results structure (key existed but 'zones' was empty/null).", zone_type_str);
+    }
+    
+    Ok(processed_zones)
+}
