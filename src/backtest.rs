@@ -329,7 +329,7 @@ pub async fn run_backtest(
         default_stop_loss_pips: request_params.stop_loss_pips,
         default_take_profit_pips: request_params.take_profit_pips,
         risk_percent: 1.0,
-        max_trades_per_pattern: 2, // Example value, adjust as needed
+        // max_trades_per_pattern: 1, // This only works for now ommitted or set to 1, needs a fix in the zone recognizer if more than 1 is wanted
         enable_trailing_stop: false, // Example value, adjust as needed
         ..Default::default() // Use default for other fields
     };
