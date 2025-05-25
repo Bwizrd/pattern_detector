@@ -26,6 +26,7 @@ mod types;
 mod zone_generator;
 mod zone_monitor_service;
 mod zone_revalidator_util;
+mod optimize_handler;
 
 // --- Use necessary types ---
 use crate::types::StoredZone; // Used by map_csv_to_stored_zone
@@ -297,6 +298,7 @@ async fn main() -> std::io::Result<()> {
                 "/multi-symbol-backtest",
                 web::post().to(multi_backtest_handler::run_multi_symbol_backtest),
             )
+            .route("/optimize-parameters", web::post().to(optimize_handler::run_parameter_optimization))
             .route(
                 "/debug-bulk-zone",
                 web::get().to(detect::debug_bulk_zones_handler),
