@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-T">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optimization Results</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1, h2, h3, h4 {
+            color: #2c3e50;
+            margin-top: 1.5em;
+            margin-bottom: 0.8em;
+        }
+        h1 { font-size: 2em; border-bottom: 2px solid #e0e0e0; padding-bottom: 0.3em;}
+        h2 { font-size: 1.6em; border-bottom: 1px solid #eee; padding-bottom: 0.2em;}
+        h3 { font-size: 1.3em; color: #34495e; }
+        h4 { font-size: 1.1em; color: #7f8c8d; }
+
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            margin-top: 15px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        th, td {
+            border: 1px solid #e0e0e0;
+            padding: 10px 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #ecf0f1;
+            font-weight: 600;
+            color: #34495e;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        td.numeric { text-align: right; }
+        td.positive { color: #27ae60; }
+        td.negative { color: #c0392b; }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .summary-item, .overall-result-item {
+            background-color: #fdfdfd;
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 5px;
+        }
+        .summary-item strong, .overall-result-item strong {
+            display: block;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        .summary-item span, .overall-result-item span { font-size: 1.05em; }
+
+        #loading, #error {
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        #loading { background-color: #eaf6ff; color: #3498db; border: 1px solid #aed6f1; }
+        #error { background-color: #fdedec; color: #c0392b; border: 1px solid #f5b7b1; }
+        .hidden { display: none; }
+
+        /* Form Styles */
+        #paramsForm {
+            display: grid;
+            grid-template-columns: 1fr 1fr; /* Two columns for parameters */
+            gap: 20px 30px; /* Row gap, Column gap */
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            margin-bottom: 6px;
+            font-weight: bold;
+            color: #555;
+        }
+        .form-group input[type="text"],
+        .form-group input[type="number"],
+        .form-group input[type="datetime-local"] {
+            padding: 9px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.95em;
+            box-sizing: border-box; /* Important for padding and border */
+        }
+        .form-group input:focus {
+            border-color: #3498db;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        .form-group small {
+            font-size: 0.8em;
+            color: #777;
+            margin-top: 4px;
+        }
+        .form-group.full-width {
+            grid-column: 1 / -1; /* Span across all columns */
+        }
+        .range-group {
+            border: 1px solid #e0e0e0;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+        .range-group legend {
+            font-weight: bold;
+            color: #34495e;
+            padding: 0 5px;
+        }
+        .range-inputs {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Trading Strategy Optimization</h1>
+
+        <form id="paramsForm">
+            <div class="form-group">
+                <label for="startTime">Start Time:</label>
+                <input type="datetime-local" id="startTime" name="startTime" required>
+            </div>
+            <div class="form-group">
+                <label for="endTime">End Time:</label>
+                <input type="datetime-local" id="endTime" name="endTime" required>
+            </div>
+
+            <div class="form-group">
+                <label for="symbols">Symbols:</label>
+                <input type="text" id="symbols" name="symbols" placeholder="e.g., EURUSD_SB,GBPUSD_SB" required>
+                <small>Comma-separated list</small>
+            </div>
+            <div class="form-group">
+                <label for="patternTimeframes">Pattern Timeframes:</label>
+                <input type="text" id="patternTimeframes" name="patternTimeframes" placeholder="e.g., 15m,30m,1h" required>
+                <small>Comma-separated list</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="lotSize">Lot Size:</label>
+                <input type="number" id="lotSize" name="lotSize" step="0.01" min="0.01" required>
+            </div>
+            <div class="form-group">
+                <label for="allowedTradeDays">Allowed Trade Days:</label>
+                <input type="text" id="allowedTradeDays" name="allowedTradeDays" placeholder="e.g., Mon,Tue,Wed" required>
+                <small>Comma-separated (Mon, Tue, Wed, Thu, Fri, Sat, Sun)</small>
+            </div>
+
+            <div class="form-group full-width">
+                <fieldset class="range-group">
+                    <legend>Stop Loss (SL) Range</legend>
+                    <div class="range-inputs">
+                        <div class="form-group">
+                            <label for="slMin">Min Pips:</label>
+                            <input type="number" id="slMin" name="slMin" step="any" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="slMax">Max Pips:</label>
+                            <input type="number" id="slMax" name="slMax" step="any" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="slStep">Step Pips:</label>
+                            <input type="number" id="slStep" name="slStep" step="any" min="0.01" required>
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+
+            <div class="form-group full-width">
+                <fieldset class="range-group">
+                    <legend>Take Profit (TP) Range</legend>
+                    <div class="range-inputs">
+                        <div class="form-group">
+                            <label for="tpMin">Min Pips:</label>
+                            <input type="number" id="tpMin" name="tpMin" step="any" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpMax">Max Pips:</label>
+                            <input type="number" id="tpMax" name="tpMax" step="any" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="tpStep">Step Pips:</label>
+                            <input type="number" id="tpStep" name="tpStep" step="any" min="0.01" required>
+                        </div>
+                    </div>
+                </fieldset>
+            </div>
+            
+            <div class="form-group">
+                <label for="maxCombinations">Max Combinations (Optional):</label>
+                <input type="number" id="maxCombinations" name="maxCombinations" min="1">
+            </div>
+        </form>
+
+        <button id="runOptimizationBtn">Run Optimization</button>
+
+        <div id="loading" class="hidden">Loading results... This might take a while...</div>
+        <div id="error" class="hidden"></div>
+
+        <div id="resultsArea" class="hidden">
+            <h2>Request Summary</h2>
+            <div id="requestSummary" class="summary-grid"></div>
+            <p><strong>Total Combinations Tested:</strong> <span id="totalCombinationsTested"></span></p>
+
+            <h2>Overall Best & Worst Results</h2>
+            <div class="summary-grid">
+                <div class="overall-result-item">
+                    <strong>Best Performing Combination:</strong>
+                    <div id="bestResultOverall"></div>
+                </div>
+                <div class="overall-result-item">
+                    <strong>Worst Performing Combination:</strong>
+                    <div id="worstResultOverall"></div>
+                </div>
+            </div>
+
+            <h2>Top Parameter Combinations (All Results)</h2>
+            <div id="bestCombinationsTable"></div>
+            
+            <h2>Detailed Results by Timeframe & Symbol</h2>
+            <div id="groupedResults"></div>
+        </div>
+    </div>
+
+    <script>
+        const apiUrl = 'http://localhost:8080/optimize-parameters'; // CHANGE THIS IF YOUR API IS ELSEWHERE
+
+        const paramsForm = document.getElementById('paramsForm');
+        const runOptimizationBtn = document.getElementById('runOptimizationBtn');
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const resultsAreaDiv = document.getElementById('resultsArea');
+
+        const requestSummaryDiv = document.getElementById('requestSummary');
+        const totalCombinationsTestedSpan = document.getElementById('totalCombinationsTested');
+        const bestResultOverallDiv = document.getElementById('bestResultOverall');
+        const worstResultOverallDiv = document.getElementById('worstResultOverall');
+        const bestCombinationsTableDiv = document.getElementById('bestCombinationsTable');
+        const groupedResultsDiv = document.getElementById('groupedResults');
+
+        // Function to format date to RFC3339 / ISO with Z for UTC
+        function toIsoStringWithNZ(date) {
+            const pad = (num) => (num < 10 ? '0' : '') + num;
+            return date.getFullYear() +
+                '-' + pad(date.getMonth() + 1) +
+                '-' + pad(date.getDate()) +
+                'T' + pad(date.getHours()) +
+                ':' + pad(date.getMinutes()) +
+                ':' + pad(date.getSeconds()) +
+                'Z'; // Indicate UTC
+        }
+
+        // Function to format local datetime-local input to UTC ISO string
+        function formatDatetimeLocalToUtcIso(datetimeLocalValue) {
+            if (!datetimeLocalValue) return "";
+            // datetime-local input gives a string like "YYYY-MM-DDTHH:mm"
+            // We interpret this as local time and convert to UTC ISO string
+            const localDate = new Date(datetimeLocalValue);
+            return toIsoStringWithNZ(localDate);
+        }
+
+        // Default Request Parameters and Form Filling
+        function setDefaultFormValues() {
+            const now = new Date();
+            const fifteenDaysAgo = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
+
+            // Format for datetime-local input (YYYY-MM-DDTHH:MM)
+            const toDatetimeLocal = (date) => {
+                 const pad = (num) => (num < 10 ? '0' : '') + num;
+                 return date.getFullYear() +
+                    '-' + pad(date.getMonth() + 1) +
+                    '-' + pad(date.getDate()) +
+                    'T' + pad(date.getHours()) +
+                    ':' + pad(date.getMinutes());
+            };
+
+            document.getElementById('startTime').value = toDatetimeLocal(fifteenDaysAgo);
+            document.getElementById('endTime').value = toDatetimeLocal(now);
+            document.getElementById('symbols').value = "EURUSD_SB,GBPUSD_SB";
+            document.getElementById('patternTimeframes').value = "15m,30m";
+            document.getElementById('lotSize').value = 0.01;
+            document.getElementById('allowedTradeDays').value = "Mon,Tue,Wed,Thu,Fri";
+            
+            document.getElementById('slMin').value = 10;
+            document.getElementById('slMax').value = 30;
+            document.getElementById('slStep').value = 10;
+            
+            document.getElementById('tpMin').value = 20;
+            document.getElementById('tpMax').value = 40;
+            document.getElementById('tpStep').value = 10;
+
+            document.getElementById('maxCombinations').value = 100;
+        }
+        setDefaultFormValues(); // Call on page load
+
+
+        function formatNumber(num, decimals = 2) {
+            if (num === null || num === undefined || isNaN(num)) return "N/A";
+            if (num === Infinity || num === -Infinity) return "Infinity";
+            return Number(num).toFixed(decimals);
+        }
+        function formatProfitFactor(pf) {
+            if (pf === null) return "Infinity";
+            if (pf === undefined || isNaN(pf)) return "N/A";
+            return formatNumber(pf);
+        }
+        
+        function renderOptimizationResult(result, isOverall = false) {
+            let html = '';
+            const fields = [
+                { label: 'Symbol', value: result.symbol },
+                { label: 'Timeframe', value: result.timeframe },
+                { label: 'SL Pips', value: formatNumber(result.slPips, 1) },
+                { label: 'TP Pips', value: formatNumber(result.tpPips, 1) },
+                { label: 'Total Pips', value: formatNumber(result.totalPips, 1), class: result.totalPips > 0 ? 'positive' : (result.totalPips < 0 ? 'negative' : '') },
+                { label: 'Total Trades', value: result.totalTrades },
+                { label: 'Win Rate (%)', value: formatNumber(result.winRate) },
+                { label: 'Profit Factor', value: formatProfitFactor(result.profitFactor) },
+                { label: 'Winning Trades', value: result.winningTrades },
+                { label: 'Losing Trades', value: result.losingTrades },
+                { label: 'Avg. Trade Duration', value: result.avgTradeDuration },
+                { label: 'Risk/Reward Ratio', value: formatNumber(result.riskRewardRatio) },
+                { label: 'Sharpe Ratio', value: formatNumber(result.sharpeRatio, 4) }
+            ];
+
+            if (isOverall) {
+                fields.forEach(field => {
+                    html += `<div><strong>${field.label}:</strong> <span class="${field.class || ''}">${field.value}</span></div>`;
+                });
+            } else {
+                 fields.forEach(field => {
+                    html += `<td class="${field.class || ''} ${typeof field.value === 'number' || (typeof field.value === 'string' && !isNaN(parseFloat(field.value))) ? 'numeric' : ''}">${field.value}</td>`;
+                });
+            }
+            return html;
+        }
+
+
+        runOptimizationBtn.addEventListener('click', async () => {
+            loadingDiv.classList.remove('hidden');
+            errorDiv.classList.add('hidden');
+            resultsAreaDiv.classList.add('hidden');
+            runOptimizationBtn.disabled = true;
+
+            const formData = new FormData(paramsForm);
+            const requestBody = {
+                startTime: formatDatetimeLocalToUtcIso(formData.get('startTime')),
+                endTime: formatDatetimeLocalToUtcIso(formData.get('endTime')),
+                symbols: formData.get('symbols').split(',').map(s => s.trim()).filter(s => s),
+                patternTimeframes: formData.get('patternTimeframes').split(',').map(tf => tf.trim()).filter(tf => tf),
+                lotSize: parseFloat(formData.get('lotSize')),
+                allowedTradeDays: formData.get('allowedTradeDays').split(',').map(d => d.trim()).filter(d => d),
+                slRange: {
+                    min: parseFloat(formData.get('slMin')),
+                    max: parseFloat(formData.get('slMax')),
+                    step: parseFloat(formData.get('slStep')),
+                },
+                tpRange: {
+                    min: parseFloat(formData.get('tpMin')),
+                    max: parseFloat(formData.get('tpMax')),
+                    step: parseFloat(formData.get('tpStep')),
+                }
+            };
+
+            const maxCombinations = parseInt(formData.get('maxCombinations'), 10);
+            if (!isNaN(maxCombinations) && maxCombinations > 0) {
+                requestBody.maxCombinations = maxCombinations;
+            }
+            
+            // Basic validation example (can be expanded)
+            if (!requestBody.startTime || !requestBody.endTime) {
+                errorDiv.textContent = 'Error: Start Time and End Time are required.';
+                errorDiv.classList.remove('hidden');
+                loadingDiv.classList.add('hidden');
+                runOptimizationBtn.disabled = false;
+                return;
+            }
+            if (requestBody.symbols.length === 0 || requestBody.patternTimeframes.length === 0 || requestBody.allowedTradeDays.length === 0) {
+                errorDiv.textContent = 'Error: Symbols, Pattern Timeframes, and Allowed Trade Days cannot be empty.';
+                errorDiv.classList.remove('hidden');
+                loadingDiv.classList.add('hidden');
+                runOptimizationBtn.disabled = false;
+                return;
+            }
+
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', },
+                    body: JSON.stringify(requestBody),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    throw new Error(`API Error ${response.status}: ${errorData}`);
+                }
+                const data = await response.json();
+                displayResults(data);
+            } catch (err) {
+                errorDiv.textContent = 'Error fetching optimization results: ' + err.message;
+                errorDiv.classList.remove('hidden');
+            } finally {
+                loadingDiv.classList.add('hidden');
+                runOptimizationBtn.disabled = false;
+            }
+        });
+
+        function displayResults(data) {
+            resultsAreaDiv.classList.remove('hidden');
+            requestSummaryDiv.innerHTML = `
+                <div class="summary-item"><strong>Start Time:</strong> <span>${data.requestSummary.startTime}</span></div>
+                <div class="summary-item"><strong>End Time:</strong> <span>${data.requestSummary.endTime}</span></div>
+                <div class="summary-item"><strong>Symbols:</strong> <span>${data.requestSummary.symbols.join(', ')}</span></div>
+                <div class="summary-item"><strong>Timeframes:</strong> <span>${data.requestSummary.timeframes.join(', ')}</span></div>
+                <div class="summary-item"><strong>SL Range:</strong> <span>${data.requestSummary.slRange}</span></div>
+                <div class="summary-item"><strong>TP Range:</strong> <span>${data.requestSummary.tpRange}</span></div>`;
+            totalCombinationsTestedSpan.textContent = data.totalCombinationsTested;
+
+            bestResultOverallDiv.innerHTML = renderOptimizationResult(data.bestResult, true);
+            worstResultOverallDiv.innerHTML = renderOptimizationResult(data.worstResult, true);
+
+            let bestCombinationsHtml = `
+                <table>
+                    <thead><tr>
+                        <th>Symbol</th><th class="numeric">SL Pips</th><th class="numeric">TP Pips</th>
+                        <th class="numeric">Total Pips</th><th class="numeric">Total Trades</th>
+                    </tr></thead><tbody>`;
+            data.bestCombinations.forEach(combo => {
+                bestCombinationsHtml += `
+                    <tr>
+                        <td>${combo.symbol}</td>
+                        <td class="numeric">${formatNumber(combo.SL, 1)}</td>
+                        <td class="numeric">${formatNumber(combo.TP, 1)}</td>
+                        <td class="numeric ${combo.TotalPips > 0 ? 'positive' : (combo.TotalPips < 0 ? 'negative' : '')}">${formatNumber(combo.TotalPips, 1)}</td>
+                        <td class="numeric">${combo.totalTrades}</td>
+                    </tr>`;
+            });
+            bestCombinationsHtml += `</tbody></table>`;
+            bestCombinationsTableDiv.innerHTML = bestCombinationsHtml;
+            
+            let groupedHtml = '';
+            data.groupedResults.forEach(tfPerformance => {
+                groupedHtml += `<h3>Timeframe: ${tfPerformance.timeframe}</h3>`;
+                tfPerformance.symbols.forEach(symPerformance => {
+                    groupedHtml += `<h4>Symbol: ${symPerformance.symbol}</h4>`;
+                    groupedHtml += `
+                        <table><thead><tr>
+                            <th>Symbol</th><th>Timeframe</th><th class="numeric">SL Pips</th>
+                            <th class="numeric">TP Pips</th><th class="numeric">Total Pips</th>
+                            <th class="numeric">Total Trades</th><th class="numeric">Win Rate (%)</th>
+                            <th class="numeric">Profit Factor</th><th class="numeric">Winning Trades</th>
+                            <th class="numeric">Losing Trades</th><th>Avg. Duration</th>
+                            <th class="numeric">R/R Ratio</th><th class="numeric">Sharpe Ratio</th>
+                        </tr></thead><tbody>`;
+                    symPerformance.combinations.forEach(result => {
+                         groupedHtml += `<tr>${renderOptimizationResult(result, false)}</tr>`;
+                    });
+                    groupedHtml += `</tbody></table>`;
+                });
+            });
+            groupedResultsDiv.innerHTML = groupedHtml;
+        }
+    </script>
+</body>
+</html>

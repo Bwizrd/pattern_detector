@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade Log Viewer</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px; 
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #2c3e50;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 0.3em;
+            margin-bottom: 0.8em;
+        }
+        button {
+            background-color: #2ecc71; /* Green for main action */
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 10px; 
+        }
+        button:hover { background-color: #27ae60; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        
+        #copyJsonBtn {
+            background-color: #3498db; /* Blue for secondary action */
+            margin-top: 20px;
+        }
+        #copyJsonBtn:hover {
+            background-color: #2980b9;
+        }
+
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+        th, td {
+            border: 1px solid #e0e0e0;
+            padding: 8px 10px;
+            text-align: left;
+        }
+        th { background-color: #ecf0f1; font-weight: 600; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        td.numeric { text-align: right; }
+        td.positive { color: #27ae60; }
+        td.negative { color: #c0392b; }
+
+        .summary-stats {
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); 
+            gap: 15px;
+            margin-bottom: 25px;
+            padding: 15px;
+            background-color: #eaf6ff;
+            border-radius: 5px;
+            border: 1px solid #aed6f1;
+        }
+        .stat-item {
+            background-color: #fff;
+            padding: 10px 15px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border: 1px solid #ddd;
+        }
+        .stat-item strong { font-size: 1.2em; display: block; } 
+        .stat-item span { font-size: 0.9em; color: #555; display: block; margin-bottom: 3px;}
+
+        .controls-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 15px 20px; 
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+            margin-bottom: 20px;
+        }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { margin-bottom: 5px; font-weight: bold; color: #555;}
+        .form-group input[type="text"],
+        .form-group input[type="number"],
+        .form-group input[type="datetime-local"],
+        .form-group textarea {
+            padding: 9px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.95em;
+            box-sizing: border-box;
+            width: 100%; 
+        }
+        .form-group textarea { min-height: 80px; resize: vertical; }
+        .form-group input:focus, .form-group textarea:focus {
+            border-color: #2ecc71;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(46, 204, 113, 0.2);
+        }
+        .form-group small { font-size: 0.8em; color: #777; margin-top: 4px; }
+        .full-span { grid-column: 1 / -1; } 
+
+
+        #loading, #error { padding: 15px; margin-top: 20px; border-radius: 5px; text-align: center; }
+        #loading { background-color: #eaf6ff; color: #3498db; border: 1px solid #aed6f1; }
+        #error { background-color: #fdedec; color: #c0392b; border: 1px solid #f5b7b1; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Trade Log Viewer</h1>
+
+        <form id="tradeLogForm" class="controls-form">
+            <div class="form-group">
+                <label for="startTime">Start Time:</label>
+                <input type="datetime-local" id="startTime" name="startTime" required>
+            </div>
+            <div class="form-group">
+                <label for="endTime">End Time:</label>
+                <input type="datetime-local" id="endTime" name="endTime" required>
+            </div>
+            <div class="form-group">
+                <label for="lotSizeInput">Lot Size (for Money Calc):</label>
+                <input type="number" id="lotSizeInput" name="lotSize" step="0.01" min="0.01" required>
+            </div>
+            <div class="form-group">
+                <label for="slInput">Stop Loss (Pips):</label>
+                <input type="number" id="slInput" name="slPips" step="any" required>
+            </div>
+            <div class="form-group">
+                <label for="tpInput">Take Profit (Pips):</label>
+                <input type="number" id="tpInput" name="tpPips" step="any" required>
+            </div>
+            <div class="form-group">
+                <label for="patternTimeframesInput">Pattern Timeframes:</label>
+                <input type="text" id="patternTimeframesInput" name="patternTimeframes" required>
+                <small>Comma-separated (e.g., 15m,30m)</small>
+            </div>
+            <div class="form-group">
+                <label for="allowedTradeDaysInput">Allowed Trade Days:</label>
+                <input type="text" id="allowedTradeDaysInput" name="allowedTradeDays" required>
+                <small>Comma-separated (e.g., Mon,Tue,Fri)</small>
+            </div>
+            <div class="form-group full-span">
+                <label for="symbolsInput">Symbols:</label>
+                <textarea id="symbolsInput" name="symbols" rows="4" required></textarea>
+                <small>Comma-separated list</small>
+            </div>
+        </form>
+        <button id="fetchTradesBtn">Fetch Trades</button>
+
+
+        <div id="loading" class="hidden">Loading trades...</div>
+        <div id="error" class="hidden"></div>
+
+        <div id="summaryResults" class="hidden">
+            <div class="summary-stats">
+                <div class="stat-item"><span>Total Pips</span><strong id="totalPips"></strong></div>
+                <div class="stat-item"><span>Est. Money Total (USD)</span><strong id="moneyTotal"></strong></div>
+                <div class="stat-item"><span>Lot Size Used</span><strong id="lotSizeUsed"></strong></div>
+                <div class="stat-item"><span>Total Trades</span><strong id="numTrades"></strong></div>
+                <div class="stat-item"><span>Winning Trades</span><strong id="winningTrades"></strong></div>
+                <div class="stat-item"><span>Losing Trades</span><strong id="losingTrades"></strong></div>
+                <div class="stat-item"><span>Win Rate (%)</span><strong id="winRate"></strong></div>
+                <div class="stat-item"><span>Profit Factor</span><strong id="profitFactor"></strong></div>
+            </div>
+            <h2>All Trades</h2>
+            <div id="tradesTableContainer"></div>
+            <button id="copyJsonBtn" class="hidden">Copy JSON Response</button> <!-- Added Button -->
+        </div>
+    </div>
+
+    <script>
+        const multiSymbolBacktestApiUrl = 'http://localhost:8080/multi-symbol-backtest';
+        const tradeLogForm = document.getElementById('tradeLogForm');
+        const fetchTradesBtn = document.getElementById('fetchTradesBtn');
+        const copyJsonBtn = document.getElementById('copyJsonBtn'); // Get the new button
+        
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const summaryResultsDiv = document.getElementById('summaryResults');
+        const totalPipsSpan = document.getElementById('totalPips');
+        const lotSizeUsedSpan = document.getElementById('lotSizeUsed');
+        const moneyTotalSpan = document.getElementById('moneyTotal');
+        const numTradesSpan = document.getElementById('numTrades');
+        const winningTradesSpan = document.getElementById('winningTrades');
+        const losingTradesSpan = document.getElementById('losingTrades');
+        const winRateSpan = document.getElementById('winRate');
+        const profitFactorSpan = document.getElementById('profitFactor');
+        const tradesTableContainer = document.getElementById('tradesTableContainer');
+
+        let lastFetchedJsonData = null; // Variable to store the fetched JSON data
+
+        const ALL_AVAILABLE_SYMBOLS = [
+            "EURUSD_SB", "GBPUSD_SB", "USDCHF_SB", "AUDUSD_SB", "USDCAD_SB", "NZDUSD_SB", 
+            "USDJPY_SB", "EURGBP_SB", "EURCHF_SB", "EURAUD_SB", "EURCAD_SB", "EURNZD_SB", 
+            "EURJPY_SB", "GBPCHF_SB", "GBPAUD_SB", "GBPCAD_SB", "GBPNZD_SB", "GBPJPY_SB",
+            "AUDNZD_SB", "AUDCAD_SB", "AUDJPY_SB", "NZDJPY_SB", "CADJPY_SB", "CHFJPY_SB"
+        ];
+
+        const PIP_VALUES_USD = { 
+            "EURUSD_SB": 10, "GBPUSD_SB": 10, "AUDUSD_SB": 10, "NZDUSD_SB": 10,
+            "USDCAD_SB": 10 / 1.37, "USDCHF_SB": 10 / 0.91, "USDJPY_SB": (0.01 * 100000) / 155, 
+            "EURGBP_SB": 10 * 1.25, "EURCHF_SB": (10 / 0.91) * 1.08, "EURAUD_SB": 10 * 0.66, 
+            "EURCAD_SB": (10 / 1.37) * 1.47, "EURNZD_SB": 10 * 0.60, "EURJPY_SB": ((0.01 * 100000) / 155) * 1.08, 
+            "GBPCHF_SB": (10 / 0.91) * 1.15, "GBPAUD_SB": 10 * 0.66 * 1.25, "GBPCAD_SB": (10 / 1.37) * 1.70,
+            "GBPNZD_SB": 10 * 0.60 * 1.25, "GBPJPY_SB": ((0.01 * 100000) / 155) * 1.25,
+            "AUDNZD_SB": 10 * (0.60 / 0.66), "AUDCAD_SB": (10 / 1.37) * (1.37/0.66*0.89), 
+            "AUDJPY_SB": ((0.01 * 100000) / 155) * 0.66, "NZDJPY_SB": ((0.01 * 100000) / 155) * 0.60,
+            "CADJPY_SB": ((0.01 * 100000) / 155) * (1/1.37), "CHFJPY_SB": ((0.01 * 100000) / 155) * (1/0.91),
+            "default": 7 
+        };
+        function getPipValue(symbol) {
+            return PIP_VALUES_USD[symbol.toUpperCase()] || PIP_VALUES_USD["default"];
+        }
+
+        function toIsoStringWithNZ(date) {
+            const pad = (num) => (num < 10 ? '0' : '') + num;
+            return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+                   'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()) + 'Z';
+        }
+        function formatDatetimeLocalToUtcIso(datetimeLocalValue) {
+            if (!datetimeLocalValue) return "";
+            const localDate = new Date(datetimeLocalValue);
+            return toIsoStringWithNZ(localDate);
+        }
+
+         function setDefaultFormValues() {
+            const toDatetimeLocal = (date) => {
+                const year = date.getFullYear();
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                const day = date.getDate().toString().padStart(2, '0');
+                const hours = date.getHours().toString().padStart(2, '0');
+                const minutes = date.getMinutes().toString().padStart(2, '0');
+                return `${year}-${month}-${day}T${hours}:${minutes}`;
+            };
+
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+            sevenDaysAgo.setHours(22, 0, 0, 0); 
+
+            const now = new Date();
+            now.setHours(23, 0, 0, 0); 
+
+            document.getElementById('startTime').value = toDatetimeLocal(sevenDaysAgo);
+            document.getElementById('endTime').value = toDatetimeLocal(now);
+            document.getElementById('lotSizeInput').value = 0.01;
+            document.getElementById('slInput').value = 20.0;
+            document.getElementById('tpInput').value = 40.0;
+            document.getElementById('patternTimeframesInput').value = "30m";
+            document.getElementById('allowedTradeDaysInput').value = "Mon,Tue,Wed,Thu,Fri";
+            document.getElementById('symbolsInput').value = ALL_AVAILABLE_SYMBOLS.join(',');
+        }
+        setDefaultFormValues();
+
+
+        function formatNumber(num, decimals = 2, addSign = false) {
+            if (num === null || num === undefined || isNaN(num)) return "N/A";
+            if (num === Infinity || num === -Infinity) return "Infinity";
+            let formatted = Number(num).toFixed(decimals);
+            if (addSign && Number(num) > 0) formatted = "+" + formatted;
+            return formatted;
+        }
+        function formatProfitFactorDisplay(pf) { 
+            if (pf === null || pf === Infinity) return "Infinity";
+            if (pf === undefined || isNaN(pf)) return "N/A";
+            return formatNumber(pf, 2);
+        }
+
+
+        fetchTradesBtn.addEventListener('click', async () => {
+            loadingDiv.classList.remove('hidden');
+            errorDiv.classList.add('hidden');
+            summaryResultsDiv.classList.add('hidden');
+            copyJsonBtn.classList.add('hidden'); // Hide copy button initially
+            fetchTradesBtn.disabled = true;
+            lastFetchedJsonData = null; // Reset stored JSON
+
+            const formData = new FormData(tradeLogForm);
+            const requestBody = {
+                start_time: formatDatetimeLocalToUtcIso(formData.get('startTime')),
+                end_time: formatDatetimeLocalToUtcIso(formData.get('endTime')),
+                symbols: formData.get('symbols').split(',').map(s => s.trim()).filter(s => s),
+                pattern_timeframes: formData.get('patternTimeframes').split(',').map(tf => tf.trim()).filter(tf => tf),
+                stop_loss_pips: parseFloat(formData.get('slPips')),
+                take_profit_pips: parseFloat(formData.get('tpPips')),
+                lot_size: parseFloat(formData.get('lotSize')), 
+                allowed_trade_days: formData.get('allowedTradeDays').split(',').map(d => d.trim()).filter(d => d),
+            };
+            
+            if (!requestBody.start_time || !requestBody.end_time || requestBody.symbols.length === 0 || 
+                requestBody.pattern_timeframes.length === 0 || isNaN(requestBody.stop_loss_pips) ||
+                isNaN(requestBody.take_profit_pips) || isNaN(requestBody.lot_size) || requestBody.allowed_trade_days.length === 0) {
+                errorDiv.textContent = 'Error: Please fill all required fields with valid values.';
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); fetchTradesBtn.disabled = false; return;
+            }
+
+            try {
+                const response = await fetch(multiSymbolBacktestApiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.text();
+                    throw new Error(`API Error ${response.status}: ${errorData}`);
+                }
+                lastFetchedJsonData = await response.json(); // Store the fetched JSON
+                displayWeeklyTrades(lastFetchedJsonData, parseFloat(formData.get('lotSize'))); 
+                copyJsonBtn.classList.remove('hidden'); // Show copy button on success
+
+            } catch (err) {
+                errorDiv.textContent = 'Error fetching trades: ' + err.message;
+                errorDiv.classList.remove('hidden');
+            } finally {
+                loadingDiv.classList.add('hidden');
+                fetchTradesBtn.disabled = false;
+            }
+        });
+
+        copyJsonBtn.addEventListener('click', () => {
+            if (!lastFetchedJsonData) {
+                alert("No JSON data to copy. Please fetch trades first.");
+                return;
+            }
+            const jsonString = JSON.stringify(lastFetchedJsonData, null, 2); // Pretty print
+            navigator.clipboard.writeText(jsonString)
+                .then(() => {
+                    copyJsonBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyJsonBtn.textContent = 'Copy JSON Response'; }, 2000);
+                })
+                .catch(err => {
+                    console.error('Failed to copy JSON: ', err);
+                    alert('Failed to copy JSON. See console for details.');
+                });
+        });
+
+        function displayWeeklyTrades(data, lotSizeForMoneyCalc) { 
+            summaryResultsDiv.classList.remove('hidden');
+            let allTrades = data.all_trades || [];
+            
+            let calculatedTotalPips = 0;
+            let calculatedMoneyTotal = 0;
+            let wins = 0;
+            let losses = 0;
+            let grossProfit = 0;
+            let grossLoss = 0;
+
+            allTrades.forEach(trade => {
+                calculatedTotalPips += trade.pnl_pips;
+                const pipValueForSymbol = getPipValue(trade.symbol);
+                calculatedMoneyTotal += trade.pnl_pips * lotSizeForMoneyCalc * pipValueForSymbol;
+
+                if (trade.pnl_pips > 0) {
+                    wins++;
+                    grossProfit += trade.pnl_pips;
+                } else if (trade.pnl_pips < 0) {
+                    losses++;
+                    grossLoss += Math.abs(trade.pnl_pips); 
+                }
+            });
+
+            const totalTradesCount = allTrades.length;
+            const winRateValue = totalTradesCount > 0 ? (wins / totalTradesCount) * 100 : 0;
+            let profitFactorValue = null; 
+            if (grossLoss > 1e-9) { 
+                profitFactorValue = grossProfit / grossLoss;
+            } else if (grossProfit > 1e-9) {
+                profitFactorValue = Infinity; 
+            } else {
+                profitFactorValue = 0; 
+            }
+
+            totalPipsSpan.textContent = formatNumber(calculatedTotalPips, 1, true);
+            lotSizeUsedSpan.textContent = formatNumber(lotSizeForMoneyCalc, 2);
+            moneyTotalSpan.textContent = formatNumber(calculatedMoneyTotal, 2, true) + " USD";
+            numTradesSpan.textContent = totalTradesCount;
+            winningTradesSpan.textContent = wins;
+            losingTradesSpan.textContent = losses;
+            winRateSpan.textContent = formatNumber(winRateValue, 2) + "%";
+            profitFactorSpan.textContent = formatProfitFactorDisplay(profitFactorValue);
+            
+            totalPipsSpan.className = calculatedTotalPips >= 0 ? 'positive' : 'negative'; 
+            moneyTotalSpan.className = calculatedMoneyTotal >= 0 ? 'positive' : 'negative';
+
+            if (allTrades.length > 0) {
+                let tradesHtml = `
+                    <table>
+                        <thead><tr>
+                            <th>Symbol</th><th>TF</th><th>Dir</th><th>Entry Time</th><th class="numeric">Entry Price</th>
+                            <th>Exit Time</th><th class="numeric">Exit Price</th><th class="numeric">PNL Pips</th><th>Reason</th>
+                        </tr></thead><tbody>`;
+                allTrades.sort((a,b) => new Date(b.entry_time) - new Date(a.entry_time)); 
+
+                allTrades.forEach(trade => {
+                    tradesHtml += `
+                        <tr>
+                            <td>${trade.symbol}</td><td>${trade.timeframe}</td><td>${trade.direction}</td>
+                            <td>${new Date(trade.entry_time).toLocaleString()}</td>
+                            <td class="numeric">${formatNumber(trade.entry_price, 5)}</td>
+                            <td>${trade.exit_time ? new Date(trade.exit_time).toLocaleString() : 'N/A'}</td>
+                            <td class="numeric">${trade.exit_price ? formatNumber(trade.exit_price, 5) : 'N/A'}</td>
+                            <td class="numeric ${trade.pnl_pips > 0 ? 'positive' : (trade.pnl_pips < 0 ? 'negative' : '')}">${formatNumber(trade.pnl_pips, 1, true)}</td>
+                            <td>${trade.exit_reason || 'N/A'}</td>
+                        </tr>`;
+                });
+                tradesHtml += `</tbody></table>`;
+                tradesTableContainer.innerHTML = tradesHtml;
+            } else {
+                tradesTableContainer.innerHTML = "<p>No trades found for the specified period and parameters.</p>";
+            }
+        }
+    </script>
+</body>
+</html>
