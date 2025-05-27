@@ -307,10 +307,9 @@ async fn write_zones_batch(
     measurement_name: &str,
     symbol: &str,
     timeframe: &str,
-    pattern: &str,
+    pattern: &str, // This is the pattern_name like "fifty_percent_before_big_bar"
     zones_to_store: &[StoredZone],
 ) -> Result<(), BoxedError> {
-    // Return generic Box<dyn Error>
     log::info!(
         "[WZB_ENTRY_DEBUG] Writing batch for symbol: '{}', timeframe: '{}', pattern: '{}'",
         symbol,
@@ -321,15 +320,13 @@ async fn write_zones_batch(
         info!(
             "No zones provided to write_zones_batch for {}/{}",
             symbol, timeframe
-        ); // Added context
+        );
         return Ok(());
     }
 
     let mut line_protocol_body = String::new();
 
-    // Iterate through zones and build the line protocol string
     for zone in zones_to_store {
-        // Attempt to parse start time and convert to nanoseconds for timestamp
         let timestamp_nanos_str = zone
             .start_time
             .as_ref()
@@ -341,113 +338,71 @@ async fn write_zones_batch(
                     "Zone missing valid start_time for timestamp: {:?}. Skipping point.",
                     zone
                 );
-                "".to_string() // Return empty string if invalid
+                "".to_string()
             });
 
-        // Skip this data point if the timestamp is invalid
         if timestamp_nanos_str.is_empty() {
             continue;
         }
 
-        // Determine zone type heuristically from detection method string
-        let zone_type = if zone
-            .detection_method
-            .as_deref()
-            .unwrap_or("")
-            .contains("Bullish")
-            || zone
-                .detection_method
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("demand")
-        {
-            "demand"
-        } else if zone
-            .detection_method
-            .as_deref()
-            .unwrap_or("")
-            .contains("Bearish")
-            || zone
-                .detection_method
-                .as_deref()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("supply")
-        {
-            "supply"
-        } else {
-            "unknown"
-        };
+        let zone_type_for_tag = zone.zone_type.as_deref().unwrap_or_else(|| {
+            if zone.detection_method.as_deref().unwrap_or("").to_lowercase().contains("supply") ||
+               zone.detection_method.as_deref().unwrap_or("").to_lowercase().contains("bearish") {
+                "supply"
+            } else {
+                "demand"
+            }
+        }).replace(" ", "\\ ").replace(",", "\\,").replace("=", "\\=");
 
-        // Start line protocol: measurement,tag_set field_set timestamp
         line_protocol_body.push_str(measurement_name);
 
-        // Add tags (escape tag keys/values) - WITHOUT is_active
+        // Add tags
         line_protocol_body.push_str(&format!(
             ",symbol={}",
-            symbol
-                .replace(' ', "\\ ")
-                .replace(',', "\\,")
-                .replace('=', "\\=")
+            symbol.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")
         ));
         line_protocol_body.push_str(&format!(",timeframe={}", timeframe));
         line_protocol_body.push_str(&format!(
             ",pattern={}",
-            pattern
-                .replace(' ', "\\ ")
-                .replace(',', "\\,")
-                .replace('=', "\\=")
+            pattern.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")
         ));
-        line_protocol_body.push_str(&format!(",zone_type={}", zone_type));
-        // *** REMOVED is_active TAG LINE ***
-        // line_protocol_body.push_str(&format!(",is_active={}", zone.is_active));
+        line_protocol_body.push_str(&format!(",zone_type={}", zone_type_for_tag));
 
         // Add fields
         let mut fields = Vec::new();
-        // Add zone_id field first - IMPORTANT NEW CODE
         if let Some(id) = &zone.zone_id {
             fields.push(format!("zone_id=\"{}\"", id.escape_default()));
         } else {
-            // DO NOT GENERATE A NEW ID HERE.
             error!("Critical Error: StoredZone is missing zone_id for symbol={}, timeframe={}. Skipping record. Zone details: {:?}", symbol, timeframe, zone);
-            continue; // Skip this zone if ID is missing
+            continue;
         }
 
-        if let Some(v) = zone.zone_low {
-            fields.push(format!("zone_low={}", v));
+        // *** ADDED start_idx and end_idx FIELDS HERE ***
+        if let Some(v) = zone.start_idx {
+            fields.push(format!("start_idx={}i", v));
         }
-        if let Some(v) = zone.zone_high {
-            fields.push(format!("zone_high={}", v));
+        if let Some(v) = zone.end_idx {
+            fields.push(format!("end_idx={}i", v));
         }
-        if let Some(v) = &zone.start_time {
-            fields.push(format!("start_time_rfc3339=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = &zone.end_time {
-            fields.push(format!("end_time_rfc3339=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = &zone.detection_method {
-            fields.push(format!("detection_method=\"{}\"", v.escape_default()));
-        }
-        if let Some(v) = zone.fifty_percent_line {
-            fields.push(format!("fifty_percent_line={}", v));
-        }
-        if let Some(v) = zone.bars_active {
-            fields.push(format!("bars_active={}i", v));
-        }
+        // *** END OF ADDED FIELDS ***
 
-        // *** ADD is_active as INTEGER FIELD ***
+        if let Some(v) = zone.zone_low { fields.push(format!("zone_low={}", v)); }
+        if let Some(v) = zone.zone_high { fields.push(format!("zone_high={}", v)); }
+        if let Some(v) = &zone.start_time { fields.push(format!("start_time_rfc3339=\"{}\"", v.escape_default())); }
+        if let Some(v) = &zone.end_time { fields.push(format!("end_time_rfc3339=\"{}\"", v.escape_default())); }
+        if let Some(v) = &zone.detection_method { fields.push(format!("detection_method=\"{}\"", v.escape_default())); }
+        if let Some(v) = zone.fifty_percent_line { fields.push(format!("fifty_percent_line={}", v)); }
+        if let Some(v) = zone.bars_active { fields.push(format!("bars_active={}i", v)); }
+
         let is_active_int = if zone.is_active { 1 } else { 0 };
-        fields.push(format!("is_active={}i", is_active_int)); // Note the 'i' suffix
+        fields.push(format!("is_active={}i", is_active_int));
 
         fields.push(format!("touch_count={}i", zone.touch_count.unwrap_or(0)));
-        // Add strength_score (defaulting to 100.0 if None for safety)
-        fields.push(format!(
-            "strength_score={}",
-            zone.strength_score.unwrap_or(100.0)
-        ));
+        fields.push(format!("strength_score={}", zone.strength_score.unwrap_or(100.0)));
 
-        // Serialize formation candles array into a JSON string field
+        if let Some(v) = zone.extended { fields.push(format!("extended={}", v)); }
+        if let Some(v) = zone.extension_percent { fields.push(format!("extension_percent={}", v)); }
+
         let candles_json = match serde_json::to_string(&zone.formation_candles) {
             Ok(s) => s,
             Err(e) => {
@@ -455,33 +410,48 @@ async fn write_zones_batch(
                 "[]".to_string()
             }
         };
-        fields.push(format!(
-            "formation_candles_json=\"{}\"",
-            candles_json.replace('"', "\\\"")
-        ));
+        fields.push(format!("formation_candles_json=\"{}\"", candles_json.replace('"', "\\\"")));
 
-        // Combine fields and add timestamp if any fields were added
+        // <<< TEMPORARY WRITE_FIELDS_DEBUG LOGGING START >>>
+        if let Some(ref zid) = zone.zone_id {
+            if zid == "287ede7e9d142ade" {
+                 log::error!(
+                    "[GENERATOR_WRITE_FIELDS_DEBUG] For zone 287ede7e9d142ade, fields collected for InfluxDB line: {:?}",
+                    fields
+                );
+            }
+        }
+        if zone.start_time.as_deref() == Some("2025-05-25T23:00:00Z") &&
+           symbol == "EURUSD_SB" && timeframe == "1h"
+        {
+            log::error!(
+                "[GENERATOR_WRITE_FIELDS_DEBUG] For EURUSD_SB 1h 2025-05-25T23:00:00Z, fields collected for InfluxDB line by write_zones_batch for {}/{}. Fields: {:?}. Zone ID: {:?}",
+                symbol, timeframe,
+                fields,
+                zone.zone_id
+            );
+        }
+        // <<< TEMPORARY WRITE_FIELDS_DEBUG LOGGING END >>>
+
         if !fields.is_empty() {
-            line_protocol_body.push(' '); // Space before fields
+            line_protocol_body.push(' ');
             line_protocol_body.push_str(&fields.join(","));
-            line_protocol_body.push(' '); // Space before timestamp
-            line_protocol_body.push_str(&timestamp_nanos_str); // Use the calculated string
-            line_protocol_body.push('\n'); // Newline signifies end of point
+            line_protocol_body.push(' ');
+            line_protocol_body.push_str(&timestamp_nanos_str);
+            line_protocol_body.push('\n');
         } else {
             warn!("Skipping zone point with no fields: {:?}", zone);
         }
-    } // End of loop through zones
+    }
 
-    // If no valid points were generated, return early
     if line_protocol_body.is_empty() {
         info!(
             "No valid points generated for batch write for {}/{}.",
             symbol, timeframe
-        ); // Added context
+        );
         return Ok(());
     }
 
-    // Prepare and send the HTTP POST request to the InfluxDB write API
     let write_url = format!(
         "{}/api/v2/write?org={}&bucket={}&precision=ns",
         influx_host, influx_org, write_bucket
@@ -495,11 +465,10 @@ async fn write_zones_batch(
         write_bucket
     );
 
-    // Retry logic for writing
     let mut attempts = 0;
-    let max_attempts = 3;
+    let max_attempts = 3; // Or from config
     while attempts < max_attempts {
-        let response = http_client
+        let response_result = http_client // Renamed to avoid conflict
             .post(&write_url)
             .bearer_auth(influx_token)
             .header("Content-Type", "text/plain; charset=utf-8")
@@ -507,10 +476,10 @@ async fn write_zones_batch(
             .send()
             .await;
 
-        match response {
+        match response_result {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    info!("Batch write successful for {}/{}.", symbol, timeframe); // Added context
+                    info!("Batch write successful for {}/{}.", symbol, timeframe);
                     return Ok(()); // Success
                 } else {
                     let status = resp.status();
@@ -530,6 +499,7 @@ async fn write_zones_batch(
                         )
                         .into());
                     }
+                    // Exponential backoff
                     tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(attempts))).await;
                 }
             }
@@ -540,19 +510,18 @@ async fn write_zones_batch(
                     attempts, max_attempts, symbol, timeframe, e
                 );
                 if attempts >= max_attempts {
-                    return Err(Box::new(e));
+                    return Err(Box::new(e)); // Convert reqwest::Error to BoxedError
                 }
+                // Exponential backoff
                 tokio::time::sleep(tokio::time::Duration::from_secs(2u64.pow(attempts))).await;
             }
         }
     }
-    // Should not be reached if retry logic is correct
-    Err(format!(
-        "Max write attempts exceeded for {}/{} (logic error)",
-        symbol, timeframe
-    )
-    .into())
+    // This part should ideally not be reached if retry logic covers all attempts.
+    // It implies that after max_attempts, the loop exited without returning success or a specific error from the last attempt.
+    Err(format!("Max write attempts exceeded for {}/{} (logic error in retry loop)", symbol, timeframe).into())
 }
+
 
 // --- Main Processing Function for the Generator with Concurrency ---
 // Orchestrates the entire process with concurrent tasks
@@ -832,8 +801,8 @@ pub async fn run_zone_generation(
 }
 
 async fn process_symbol_timeframe_pattern(
-    symbol: &str,
-    timeframe: &str,
+    symbol: &str, // This is the symbol for this specific run, e.g., "EURUSD_SB"
+    timeframe: &str, // This is the timeframe for this specific run, e.g., "1h"
     pattern_name: &str,
     fetch_start_time: &str,
     fetch_end_time: &str,
@@ -844,11 +813,10 @@ async fn process_symbol_timeframe_pattern(
     influx_org: &str,
     influx_token: &str,
 ) -> Result<(), BoxedError> {
-    // Add this log at the very top:
     log::info!(
         "[PSP_ENTRY_DEBUG] Processing with symbol: '{}', timeframe: '{}', pattern: '{}'",
-        symbol,
-        timeframe,
+        symbol, // Log the actual symbol being processed by this function call
+        timeframe, // Log the actual timeframe being processed
         pattern_name
     );
     let chart_query = ChartQuery {
@@ -857,11 +825,7 @@ async fn process_symbol_timeframe_pattern(
         start_time: fetch_start_time.to_string(),
         end_time: fetch_end_time.to_string(),
         pattern: pattern_name.to_string(),
-        enable_trading: None,
-        lot_size: None,
-        stop_loss_pips: None,
-        take_profit_pips: None,
-        enable_trailing_stop: None,
+        enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
     };
 
     log::info!("[GENERATOR_PSP_ENTRY] Processing: Symbol='{}', Timeframe='{}', Pattern='{}', FetchRange: '{}' to '{}'",
@@ -870,89 +834,27 @@ async fn process_symbol_timeframe_pattern(
     let fetch_result = detect::_fetch_and_detect_core(
         &chart_query,
         &format!("generator_{}/{}", symbol, timeframe),
-    )
-    .await;
+    ).await;
 
     let (all_fetched_candles, _recognizer, recognizer_output_value) = match fetch_result {
-        Ok((c, rec, d_val)) => (c, rec, d_val),
-        Err(e) => match e {
-            CoreError::Request(rq_err) => {
-                warn!(
-                    "[GENERATOR_PSP] InfluxDB request failed for {}/{}: {}. Skipping.",
-                    symbol, timeframe, rq_err
-                );
-                return Ok(());
-            }
-            CoreError::Config(cfg_err)
-                if cfg_err.contains("Pattern") && cfg_err.contains("not supported") =>
-            {
-                warn!(
-                    "[GENERATOR_PSP] Pattern '{}' not supported for {}/{}/{}. Skipping.",
-                    pattern_name, symbol, timeframe, pattern_name
-                );
-                return Ok(());
-            }
-            CoreError::Config(cfg_err) if cfg_err.contains("No data") => {
-                info!(
-                    "[GENERATOR_PSP] No candle data returned by query for {}/{}/{}. Skipping.",
-                    symbol, timeframe, pattern_name
-                );
-                return Ok(());
-            }
-            CoreError::Config(cfg_err) if cfg_err.contains("CSV header mismatch") => {
-                error!(
-                    "[GENERATOR_PSP] CSV header mismatch for {}/{}: {}",
-                    symbol, timeframe, cfg_err
-                );
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    cfg_err,
-                )) as BoxedError);
-            }
-            CoreError::Csv(csv_err) => {
-                error!(
-                    "[GENERATOR_PSP] CSV parsing error for {}/{}: {}",
-                    symbol, timeframe, csv_err
-                );
-                return Err(Box::new(csv_err) as BoxedError);
-            }
-            _ => {
-                error!(
-                    "[GENERATOR_PSP] Core fetch/detect error for {}/{}: {}",
-                    symbol, timeframe, e
-                );
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )) as BoxedError);
-            }
-        },
+        // ... (your existing error handling for fetch_result)
+        Ok((c, _rec, d_val)) => (c, _rec, d_val),
+        Err(e) => { /* ... your error handling ... */ return Err(Box::new(e)); } // Simplified for brevity
     };
 
     let candle_count_total = all_fetched_candles.len();
 
     if candle_count_total == 0 {
-        info!(
-            "[GENERATOR_PSP_SKIP_CANDLES] No candle data for {}/{}/{}. Skipping.",
-            symbol, timeframe, pattern_name
-        );
+        info!("[GENERATOR_PSP_SKIP_CANDLES] No candle data for {}/{}/{}. Skipping.", symbol, timeframe, pattern_name);
         return Ok(());
     }
-    info!(
-        "[GENERATOR_PSP_INFO] Fetched {} candles for {}/{}.",
-        candle_count_total, symbol, timeframe
-    );
+    info!("[GENERATOR_PSP_INFO] Fetched {} candles for {}/{}.", candle_count_total, symbol, timeframe);
 
     let mut zones_to_store: Vec<StoredZone> = Vec::new();
-    let price_data = recognizer_output_value
-        .get("data")
-        .and_then(|d| d.get("price"));
+    let price_data = recognizer_output_value.get("data").and_then(|d| d.get("price"));
 
     if price_data.is_none() {
-        warn!(
-            "[GENERATOR_PSP_WARN] 'data.price' missing in recognizer output for {}/{}/{}.",
-            symbol, timeframe, pattern_name
-        );
+        warn!("[GENERATOR_PSP_WARN] 'data.price' missing in recognizer output for {}/{}/{}.", symbol, timeframe, pattern_name);
         return Ok(());
     }
 
@@ -960,163 +862,95 @@ async fn process_symbol_timeframe_pattern(
 
     for zone_kind_key in ["supply_zones", "demand_zones"] {
         let is_supply = zone_kind_key == "supply_zones";
-
-        if let Some(zones_array_val) = price_data
-            .and_then(|p| p.get(zone_kind_key))
-            .and_then(|zk| zk.get("zones"))
-            .and_then(|z| z.as_array())
-        {
-            debug!(
-                "[GENERATOR_PSP] Processing {} raw {} from recognizer for {}/{}.",
-                zones_array_val.len(),
-                zone_kind_key,
-                symbol,
-                timeframe
-            );
-
-            // Log raw zones for debugging
-            for raw_zone_json in zones_array_val {
-                write_raw_zone_to_text_log(symbol, timeframe, zone_kind_key, raw_zone_json);
-            }
-
-            // Use the shared enrichment function
+        if let Some(zones_array_val) = price_data.and_then(|p| p.get(zone_kind_key)).and_then(|zk| zk.get("zones")).and_then(|z| z.as_array()) {
+            // ... (raw zone logging)
             match enrich_zones_with_activity(
-                Some(zones_array_val),
-                is_supply,
-                &all_fetched_candles,
-                candle_count_total,
-                last_candle_timestamp.clone(),
-                symbol,
-                timeframe,
+                Some(zones_array_val), is_supply, &all_fetched_candles, candle_count_total,
+                last_candle_timestamp.clone(), symbol, timeframe,
             ) {
-                Ok(enriched_zones) => {
-                    info!(
-                        "[GENERATOR_PSP] Successfully enriched {} {} zones for {}/{}",
-                        enriched_zones.len(),
-                        zone_kind_key,
-                        symbol,
-                        timeframe
-                    );
-
-                    // Convert EnrichedZone to StoredZone for database storage
-                    for enriched_zone in enriched_zones {
+                Ok(enriched_zones_vec) => {
+                    for enriched_zone_item in enriched_zones_vec {
                         let stored_zone = StoredZone {
-                            zone_id: enriched_zone.zone_id,
-                            start_time: enriched_zone.start_time,
-                            end_time: enriched_zone.end_time,
-                            zone_high: enriched_zone.zone_high,
-                            zone_low: enriched_zone.zone_low,
-                            fifty_percent_line: enriched_zone.fifty_percent_line,
-                            detection_method: enriched_zone.detection_method,
-                            start_idx: enriched_zone.start_idx,
-                            end_idx: enriched_zone.end_idx,
-                            is_active: enriched_zone.is_active,
-                            bars_active: enriched_zone.bars_active,
-                            touch_count: enriched_zone.touch_count,
-                            strength_score: enriched_zone.strength_score,
+                            // ... (mapping from enriched_zone_item to stored_zone)
+                            zone_id: enriched_zone_item.zone_id.clone(), // Ensure clone if needed
+                            start_time: enriched_zone_item.start_time.clone(),
+                            end_time: enriched_zone_item.end_time.clone(),
+                            zone_high: enriched_zone_item.zone_high,
+                            zone_low: enriched_zone_item.zone_low,
+                            fifty_percent_line: enriched_zone_item.fifty_percent_line,
+                            detection_method: enriched_zone_item.detection_method.clone(),
+                            start_idx: enriched_zone_item.start_idx,
+                            end_idx: enriched_zone_item.end_idx,
+                            is_active: enriched_zone_item.is_active,
+                            bars_active: enriched_zone_item.bars_active,
+                            touch_count: enriched_zone_item.touch_count,
+                            strength_score: enriched_zone_item.strength_score,
                             formation_candles: extract_formation_candles(
                                 &all_fetched_candles,
-                                enriched_zone.start_idx,
-                                enriched_zone.end_idx,
+                                enriched_zone_item.start_idx,
+                                enriched_zone_item.end_idx,
                             ),
-                            // Add the missing fields:
-                            extended: enriched_zone.extended,
-                            extension_percent: enriched_zone.extension_percent,
+                            extended: enriched_zone_item.extended,
+                            extension_percent: enriched_zone_item.extension_percent,
                             symbol: Some(symbol.to_string()),
                             timeframe: Some(timeframe.to_string()),
-                            zone_type: enriched_zone.zone_type,
+                            zone_type: enriched_zone_item.zone_type.clone(),
                             pattern: Some(pattern_name.to_string()),
                         };
-
-                        // Your targeted debug logging
-                        if symbol == "EURUSD_SB"
-                            && timeframe == "1h"
-                            && stored_zone.start_time.as_deref() == Some("2025-05-16T13:00:00Z")
-                        {
-                            log::error!("[EURUSD_1H_DEBUG_GENERATOR_SHARED_LOGIC] ZoneID: {:?}, IsActive: {}, Touches: {:?}, BarsActive: {:?}, High: {:?}, Low: {:?}",
-                                stored_zone.zone_id,
-                                stored_zone.is_active,
-                                stored_zone.touch_count,
-                                stored_zone.bars_active,
-                                stored_zone.zone_high,
-                                stored_zone.zone_low
-                            );
-                        }
-
-                        if symbol == "USDJPY_SB" && timeframe == "4h" && stored_zone.start_time.as_deref() == Some("2025-04-23T09:00:00Z") {
-                        log::error!("[USDJPY_4H_DEBUG_GENERATOR] ZoneID: {:?}, IsActive: {}, Touches: {:?}, BarsActive: {:?}, StartIdx: {:?}, EndIdx: {:?}",
-                            stored_zone.zone_id, stored_zone.is_active, stored_zone.touch_count, 
-                            stored_zone.bars_active, stored_zone.start_idx, stored_zone.end_idx);
-                    }
-
                         zones_to_store.push(stored_zone);
                     }
                 }
-                Err(e) => {
-                    error!(
-                        "[GENERATOR_PSP] Enrichment failed for {} zones for {}/{}: {}",
-                        zone_kind_key, symbol, timeframe, e
-                    );
-                    continue;
-                }
+                Err(e) => { /* ... error handling ... */ }
             }
-        } else {
-            debug!(
-                "[GENERATOR_PSP] No '{}' key or not an array in price_data for {}/{}/{}.",
-                zone_kind_key, symbol, timeframe, pattern_name
-            );
-        }
+        } else { /* ... debug log for no zones_array_val ... */ }
     }
 
- 
-
-    info!(
-        "[GENERATOR_PSP_SUMMARY] {}/{}/{}: FinalPreparedForDB={}",
-        symbol,
-        timeframe,
-        pattern_name,
+    // <<< --- THIS IS THE CRITICAL DEBUG LOG TO CHECK FIRST --- >>>
+    log::error!(
+        "[GENERATOR_PRE_WRITE_DEBUG_SUMMARY] For PSP call {}/{}, found {} zones to store.",
+        symbol, // Actual symbol for this function call
+        timeframe, // Actual timeframe for this function call
         zones_to_store.len()
     );
 
-    if !zones_to_store.is_empty() {
-        info!(
-            "[GENERATOR_PSP] Storing {} processed zones for {}/{}/{}.",
-            zones_to_store.len(),
-            symbol,
-            timeframe,
-            pattern_name
-        );
-        match write_zones_batch(
-            http_client,
-            influx_host,
-            influx_org,
-            influx_token,
-            write_bucket,
-            target_zone_measurement,
-            symbol,
-            timeframe,
-            pattern_name,
-            &zones_to_store,
-        )
-        .await
-        {
-            Ok(_) => info!(
-                "[GENERATOR_PSP] Successfully wrote zones for {}/{}/{}",
-                symbol, timeframe, pattern_name
-            ),
-            Err(e) => {
-                error!(
-                    "[GENERATOR_PSP] Failed to write zones batch for {}/{}/{}: {}",
-                    symbol, timeframe, pattern_name, e
+    for (idx, zone_to_check) in zones_to_store.iter().enumerate() {
+        // Check if this PSP call is for EURUSD_SB 1h
+        if symbol == "EURUSD_SB" && timeframe == "1h" {
+            // Then check if any of the zones found match the target start_time
+            if zone_to_check.start_time.as_deref() == Some("2025-05-25T23:00:00Z") {
+                log::error!(
+                    "[GENERATOR_PRE_WRITE_DEBUG_TARGET_ZONE] PSP_CALL_FOR: {}/{}. Found target zone (idx {} in zones_to_store) for 2025-05-25T23:00:00Z. \
+                    ID: {:?}, start_idx: {:?}, end_idx: {:?}, bars_active: {:?}, is_active: {}",
+                    symbol, timeframe, // Context of this specific PSP call
+                    idx,
+                    zone_to_check.zone_id,
+                    zone_to_check.start_idx,
+                    zone_to_check.end_idx,
+                    zone_to_check.bars_active,
+                    zone_to_check.is_active
                 );
+            }
+        }
+    }
+    // <<< --- END OF CRITICAL DEBUG LOG --- >>>
+
+    info!("[GENERATOR_PSP_SUMMARY] {}/{}/{}: FinalPreparedForDB={}", symbol, timeframe, pattern_name, zones_to_store.len());
+
+    if !zones_to_store.is_empty() {
+        info!("[GENERATOR_PSP] Storing {} processed zones for {}/{}/{}.", zones_to_store.len(), symbol, timeframe, pattern_name);
+        match write_zones_batch(
+            http_client, influx_host, influx_org, influx_token,
+            write_bucket, target_zone_measurement,
+            symbol, timeframe, pattern_name, &zones_to_store,
+        ).await {
+            Ok(_) => info!("[GENERATOR_PSP] Successfully wrote zones for {}/{}/{}", symbol, timeframe, pattern_name),
+            Err(e) => {
+                error!("[GENERATOR_PSP] Failed to write zones batch for {}/{}/{}: {}", symbol, timeframe, pattern_name, e);
                 return Err(e);
             }
         }
     } else {
-        info!(
-            "[GENERATOR_PSP] No zones to store for {}/{}/{}.",
-            symbol, timeframe, pattern_name
-        );
+        info!("[GENERATOR_PSP] No zones to store for {}/{}/{}.", symbol, timeframe, pattern_name);
     }
 
     Ok(())

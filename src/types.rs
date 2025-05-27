@@ -294,6 +294,8 @@ pub struct ZoneCsvRecord {
     pub formation_candles_json: Option<String>,
     pub is_active: Option<String>, // Will be "0" or "1"
     pub start_time_rfc3339: Option<String>,
+    pub start_idx: Option<String>, // ADD THIS (as String for initial parse from CSV)
+    pub end_idx: Option<String>,   // ADD THIS (as String for initial parse from CSV)
     pub strength_score: Option<String>,
     pub touch_count: Option<String>,
     pub zone_high: Option<String>,
@@ -365,8 +367,8 @@ pub fn map_csv_to_stored_zone(csv_record: ZoneCsvRecord) -> crate::types::Stored
         touch_count: parse_optional_i64(csv_record.touch_count),
         strength_score: parse_optional_f64(csv_record.strength_score),
         formation_candles: formation_candles_vec,
-        start_idx: None,
-        end_idx: None,
+        start_idx: parse_optional_u64(csv_record.start_idx), // MODIFY THIS
+        end_idx: parse_optional_u64(csv_record.end_idx),     // MODIFY THIS
         extended: None,
         extension_percent: None,
     }

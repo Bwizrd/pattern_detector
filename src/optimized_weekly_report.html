@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optimized Weekly Trade Report</title>
+    <style>
+        /* ... (All your CSS from before) ... */
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f7f6; color: #333; }
+        .container { max-width: 1200px; margin: auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1, h2, h3 { color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 0.3em; margin-bottom: 0.8em; }
+        button { background-color: #3498db; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; transition: background-color 0.3s; }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        #generateReportBtn { background-color: #2ecc71; margin-top: 10px;} /* Main action button */
+        #generateReportBtn:hover { background-color: #27ae60; }
+        #copyReportJsonBtn { background-color: #95a5a6; margin-top: 20px; }
+        #copyReportJsonBtn:hover { background-color: #7f8c8d; }
+
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9em; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #ecf0f1; }
+        td.numeric { text-align: right; }
+        td.positive { color: #27ae60; }
+        td.negative { color: #c0392b; }
+        .hidden { display: none; }
+        .form-section, .results-section { margin-bottom: 30px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 5px; background-color: #fdfdfd;}
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group textarea, .form-group select { padding: 8px; border: 1px solid #ccc; border-radius: 3px; box-sizing: border-box; width:100%;}
+        .form-group textarea { min-height: 60px; resize: vertical;}
+        .form-group input:focus, .form-group textarea:focus {
+            border-color: #3498db; outline: none; box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+        .form-group small { font-size: 0.8em; color: #777; margin-top: 4px; }
+        .full-span { grid-column: 1 / -1; } 
+        .summary-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; padding:10px; background-color:#f0f9ff; border:1px solid #d6e9f8; border-radius:4px;}
+        .stat-item { background-color: #fff; padding: 10px; border-radius: 4px; border: 1px solid #e7e7e7; }
+        .stat-item strong { font-size: 1.1em; display: block; }
+        .stat-item span { font-size: 0.9em; color: #555; display: block; margin-bottom: 2px; }
+        #loading, #error { padding: 15px; margin-top: 10px; border-radius: 5px; text-align: center; font-weight: bold; }
+        #loading { background-color: #eaf6ff; color: #3498db; }
+        #error { background-color: #fdedec; color: #c0392b; }
+         #reportInstrumentDetails ul { list-style-type: none; padding-left: 0;}
+        #reportInstrumentDetails li { margin-bottom: 5px; padding: 5px; background-color: #f9f9f9; border-left: 3px solid #3498db;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Optimized Weekly Trade Report Generator</h1>
+
+        <div class="form-section">
+            <h2>Step 1: Define Optimization Parameters (for finding optimal SL/TP)</h2>
+            <form id="optimizationParamsForm" class="form-grid">
+                <div class="form-group">
+                    <label for="optStartTime">Optimization Start Time:</label>
+                    <input type="datetime-local" id="optStartTime" name="optStartTime" required>
+                </div>
+                <div class="form-group">
+                    <label for="optEndTime">Optimization End Time:</label>
+                    <input type="datetime-local" id="optEndTime" name="optEndTime" required>
+                </div>
+                <div class="form-group">
+                    <label for="optLotSize">Lot Size (for Opt Phase):</label>
+                    <input type="number" id="optLotSize" name="optLotSize" value="0.01" step="0.01" min="0.01" required>
+                </div>
+                 <div class="form-group">
+                    <label for="optAllowedTradeDays">Allowed Trade Days (Opt Phase):</label>
+                    <input type="text" id="optAllowedTradeDays" name="optAllowedTradeDays" required>
+                </div>
+                <div class="form-group">
+                    <label for="optSlMin">Opt. SL Min:</label>
+                    <input type="number" id="optSlMin" name="optSlMin" value="10" step="any" required>
+                </div>
+                <div class="form-group">
+                    <label for="optSlMax">Opt. SL Max:</label>
+                    <input type="number" id="optSlMax" name="optSlMax" value="50" step="any" required>
+                </div>
+                <div class="form-group">
+                    <label for="optSlStep">Opt. SL Step:</label>
+                    <input type="number" id="optSlStep" name="optSlStep" value="10" step="any" min="0.1" required>
+                </div>
+                <div class="form-group">
+                    <label for="optTpMin">Opt. TP Min:</label>
+                    <input type="number" id="optTpMin" name="optTpMin" value="10" step="any" required>
+                </div>
+                <div class="form-group">
+                    <label for="optTpMax">Opt. TP Max:</label>
+                    <input type="number" id="optTpMax" name="optTpMax" value="60" step="any" required>
+                </div>
+                <div class="form-group">
+                    <label for="optTpStep">Opt. TP Step:</label>
+                    <input type="number" id="optTpStep" name="optTpStep" value="10" step="any" min="0.1" required>
+                </div>
+                 <div class="form-group">
+                    <label for="optMaxCombinations">Opt. Max Combinations (per instrument):</label>
+                    <input type="number" id="optMaxCombinations" name="optMaxCombinations" value="25" min="1">
+                </div>
+                <div class="form-group full-span">
+                    <label for="optInstruments">Instruments to Optimize (Symbol:Timeframe, comma-separated):</label>
+                    <textarea id="optInstruments" name="optInstruments" rows="3" placeholder="e.g., EURUSD_SB:1h, GBPUSD_SB:30m" required></textarea>
+                </div>
+            </form>
+        </div>
+
+        <div class="form-section">
+            <h2>Step 2: Define "Last Week" Parameters & Run Report</h2>
+             <form id="reportParamsForm" class="form-grid">
+                <div class="form-group">
+                    <label for="reportStartTime">Report Start Time (Last Week):</label>
+                    <input type="datetime-local" id="reportStartTime" name="reportStartTime" required>
+                </div>
+                <div class="form-group">
+                    <label for="reportEndTime">Report End Time (Last Week):</label>
+                    <input type="datetime-local" id="reportEndTime" name="reportEndTime" required>
+                </div>
+                 <div class="form-group">
+                    <label for="reportLotSize">Lot Size (for Money Calc):</label>
+                    <input type="number" id="reportLotSize" name="reportLotSize" value="0.01" step="0.01" min="0.01" required>
+                </div>
+                 <div class="form-group">
+                    <label for="reportAllowedTradeDays">Allowed Trade Days (Report Phase):</label>
+                    <input type="text" id="reportAllowedTradeDays" name="reportAllowedTradeDays" required>
+                </div>
+            </form>
+        </div>
+        
+        <button id="generateReportBtn">Generate Optimized Weekly Report</button>
+
+        <div id="loading" class="hidden"></div>
+        <div id="error" class="hidden"></div>
+
+        <div id="finalReportResults" class="results-section hidden">
+            <h2>Optimized Weekly Report Summary</h2>
+            <div class="summary-stats">
+                <div class="stat-item"><span>Total Pips</span><strong id="reportTotalPips"></strong></div>
+                <div class="stat-item"><span>Est. Money Total (USD)</span><strong id="reportMoneyTotal"></strong></div>
+                <div class="stat-item"><span>Lot Size Used</span><strong id="reportLotSizeUsed"></strong></div>
+                <div class="stat-item"><span>Total Trades</span><strong id="reportNumTrades"></strong></div>
+                <div class="stat-item"><span>Winning Trades</span><strong id="reportWinningTrades"></strong></div>
+                <div class="stat-item"><span>Losing Trades</span><strong id="reportLosingTrades"></strong></div>
+                <div class="stat-item"><span>Win Rate (%)</span><strong id="reportWinRate"></strong></div>
+                <div class="stat-item"><span>Profit Factor</span><strong id="reportProfitFactor"></strong></div>
+            </div>
+            <h3>Individual Instrument Performance (Last Week with Optimal SL/TP)</h3>
+            <div id="reportInstrumentDetails"></div>
+            <h3>All Trades (Last Week with Optimal SL/TP)</h3>
+            <div id="reportTradesTableContainer"></div>
+            <button id="copyReportJsonBtn" class="hidden">Copy Full Report JSON</button>
+        </div>
+    </div>
+
+    <script>
+        const portfolioMetaApiUrl = 'http://localhost:8080/portfolio-meta-backtest';
+        const multiSymbolBacktestApiUrl = 'http://localhost:8080/multi-symbol-backtest';
+
+        const optimizationParamsForm = document.getElementById('optimizationParamsForm');
+        const reportParamsForm = document.getElementById('reportParamsForm');
+        const generateReportBtn = document.getElementById('generateReportBtn');
+        const copyReportJsonBtn = document.getElementById('copyReportJsonBtn'); // Correctly get the button
+
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const finalReportResultsDiv = document.getElementById('finalReportResults');
+        const reportTotalPipsSpan = document.getElementById('reportTotalPips');
+        const reportLotSizeUsedSpan = document.getElementById('reportLotSizeUsed');
+        const reportMoneyTotalSpan = document.getElementById('reportMoneyTotal');
+        const reportNumTradesSpan = document.getElementById('reportNumTrades');
+        const reportWinningTradesSpan = document.getElementById('reportWinningTrades');
+        const reportLosingTradesSpan = document.getElementById('reportLosingTrades');
+        const reportWinRateSpan = document.getElementById('reportWinRate');
+        const reportProfitFactorSpan = document.getElementById('reportProfitFactor');
+        const reportInstrumentDetailsDiv = document.getElementById('reportInstrumentDetails');
+        const reportTradesTableContainer = document.getElementById('reportTradesTableContainer');
+
+        let fullReportDataForCopy = null; 
+        let optimizationDataCache = null; // Used in displayOptimizationResults (though that function is not directly used on this page)
+
+        const ALL_AVAILABLE_SYMBOLS_DEFAULT = [
+            "EURUSD_SB", "GBPUSD_SB", "USDCHF_SB", "AUDUSD_SB", "USDCAD_SB", "NZDUSD_SB", 
+            "USDJPY_SB", "EURGBP_SB", "EURCHF_SB", "EURAUD_SB", "EURCAD_SB", "EURNZD_SB", 
+            "EURJPY_SB", "GBPCHF_SB", "GBPAUD_SB", "GBPCAD_SB", "GBPNZD_SB", "GBPJPY_SB",
+            "AUDNZD_SB", "AUDCAD_SB", "AUDJPY_SB", "NZDJPY_SB", "CADJPY_SB", "CHFJPY_SB"
+        ].join(',');
+
+        const PIP_VALUES_USD = { 
+            "EURUSD_SB": 10, "GBPUSD_SB": 10, "AUDUSD_SB": 10, "NZDUSD_SB": 10,
+            "USDCAD_SB": 10 / 1.37, "USDCHF_SB": 10 / 0.91, "USDJPY_SB": (0.01 * 100000) / 155, 
+            "EURGBP_SB": 10 * 1.25, "EURCHF_SB": (10 / 0.91) * 1.08, "EURAUD_SB": 10 * 0.66, 
+            "EURCAD_SB": (10 / 1.37) * 1.47, "EURNZD_SB": 10 * 0.60, "EURJPY_SB": ((0.01 * 100000) / 155) * 1.08, 
+            "GBPCHF_SB": (10 / 0.91) * 1.15, "GBPAUD_SB": 10 * 0.66 * 1.25, "GBPCAD_SB": (10 / 1.37) * 1.70,
+            "GBPNZD_SB": 10 * 0.60 * 1.25, "GBPJPY_SB": ((0.01 * 100000) / 155) * 1.25,
+            "AUDNZD_SB": 10 * (0.60 / 0.66), "AUDCAD_SB": (10 / 1.37) * (1.37/0.66*0.89), 
+            "AUDJPY_SB": ((0.01 * 100000) / 155) * 0.66, "NZDJPY_SB": ((0.01 * 100000) / 155) * 0.60,
+            "CADJPY_SB": ((0.01 * 100000) / 155) * (1/1.37), "CHFJPY_SB": ((0.01 * 100000) / 155) * (1/0.91),
+            "default": 7 
+        };
+        function getPipValue(symbol) { return PIP_VALUES_USD[symbol.toUpperCase()] || PIP_VALUES_USD["default"]; }
+
+        function toIsoStringWithNZ(date) {
+            const pad = (num) => (num < 10 ? '0' : '') + num;
+            return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+                   'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds()) + 'Z';
+        }
+        function formatDatetimeLocalToUtcIso(datetimeLocalValue) {
+            if (!datetimeLocalValue) return "";
+            return toIsoStringWithNZ(new Date(datetimeLocalValue));
+        }
+        
+        function setDefaultFormValues() {
+            const toDatetimeLocal = (date) => {
+                const year = date.getFullYear();
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                const day = date.getDate().toString().padStart(2, '0');
+                const hours = date.getHours().toString().padStart(2, '0');
+                const minutes = date.getMinutes().toString().padStart(2, '0');
+                return `${year}-${month}-${day}T${hours}:${minutes}`;
+            };
+
+            const optEnd = new Date(); 
+            optEnd.setDate(optEnd.getDate() - 7); 
+            optEnd.setHours(23,59,59,999);
+            const optStart = new Date(optEnd);
+            optStart.setMonth(optStart.getMonth() - 6); 
+            optStart.setHours(0,0,0,0);
+            document.getElementById('optStartTime').value = toDatetimeLocal(optStart);
+            document.getElementById('optEndTime').value = toDatetimeLocal(optEnd);
+            
+            document.getElementById('optLotSize').value = 0.01;
+            document.getElementById('optAllowedTradeDays').value = "Mon,Tue,Wed,Thu,Fri";
+            document.getElementById('optSlMin').value = 10; 
+            document.getElementById('optSlMax').value = 50; 
+            document.getElementById('optSlStep').value = 10;
+            document.getElementById('optTpMin').value = 10; 
+            document.getElementById('optTpMax').value = 60; 
+            document.getElementById('optTpStep').value = 10;
+            document.getElementById('optMaxCombinations').value = 25;
+            document.getElementById('optInstruments').value = "EURUSD_SB:1h,GBPUSD_SB:30m,USDCAD_SB:1h";
+
+            const reportEndDefault = new Date();
+            reportEndDefault.setHours(23,0,0,0); 
+            const reportStartDefault = new Date(reportEndDefault);
+            reportStartDefault.setDate(reportStartDefault.getDate() - 7); 
+            reportStartDefault.setHours(22,0,0,0); 
+
+            document.getElementById('reportStartTime').value = toDatetimeLocal(reportStartDefault);
+            document.getElementById('reportEndTime').value = toDatetimeLocal(reportEndDefault);
+            document.getElementById('reportLotSize').value = 0.01;
+            document.getElementById('reportAllowedTradeDays').value = "Mon,Tue,Wed,Thu,Fri";
+        }
+        setDefaultFormValues();
+
+        function formatNumber(num, decimals = 2, addSign = false) {
+            if (num === null || num === undefined || isNaN(num)) return "N/A";
+            if (num === Infinity || num === -Infinity) return "Infinity";
+            let formatted = Number(num).toFixed(decimals);
+            if (addSign && Number(num) > 0) formatted = "+" + formatted;
+            return formatted;
+        }
+        function formatProfitFactorDisplay(pf) { 
+            if (pf === null || pf === Infinity) return "Infinity";
+            if (pf === undefined || isNaN(pf)) return "N/A";
+            return formatNumber(pf, 2);
+        }
+
+        generateReportBtn.addEventListener('click', async () => {
+            loadingDiv.textContent = 'Step 1: Finding optimal parameters for each instrument...';
+            loadingDiv.classList.remove('hidden'); errorDiv.classList.add('hidden');
+            finalReportResultsDiv.classList.add('hidden'); copyReportJsonBtn.classList.add('hidden');
+            generateReportBtn.disabled = true; fullReportDataForCopy = null;
+
+            const optFormData = new FormData(optimizationParamsForm);
+            const getAndSplit = (formData, fieldName) => {
+                const value = formData.get(fieldName);
+                return value ? value.split(',').map(s => s.trim()).filter(s => s) : [];
+            };
+            const getInstruments = (formData, fieldName) => {
+                const value = formData.get(fieldName);
+                if (!value) return [];
+                return value.split(',').map(s => {
+                    const parts = s.trim().split(':');
+                    if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
+                        return { symbol: parts[0].trim(), timeframe: parts[1].trim() };
+                    } return null;
+                }).filter(instrument => instrument !== null);
+            };
+
+            const instrumentsToOptimize = getInstruments(optFormData, 'optInstruments');
+            if (instrumentsToOptimize.length === 0) {
+                errorDiv.textContent = 'Error: Please enter valid instruments to optimize (Symbol:Timeframe).';
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false; return;
+            }
+            const optAllowedTradeDays = getAndSplit(optFormData, 'optAllowedTradeDays');
+             if (optAllowedTradeDays.length === 0) {
+                 errorDiv.textContent = 'Error: Optimization Allowed Trade Days cannot be empty.';
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false; return;
+            }
+
+            let optLotSizeVal = parseFloat(optFormData.get('optLotSize'));
+            if (isNaN(optLotSizeVal)) optLotSizeVal = 0.01;
+
+            const portfolioMetaParams = {
+                startTime: formatDatetimeLocalToUtcIso(optFormData.get('optStartTime')),
+                endTime: formatDatetimeLocalToUtcIso(optFormData.get('optEndTime')),
+                instruments: instrumentsToOptimize,
+                lotSize: optLotSizeVal,
+                allowedTradeDays: optAllowedTradeDays,
+                optimizationSlRange: { min: parseFloat(optFormData.get('optSlMin')), max: parseFloat(optFormData.get('optSlMax')), step: parseFloat(optFormData.get('optSlStep')) },
+                optimizationTpRange: { min: parseFloat(optFormData.get('optTpMin')), max: parseFloat(optFormData.get('optTpMax')), step: parseFloat(optFormData.get('optTpStep')) },
+                optimizationMaxCombinations: parseInt(optFormData.get('optMaxCombinations'), 10) || null
+            };
+            if (isNaN(portfolioMetaParams.optimizationMaxCombinations)) portfolioMetaParams.optimizationMaxCombinations = null;
+            
+            if (!portfolioMetaParams.startTime || !portfolioMetaParams.endTime) {
+                errorDiv.textContent = 'Error: Opt. Start/End Time required.';
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false; return;
+            }
+            
+            let optimalParamsData;
+            try {
+                const response = await fetch(portfolioMetaApiUrl, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(portfolioMetaParams)
+                });
+                if (!response.ok) { const errTxt = await response.text(); throw new Error(`API Error (Portfolio Meta-Opt) ${response.status}: ${errTxt}`); }
+                optimalParamsData = await response.json();
+            } catch (err) {
+                errorDiv.textContent = 'Error in Step 1 (Optimization): ' + err.message;
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false; return;
+            }
+
+            if (!optimalParamsData || !optimalParamsData.individualInstrumentResults || optimalParamsData.individualInstrumentResults.length === 0) {
+                errorDiv.textContent = 'Error: No optimal parameters found for any instrument in Step 1. Check optimization period and ranges.';
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false; return;
+            }
+            
+            loadingDiv.textContent = 'Step 2: Running backtest for report period with optimal parameters...';
+            
+            const reportFormData = new FormData(reportParamsForm);
+            const reportStartTime = formatDatetimeLocalToUtcIso(reportFormData.get('reportStartTime'));
+            const reportEndTime = formatDatetimeLocalToUtcIso(reportFormData.get('reportEndTime'));
+            let reportLotSizeVal = parseFloat(reportFormData.get('reportLotSize'));
+             if (isNaN(reportLotSizeVal)) reportLotSizeVal = 0.01;
+            const reportAllowedDaysList = getAndSplit(reportFormData, 'reportAllowedTradeDays');
+
+             if (!reportStartTime || !reportEndTime || reportAllowedDaysList.length === 0) {
+                 errorDiv.textContent = 'Error: Please fill all required fields for the report phase.';
+                errorDiv.classList.remove('hidden'); loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false; return;
+            }
+
+            let allLastWeekTrades = [];
+            let instrumentBacktestDetails = [];
+            const backtestPromises = [];
+
+            for (const instrumentResult of optimalParamsData.individualInstrumentResults) {
+                 if (instrumentResult.optimalSlPips == null || instrumentResult.optimalTpPips == null ) { 
+                    console.warn(`Skipping backtest for ${instrumentResult.symbol}/${instrumentResult.timeframe} due to missing optimal SL/TP.`);
+                    instrumentBacktestDetails.push({ ...instrumentResult, lastWeekTrades: [], error: `Optimal SL/TP not found/null in optimization phase.` });
+                    continue;
+                }
+                const backtestRequest = {
+                    start_time: reportStartTime, end_time: reportEndTime,
+                    symbols: [instrumentResult.symbol], pattern_timeframes: [instrumentResult.timeframe],
+                    stop_loss_pips: instrumentResult.optimalSlPips, take_profit_pips: instrumentResult.optimalTpPips,
+                    lot_size: reportLotSizeVal, allowed_trade_days: reportAllowedDaysList
+                };
+                
+                backtestPromises.push(
+                    fetch(multiSymbolBacktestApiUrl, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backtestRequest)
+                    })
+                    .then(response => {
+                        if (!response.ok) { 
+                            return response.text().then(text => { throw new Error(`API Error ${response.status} for ${instrumentResult.symbol}/${instrumentResult.timeframe}: ${text}`); });
+                        }
+                        return response.json();
+                    })
+                    .then(btData => {
+                        if (btData.all_trades && Array.isArray(btData.all_trades)) {
+                            allLastWeekTrades.push(...btData.all_trades);
+                            instrumentBacktestDetails.push({ ...instrumentResult, lastWeekTrades: btData.all_trades });
+                        } else if (btData && Array.isArray(btData)) { // If API returns array of trades directly
+                             allLastWeekTrades.push(...btData);
+                            instrumentBacktestDetails.push({ ...instrumentResult, lastWeekTrades: btData });
+                        }
+                        else {
+                            instrumentBacktestDetails.push({ ...instrumentResult, lastWeekTrades: [] });
+                        }
+                    })
+                    .catch(err => {
+                        console.warn(`Error backtesting ${instrumentResult.symbol}/${instrumentResult.timeframe}: ${err.message}`);
+                        instrumentBacktestDetails.push({ ...instrumentResult, lastWeekTrades: [], error: err.message });
+                    })
+                );
+            }
+            
+            await Promise.all(backtestPromises); 
+
+            displayFinalReport(allLastWeekTrades, reportLotSizeVal, instrumentBacktestDetails);
+            fullReportDataForCopy = { 
+                optimizationPhaseSummary: optimalParamsData.requestParams,
+                reportPhaseParams: { // Renamed for clarity
+                    startTime: reportStartTime, 
+                    endTime: reportEndTime, 
+                    lotSize: reportLotSizeVal, 
+                    allowedTradeDays: reportAllowedDaysList,
+                    instrumentsOptimized: optimalParamsData.individualInstrumentResults.map(r => ({
+                        symbol: r.symbol,
+                        timeframe: r.timeframe,
+                        optimalSlPips: r.optimalSlPips,
+                        optimalTpPips: r.optimalTpPips
+                    }))
+                },
+                lastWeekPerformance: { /* Populated in displayFinalReport */ },
+                lastWeekInstrumentDetails: instrumentBacktestDetails, // This already contains optimal SL/TP and lastWeekTrades
+                // lastWeekTrades: allLastWeekTrades // This is redundant if trades are in instrumentBacktestDetails
+            };
+
+            loadingDiv.classList.add('hidden'); generateReportBtn.disabled = false;
+            finalReportResultsDiv.classList.remove('hidden'); copyReportJsonBtn.classList.remove('hidden');
+        });
+        
+        copyReportJsonBtn.addEventListener('click', () => {
+            if (!fullReportDataForCopy) { alert("No report data to copy."); return; }
+            const jsonString = JSON.stringify(fullReportDataForCopy, null, 2);
+            navigator.clipboard.writeText(jsonString).then(() => {
+                copyReportJsonBtn.textContent = 'Copied!';
+                setTimeout(() => { copyReportJsonBtn.textContent = 'Copy Full Report JSON'; }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy report JSON: ', err);
+                alert('Failed to copy. See console.');
+            });
+        });
+
+        function displayFinalReport(trades, lotSizeForMoneyCalc, instrumentDetails) {
+            let calculatedTotalPips = 0, calculatedMoneyTotal = 0, wins = 0, losses = 0, grossProfit = 0, grossLoss = 0;
+            trades.forEach(trade => {
+                calculatedTotalPips += trade.pnl_pips;
+                calculatedMoneyTotal += trade.pnl_pips * lotSizeForMoneyCalc * getPipValue(trade.symbol);
+                if (trade.pnl_pips > 0) { wins++; grossProfit += trade.pnl_pips; } 
+                else if (trade.pnl_pips < 0) { losses++; grossLoss += Math.abs(trade.pnl_pips); }
+            });
+            const totalTradesCount = trades.length;
+            const winRateValue = totalTradesCount > 0 ? (wins / totalTradesCount) * 100 : 0;
+            let profitFactorValue = null;
+            if (grossLoss > 1e-9) profitFactorValue = grossProfit / grossLoss;
+            else if (grossProfit > 1e-9) profitFactorValue = Infinity;
+            else profitFactorValue = 0;
+
+            reportTotalPipsSpan.textContent = formatNumber(calculatedTotalPips, 1, true);
+            reportLotSizeUsedSpan.textContent = formatNumber(lotSizeForMoneyCalc, 2);
+            reportMoneyTotalSpan.textContent = formatNumber(calculatedMoneyTotal, 2, true) + " USD";
+            reportNumTradesSpan.textContent = totalTradesCount;
+            reportWinningTradesSpan.textContent = wins;
+            reportLosingTradesSpan.textContent = losses;
+            reportWinRateSpan.textContent = formatNumber(winRateValue, 2) + "%";
+            reportProfitFactorSpan.textContent = formatProfitFactorDisplay(profitFactorValue);
+            reportTotalPipsSpan.className = calculatedTotalPips >= 0 ? 'positive' : 'negative';
+            reportMoneyTotalSpan.className = calculatedMoneyTotal >= 0 ? 'positive' : 'negative';
+            
+            if (fullReportDataForCopy) {
+                fullReportDataForCopy.lastWeekPerformance = {
+                    totalPips: calculatedTotalPips, moneyTotal: calculatedMoneyTotal, totalTrades: totalTradesCount,
+                    winningTrades: wins, losingTrades: losses, winRate: winRateValue, profitFactor: profitFactorValue
+                };
+            }
+
+            let instrumentDetailsHtml = '<ul>';
+            instrumentDetails.sort((a,b) => b.lastWeekTrades.reduce((s, t) => s + t.pnl_pips, 0) - a.lastWeekTrades.reduce((s, t) => s + t.pnl_pips, 0)); 
+            instrumentDetails.forEach(detail => {
+                const lastWeekPnl = detail.lastWeekTrades.reduce((sum, t) => sum + t.pnl_pips, 0);
+                instrumentDetailsHtml += `<li><b>${detail.symbol} (${detail.timeframe})</b>: Optimal SL ${formatNumber(detail.optimalSlPips,1)}, TP ${formatNumber(detail.optimalTpPips,1)}. Last Week PNL: <span class="${lastWeekPnl >= 0 ? 'positive' : 'negative'}">${formatNumber(lastWeekPnl,1, true)}</span> pips from ${detail.lastWeekTrades.length} trades. ${detail.error ? `<span style="color:red;">Error: ${detail.error}</span>`: ''}</li>`;
+            });
+            instrumentDetailsHtml += '</ul>';
+            reportInstrumentDetailsDiv.innerHTML = instrumentDetailsHtml;
+
+            if (trades.length > 0) {
+                let tradesHtml = `<table><thead><tr><th>Symbol</th><th>TF</th><th>Dir</th><th>Entry Time</th><th class="numeric">Entry Price</th><th>Exit Time</th><th class="numeric">Exit Price</th><th class="numeric">PNL Pips</th><th>Reason</th></tr></thead><tbody>`;
+                trades.sort((a,b) => new Date(b.entry_time) - new Date(a.entry_time)); 
+                trades.forEach(trade => {
+                    tradesHtml += `<tr><td>${trade.symbol}</td><td>${trade.timeframe}</td><td>${trade.direction}</td>
+                        <td>${new Date(trade.entry_time).toLocaleString()}</td><td class="numeric">${formatNumber(trade.entry_price, 5)}</td>
+                        <td>${trade.exit_time ? new Date(trade.exit_time).toLocaleString() : 'N/A'}</td>
+                        <td class="numeric">${trade.exit_price ? formatNumber(trade.exit_price, 5) : 'N/A'}</td>
+                        <td class="numeric ${trade.pnl_pips > 0 ? 'positive':(trade.pnl_pips<0?'negative':'')}">${formatNumber(trade.pnl_pips,1,true)}</td>
+                        <td>${trade.exit_reason||'N/A'}</td></tr>`;
+                });
+                tradesHtml += `</tbody></table>`;
+                reportTradesTableContainer.innerHTML = tradesHtml;
+            } else {
+                reportTradesTableContainer.innerHTML = "<p>No trades found for the report period with the generated optimal parameters.</p>";
+            }
+        }
+    </script>
+</body>
+</html>
