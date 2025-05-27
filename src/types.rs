@@ -310,7 +310,7 @@ pub struct ZoneCsvRecord {
     #[serde(default, rename = "result")]
     pub _result_influx: Option<String>, // Avoid conflict if StoredZone has 'result'
     #[serde(default)]
-    pub table: Option<u32>, // Table ID is usually numeric
+    pub table: Option<String>, // Table ID is usually numeric
     #[serde(default, rename = "_measurement")]
     pub _measurement: Option<String>,
 }

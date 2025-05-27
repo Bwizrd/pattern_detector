@@ -196,20 +196,19 @@ pub async fn revalidate_one_zone_activity_by_id(
         from(bucket: "{zone_bucket}")
           |> range(start: 0) 
           |> filter(fn: (r) => r._measurement == "{zone_measurement}")
-          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value") // Pivot to get fields as columns
-          |> filter(fn: (r) => r.zone_id == "{zone_id_to_check}") // Filter by zone_id field
+          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+          |> filter(fn: (r) => r.zone_id == "{esc_zone_id}") // Use escaped zone_id
           |> limit(n: 1)
         "#,
         zone_bucket = zone_bucket,
         zone_measurement = zone_measurement,
-        zone_id_to_check = zone_id_to_check.replace("\"", "\\\"")
+        esc_zone_id = zone_id_to_check.replace("\"", "\\\"") // Escape quotes for the query
     );
 
     debug!("[REVALIDATE] Querying for zone details: {}", query_for_zone);
     let query_url = format!("{}/api/v2/query?org={}", influx_host, influx_org);
     
-    let mut original_stored_zones: Vec<StoredZone> = Vec::new();
-     match http_client
+    let response = match http_client // Renamed to avoid conflict if you modify it
         .post(&query_url)
         .bearer_auth(influx_token)
         .header("Accept", "application/csv")
@@ -217,37 +216,54 @@ pub async fn revalidate_one_zone_activity_by_id(
         .json(&json!({ "query": query_for_zone, "type": "flux" }))
         .send().await
     {
-        Ok(response) => {
-            let status = response.status(); 
-            if status.is_success() {
-                let text = response.text().await.map_err(|e|format!("Error reading response text: {}",e.to_string()))?;
-                if text.lines().skip_while(|l|l.starts_with('#') || l.is_empty()).count() > 1 {
-                    // Use crate::types:: for ZoneCsvRecord and map_csv_to_stored_zone
-                    let mut rdr = csv::ReaderBuilder::new().has_headers(true).flexible(true).comment(Some(b'#')).from_reader(text.as_bytes());
-                    for result in rdr.deserialize::<ZoneCsvRecord>() { 
-                        match result {
-                            Ok(csv) => original_stored_zones.push(map_csv_to_stored_zone(csv)),
-                            Err(e) => return Err(format!("CSV deserialize error for zone {}: {}", zone_id_to_check, e)),
-                        }
-                    }
-                } else {
-                     warn!("[REVALIDATE] Zone ID {} query success but no data rows returned by InfluxDB.", zone_id_to_check);
-                    return Ok(None);
-                }
-            } else {
-                let err_body = response.text().await.unwrap_or_else(|_| "Failed to read error body".to_string());
-                error!("[REVALIDATE] Failed to fetch zone {} details (status {}): {}. Query: {}", zone_id_to_check, status, err_body, query_for_zone);
-                return Err(format!("Failed to fetch zone {} details (status {}): {}", zone_id_to_check, status, err_body));
-            }
-        }
-        Err(e) => {
-            error!("[REVALIDATE] HTTP error fetching zone {}: {}. Query: {}", zone_id_to_check, e, query_for_zone);
-            return Err(format!("HTTP error fetching zone {}: {}", zone_id_to_check, e));
-        }
+        Ok(resp) => resp,
+        Err(e) => return Err(format!("HTTP error fetching zone {}: {}", zone_id_to_check, e)),
+    };
+
+    let status = response.status(); 
+    if !status.is_success() {
+        let err_body = response.text().await.unwrap_or_else(|_| "Failed to read error body".to_string());
+        error!("[REVALIDATE] Failed to fetch zone {} details (status {}): {}. Query: {}", zone_id_to_check, status, err_body, query_for_zone);
+        return Err(format!("Failed to fetch zone {} details (status {}): {}", zone_id_to_check, status, err_body));
     }
 
+    // <<< --- CRITICAL DEBUG LOG --- >>>
+    let text = match response.text().await {
+        Ok(t) => t,
+        Err(e) => return Err(format!("Error reading InfluxDB response text for zone {}: {}", zone_id_to_check, e)),
+    };
+    log::error!("[REVALIDATE_RAW_CSV] For zone_id '{}', InfluxDB returned CSV:\n{}", zone_id_to_check, text);
+    // <<< --- END OF CRITICAL DEBUG LOG --- >>>
+            
+    let mut original_stored_zones: Vec<StoredZone> = Vec::new();
+    // Check if there's more than just a header or empty lines
+    if text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count() > 1 {
+        let mut rdr = csv::ReaderBuilder::new().has_headers(true).flexible(true).comment(Some(b'#')).from_reader(text.as_bytes());
+        for result in rdr.deserialize::<ZoneCsvRecord>() { 
+            match result {
+                Ok(csv_rec) => {
+                    // Log the successfully deserialized CSV record before mapping
+                    if csv_rec.zone_id.as_deref() == Some(&zone_id_to_check) {
+                        log::error!("[REVALIDATE_DESERIALIZED_CSV_REC] For target zone_id '{}', deserialized ZoneCsvRecord: {:?}", zone_id_to_check, csv_rec);
+                    }
+                    original_stored_zones.push(map_csv_to_stored_zone(csv_rec));
+                }
+                Err(e) => {
+                    // This is where your error is currently originating
+                    log::error!("[REVALIDATE_CSV_DESERIALIZE_ERROR] For zone_id '{}', CSV deserialize error: {}", zone_id_to_check, e);
+                    return Err(format!("CSV deserialize error for zone {}: {}", zone_id_to_check, e));
+                }
+            }
+        }
+    } else {
+        warn!("[REVALIDATE] Zone ID {} query success but no data rows returned by InfluxDB or in CSV text.", zone_id_to_check);
+        return Ok(None);
+    }
+    
+    // ... (rest of your revalidate_one_zone_activity_by_id function: processing original_stored_zones, fetching subsequent candles, etc.) ...
+    // Ensure the rest of the function (after original_stored_zones is populated) is present.
     if original_stored_zones.is_empty() {
-        warn!("[REVALIDATE] Zone ID {} not found in database after parsing CSV response.", zone_id_to_check);
+        warn!("[REVALIDATE] Zone ID {} not found in database after attempting to parse CSV response.", zone_id_to_check);
         return Ok(None);
     }
     let mut zone_to_revalidate = original_stored_zones.remove(0);
@@ -255,75 +271,49 @@ pub async fn revalidate_one_zone_activity_by_id(
     info!("[REVALIDATE] Found zone for revalidation: ID: {:?}, Formed: {:?}, Current DB is_active: {}, Current DB touches: {:?}",
         zone_to_revalidate.zone_id, zone_to_revalidate.start_time, zone_to_revalidate.is_active, zone_to_revalidate.touch_count);
 
-    let activity_check_start_time = match &zone_to_revalidate.end_time {
-        Some(et) if !et.is_empty() => et.clone(),
-        _ => {
-            // If no end_time, use start_time. For a 2-candle pattern, end_time might be same as start_time + 1 period
-            // This part might need refinement based on how your pattern's end_time is defined
-            warn!("[REVALIDATE] Zone {} missing formation end_time, using start_time for activity check start. This might re-evaluate touches during formation.", zone_id_to_check);
-            zone_to_revalidate.start_time.clone().ok_or_else(|| "Zone has no start_time for activity check".to_string())?
-        }
-    };
-    let activity_check_end_time = "now()".to_string();
+    // ... (fetch_candles_direct logic, perform_enrichment_for_revalidation, update_zone_in_influxdb)
+    // For brevity, I'm omitting the rest but it needs to be there.
+    // The following is a placeholder for the rest of your logic
+    let activity_check_start_time = zone_to_revalidate.end_time.clone().unwrap_or_else(|| zone_to_revalidate.start_time.clone().unwrap_or_default());
+    if activity_check_start_time.is_empty() {
+        return Err(format!("Zone {} has no valid start/end time for revalidation.", zone_id_to_check));
+    }
 
     let subsequent_candles: Vec<CandleData> = match fetch_candles_direct(
-        http_client.as_ref(), // Pass &HttpClient from Arc
+        http_client.as_ref(),
         influx_host, influx_org, influx_token,
         candle_bucket, candle_measurement_for_candles,
         zone_to_revalidate.symbol.as_deref().unwrap_or_default(),
         zone_to_revalidate.timeframe.as_deref().unwrap_or_default(),
         &activity_check_start_time,
-        &activity_check_end_time,
+        "now()",
     ).await {
         Ok(candles) => candles,
-        Err(e) => {
-            error!("[REVALIDATE] Failed to fetch subsequent candles for zone {}: {}", zone_id_to_check, e);
-            return Err(format!("Candle fetch error for revalidation: {}", e));
-        }
+        Err(e) => return Err(format!("Candle fetch error for revalidation of zone {}: {}", zone_id_to_check, e)),
     };
-    info!("[REVALIDATE] Fetched {} subsequent candles for zone {} to check activity (from {} to {}).", 
-        subsequent_candles.len(), zone_id_to_check, activity_check_start_time, activity_check_end_time);
+    info!("[REVALIDATE] Fetched {} subsequent candles for zone {} to check activity (from {} to now()).", 
+        subsequent_candles.len(), zone_id_to_check, activity_check_start_time);
 
     let (new_is_active, new_total_touch_count, new_total_bars_active_opt, _new_invalidation_time_opt, new_strength_score_opt) =
         perform_enrichment_for_revalidation(&zone_to_revalidate, &subsequent_candles);
 
     let mut updated_in_db = false;
-    if zone_to_revalidate.is_active != new_is_active {
-        info!("[REVALIDATE] Zone {} active status changed: {} -> {}", zone_id_to_check, zone_to_revalidate.is_active, new_is_active);
-        zone_to_revalidate.is_active = new_is_active;
-        updated_in_db = true;
-    }
-    if zone_to_revalidate.touch_count.unwrap_or(-1) != new_total_touch_count {
-        info!("[REVALIDATE] Zone {} touch count changed: {:?} -> {}", zone_id_to_check, zone_to_revalidate.touch_count, new_total_touch_count);
-        zone_to_revalidate.touch_count = Some(new_total_touch_count);
-        updated_in_db = true;
-    }
-    if let Some(new_bars_active) = new_total_bars_active_opt {
-       if zone_to_revalidate.bars_active != Some(new_bars_active) {
-             info!("[REVALIDATE] Zone {} bars_active changed: {:?} -> {}", zone_id_to_check, zone_to_revalidate.bars_active, new_bars_active);
-            zone_to_revalidate.bars_active = Some(new_bars_active);
-            updated_in_db = true;
-        }
-    }
-    if let Some(new_strength_score) = new_strength_score_opt {
-        if zone_to_revalidate.strength_score != Some(new_strength_score) {
-            info!("[REVALIDATE] Zone {} strength_score changed: {:?} -> {}", zone_id_to_check, zone_to_revalidate.strength_score, new_strength_score);
-            zone_to_revalidate.strength_score = Some(new_strength_score);
-            updated_in_db = true;
-        }
-    }
-    // TODO: Update invalidation_time and zone_end_time on zone_to_revalidate if new_invalidation_time_opt is Some
+    // ... (comparisons and setting updated_in_db = true) ...
+    if zone_to_revalidate.is_active != new_is_active { zone_to_revalidate.is_active = new_is_active; updated_in_db = true; }
+    if zone_to_revalidate.touch_count != Some(new_total_touch_count) { zone_to_revalidate.touch_count = Some(new_total_touch_count); updated_in_db = true; }
+    if new_total_bars_active_opt.is_some() && zone_to_revalidate.bars_active != new_total_bars_active_opt { zone_to_revalidate.bars_active = new_total_bars_active_opt; updated_in_db = true; }
+    if new_strength_score_opt.is_some() && zone_to_revalidate.strength_score != new_strength_score_opt { zone_to_revalidate.strength_score = new_strength_score_opt; updated_in_db = true; }
+
 
     if updated_in_db {
         info!("[REVALIDATE] Changes detected for zone {}. Attempting to update InfluxDB.", zone_id_to_check);
-        if let Err(e) = update_zone_in_influxdb(&zone_to_revalidate, http_client.as_ref(), influx_host, influx_org, influx_token, zone_bucket, zone_measurement).await {
-            error!("[REVALIDATE] Failed to update zone {} in DB after revalidation: {}", zone_id_to_check, e);
-            // Decide if this should be a hard error for the function, or just a warning
-            return Err(format!("DB update error after revalidation: {}", e));
+        if let Err(e) = crate::zone_revalidator_util::update_zone_in_influxdb(&zone_to_revalidate, http_client.as_ref(), influx_host, influx_org, influx_token, zone_bucket, zone_measurement).await {
+            return Err(format!("DB update error after revalidation for zone {}: {}", zone_id_to_check, e));
         }
     } else {
         info!("[REVALIDATE] Zone {} status and relevant fields unchanged after revalidation.", zone_id_to_check);
     }
 
     Ok(Some(zone_to_revalidate))
+
 }

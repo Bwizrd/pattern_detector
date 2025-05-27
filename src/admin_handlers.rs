@@ -7,6 +7,7 @@ use crate::zone_revalidator_util::revalidate_one_zone_activity_by_id;
 // use crate::types::StoredZone; // Import StoredZone if not already
 use log::{info, error};
 use serde_json::json;
+use chrono::{Utc, Duration};
 
 #[derive(serde::Deserialize, Debug)]
 pub struct RevalidateZoneRequest {
@@ -95,7 +96,7 @@ pub struct DeactivateStuckZonesRequest {
 // Add this function after your existing handle_revalidate_zone_request function
 
 pub async fn deactivate_stuck_initial_zones(
-    http_client: &Arc<HttpClient>,
+    http_client: &Arc<HttpClient>, // Using reference as per your working fix for the handler
     influx_host: &str,
     influx_org: &str,
     influx_token: &str,
@@ -105,28 +106,34 @@ pub async fn deactivate_stuck_initial_zones(
 ) -> Result<Vec<DeactivatedZoneInfo>, String> {
     info!("[DEACTIVATE_STUCK_ZONES] Starting process for zones older than {} days.", age_threshold_days);
 
-    let age_cutoff_time_flux = format!("experimental.subDuration(d: {}d, from: now())", age_threshold_days);
+    let now_utc = Utc::now();
+    let cutoff_datetime = now_utc - Duration::days(age_threshold_days as i64);
+    let age_cutoff_time_rfc3339 = cutoff_datetime.to_rfc3339();
 
+    // Using the Flux query structure confirmed to work in your UI
     let flux_query = format!(
         r#"
-        import "influxdata/influxdb/schema"
-        age_cutoff = {age_cutoff_time_flux_val}
         from(bucket: "{db_bucket}")
           |> range(start: -180d) 
           |> filter(fn: (r) => r._measurement == "{db_measurement}")
           |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> filter(fn: (r) => r.is_active == 1)
+          |> filter(fn: (r) => r.is_active == 1) 
           |> filter(fn: (r) => r.bars_active == 0)
-          |> filter(fn: (r) => (not exists r.start_idx or not exists r.end_idx))
-          |> filter(fn: (r) => r._time < age_cutoff)
+          |> filter(fn: (r) => 
+                (not exists r.start_idx) or (not exists r.end_idx)
+             )
+          |> filter(fn: (r) => r._time < time(v: "{age_cutoff_rfc3339_val}")) 
           |> keep(columns: ["_time", "symbol", "timeframe", "pattern", "zone_type", "zone_id"])
         "#,
-        age_cutoff_time_flux_val = age_cutoff_time_flux,
+        age_cutoff_rfc3339_val = age_cutoff_time_rfc3339, 
         db_bucket = zone_bucket,
         db_measurement = zone_measurement
     );
 
+    // Log the calculated cutoff and the final query
+    log::error!("[DEACTIVATE_RUST_DEBUG] Rust calculated age_cutoff_time_rfc3339: {}", age_cutoff_time_rfc3339);
     info!("[DEACTIVATE_STUCK_ZONES] Querying for zones to deactivate: {}", flux_query);
+    
     let query_url = format!("{}/api/v2/query?org={}", influx_host, influx_org);
     
     let response = match http_client
@@ -156,38 +163,65 @@ pub async fn deactivate_stuck_initial_zones(
 
     let mut zones_found_to_deactivate: Vec<ZoneToDeactivateInfo> = Vec::new();
     if csv_text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count() > 1 {
+        log::error!("[DEACTIVATE_RUST_DEBUG] CSV data received by Rust. Length: {}. Starts with:\n{}", csv_text.len(), &csv_text.chars().take(1000).collect::<String>());
+        
         let mut rdr = CsvReaderBuilder::new()
             .has_headers(true)
             .flexible(true) 
             .comment(Some(b'#'))
             .from_reader(csv_text.as_bytes());
 
-        for result in rdr.deserialize::<ZoneToDeactivateInfo>() {
+        let mut found_target_in_csv_loop = false;
+        for (idx, result) in rdr.deserialize::<ZoneToDeactivateInfo>().enumerate() {
             match result {
-                Ok(record) => zones_found_to_deactivate.push(record),
-                Err(e) => warn!("[DEACTIVATE_STUCK_ZONES] CSV deserialize error for a zone: {}. Row might be skipped.", e),
+                Ok(record) => {
+                    if record.zone_id == "287ede7e9d142ade" {
+                        log::error!("[DEACTIVATE_RUST_DEBUG] Target zone 287ede7e9d142ade SUCCESSFULLY DESERIALIZED: {:?}", record);
+                        found_target_in_csv_loop = true;
+                    }
+                    zones_found_to_deactivate.push(record);
+                }
+                Err(e) => {
+                    warn!("[DEACTIVATE_RUST_DEBUG] CSV deserialize error (approx record {}): {}. Row skipped.", idx + 2, e); // +2 for header and 0-index
+                }
             }
         }
+        if !found_target_in_csv_loop && csv_text.contains("287ede7e9d142ade") {
+            log::error!("[DEACTIVATE_RUST_DEBUG] Target zone_id 287ede7e9d142ade was IN RAW CSV but NOT successfully deserialized into ZoneToDeactivateInfo.");
+        }
+
     } else {
-        info!("[DEACTIVATE_STUCK_ZONES] No data rows in CSV response matching criteria for deactivation.");
+        log::info!("[DEACTIVATE_STUCK_ZONES] No data rows in CSV response matching criteria (as seen by Rust).");
         return Ok(Vec::new());
     }
 
     if zones_found_to_deactivate.is_empty() {
-        info!("[DEACTIVATE_STUCK_ZONES] No zones found matching criteria after parsing attempt.");
+        log::info!("[DEACTIVATE_STUCK_ZONES] No zones found matching criteria after parsing attempt.");
         return Ok(Vec::new());
     }
+    
+    // Log if the target zone made it into the vector to be processed for writing
+    if zones_found_to_deactivate.iter().any(|z| z.zone_id == "287ede7e9d142ade") {
+        log::error!("[DEACTIVATE_RUST_DEBUG] Target zone 287ede7e9d142ade IS in zones_found_to_deactivate list (total in list: {}).", zones_found_to_deactivate.len());
+    } else {
+        log::error!("[DEACTIVATE_RUST_DEBUG] Target zone 287ede7e9d142ade IS NOT in zones_found_to_deactivate list (total in list: {}). It will not be deactivated by this run.", zones_found_to_deactivate.len());
+    }
 
-    info!("[DEACTIVATE_STUCK_ZONES] Found {} zones to attempt deactivation.", zones_found_to_deactivate.len());
+
+    info!("[DEACTIVATE_STUCK_ZONES] Found {} zones to attempt deactivation after parsing.", zones_found_to_deactivate.len());
 
     let mut deactivated_results: Vec<DeactivatedZoneInfo> = Vec::new();
     let write_url = format!("{}/api/v2/write?org={}&bucket={}&precision=ns", influx_host, influx_org, zone_bucket);
 
     for zone_info in zones_found_to_deactivate {
+        if zone_info.zone_id == "287ede7e9d142ade" {
+            log::error!("[DEACTIVATE_RUST_DEBUG] Processing target zone 287ede7e9d142ade for InfluxDB WRITE. Parsed info: {:?}", zone_info);
+        }
+
         let original_timestamp_nanos = match chrono::DateTime::parse_from_rfc3339(&zone_info.start_time) {
             Ok(dt) => match dt.timestamp_nanos_opt() {
                 Some(nanos) => nanos.to_string(),
-                None => {
+                None => { 
                     warn!("[DEACTIVATE_STUCK_ZONES] Could not get nanos from timestamp for zone_id: {}. Skipping.", zone_info.zone_id);
                     deactivated_results.push(DeactivatedZoneInfo {
                         zone_id: zone_info.zone_id.clone(), symbol: zone_info.symbol.clone(),
@@ -211,11 +245,11 @@ pub async fn deactivate_stuck_initial_zones(
         let mut tags: Vec<String> = Vec::new();
         tags.push(format!("symbol={}", zone_info.symbol.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")));
         tags.push(format!("timeframe={}", zone_info.timeframe.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")));
-        if let Some(p) = &zone_info.pattern {
-            tags.push(format!("pattern={}", p.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")));
+        if let Some(p) = &zone_info.pattern { // pattern might be None
+            if !p.is_empty() { tags.push(format!("pattern={}", p.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\="))); }
         }
-        if let Some(zt) = &zone_info.zone_type {
-            tags.push(format!("zone_type={}", zt.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\=")));
+        if let Some(zt) = &zone_info.zone_type { // zone_type might be None
+             if !zt.is_empty() { tags.push(format!("zone_type={}", zt.replace(' ', "\\ ").replace(',', "\\,").replace('=', "\\="))); }
         }
         let tags_str = tags.join(",");
 
@@ -227,9 +261,14 @@ pub async fn deactivate_stuck_initial_zones(
             timestamp = original_timestamp_nanos
         );
 
+        if zone_info.zone_id == "287ede7e9d142ade" {
+            log::error!("[DEACTIVATE_RUST_DEBUG] Target zone 287ede7e9d142ade - Generated Influx Line for deactivation: {}", line);
+        }
+        
         info!("[DEACTIVATE_STUCK_ZONES] Attempting to deactivate zone_id: {}. Line: {}", zone_info.zone_id, line);
 
-        let attempt_status = match http_client
+        let mut attempt_status = "Error: Send failed initial value".to_string();
+        match http_client
             .post(&write_url)
             .bearer_auth(influx_token)
             .header("Content-Type", "text/plain; charset=utf-8")
@@ -241,19 +280,21 @@ pub async fn deactivate_stuck_initial_zones(
                 let update_status = update_response.status();
                 if update_status.is_success() {
                     info!("[DEACTIVATE_STUCK_ZONES] Successfully sent deactivation for zone_id: {}", zone_info.zone_id);
-                    "Deactivated".to_string()
+                    if zone_info.zone_id == "287ede7e9d142ade" { log::error!("[DEACTIVATE_RUST_DEBUG] Successfully sent deactivation for target zone_id: {}", zone_info.zone_id); }
+                    attempt_status = "Deactivated".to_string();
                 } else {
                     let err_text = update_response.text().await.unwrap_or_else(|_| "Failed to read error body for update".to_string());
                     error!("[DEACTIVATE_STUCK_ZONES] Failed to deactivate zone_id {}. Status: {}. Resp: {}", zone_info.zone_id, update_status, err_text);
-                    format!("Error: Update failed (status {})", update_status)
+                     if zone_info.zone_id == "287ede7e9d142ade" { log::error!("[DEACTIVATE_RUST_DEBUG] Failed to deactivate target zone_id {}. Status: {}. Resp: {}", zone_info.zone_id, update_status, err_text); }
+                    attempt_status = format!("Error: Update failed (status {})", update_status);
                 }
             }
             Err(e) => {
                 error!("[DEACTIVATE_STUCK_ZONES] HTTP Error sending deactivation for zone_id {}: {}", zone_info.zone_id, e);
-                format!("Error: HTTP send error - {}", e)
+                if zone_info.zone_id == "287ede7e9d142ade" { log::error!("[DEACTIVATE_RUST_DEBUG] HTTP Error sending deactivation for target zone_id {}: {}", zone_info.zone_id, e); }
+                attempt_status = format!("Error: HTTP send error - {}", e);
             }
-        };
-
+        }
         deactivated_results.push(DeactivatedZoneInfo {
             zone_id: zone_info.zone_id,
             symbol: zone_info.symbol,
