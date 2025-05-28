@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zone Enrichment Logic Debugger</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .debug-panel {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        .panel-header {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            color: white;
+            padding: 20px;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .panel-content {
+            padding: 25px;
+        }
+
+        .zone-input {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            font-weight: 600;
+            color: #495057;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .simulation-results {
+            margin-top: 20px;
+        }
+
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #4ecdc4 0%, #44a08d 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 1.8rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        .candle-timeline {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .timeline-header {
+            display: grid;
+            grid-template-columns: 60px 150px 80px 80px 80px 80px 100px 80px 200px;
+            gap: 10px;
+            padding: 10px 5px;
+            background: #e9ecef;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+
+        .timeline-row {
+            display: grid;
+            grid-template-columns: 60px 150px 80px 80px 80px 80px 100px 80px 200px;
+            gap: 10px;
+            padding: 8px 5px;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 12px;
+            font-family: monospace;
+        }
+
+        .timeline-row.formation {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+        }
+
+        .timeline-row.touch {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+        }
+
+        .timeline-row.invalidation {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+        }
+
+        .timeline-row.normal {
+            background: white;
+        }
+
+        .issue-alerts {
+            margin-top: 20px;
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+
+        .code-fix {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }
+
+        .toggle-section {
+            margin-top: 15px;
+        }
+
+        .toggle-header {
+            background: #6c757d;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+            font-weight: 600;
+        }
+
+        .toggle-header:hover {
+            background: #5a6268;
+        }
+
+        .toggle-content {
+            display: none;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+        }
+
+        .toggle-content.expanded {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Zone Enrichment Logic Debugger</h1>
+            <p>Simulate and debug the zone touch counting and bars_active calculation</p>
+        </div>
+
+        <div class="debug-panel">
+            <div class="panel-header">
+                📊 Zone Configuration
+            </div>
+            <div class="panel-content">
+                <div class="zone-input">
+                    <h4>Zone Parameters (from your problematic zone)</h4>
+                    <div class="input-group">
+                        <div>
+                            <label for="zoneHigh">Zone High:</label>
+                            <input type="number" id="zoneHigh" value="0.84228" step="0.00001">
+                        </div>
+                        <div>
+                            <label for="zoneLow">Zone Low:</label>
+                            <input type="number" id="zoneLow" value="0.84162" step="0.00001">
+                        </div>
+                        <div>
+                            <label for="zoneType">Zone Type:</label>
+                            <select id="zoneType">
+                                <option value="supply">Supply Zone</option>
+                                <option value="demand">Demand Zone</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="formationEndIdx">Formation End Index:</label>
+                            <input type="number" id="formationEndIdx" value="50" min="0">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="zone-input">
+                    <h4>Sample Candle Data (simulate price movement after zone formation)</h4>
+                    <div class="input-group">
+                        <div>
+                            <label for="numCandles">Number of Candles After Formation:</label>
+                            <input type="number" id="numCandles" value="20" min="1" max="100">
+                        </div>
+                        <div>
+                            <label for="pricePattern">Price Pattern:</label>
+                            <select id="pricePattern">
+                                <option value="random">Random Movement</option>
+                                <option value="touch_once">Touch Zone Once</option>
+                                <option value="touch_multiple">Touch Zone Multiple Times</option>
+                                <option value="break_zone">Break Zone (Invalidate)</option>
+                                <option value="stay_outside">Stay Outside Zone</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn" onclick="generateCandles()">🎲 Generate Sample Candles</button>
+                </div>
+
+                <button class="btn" onclick="simulateEnrichment()" style="width: 100%; margin-top: 15px;">
+                    🚀 Simulate Enrichment Logic
+                </button>
+            </div>
+        </div>
+
+        <div id="resultsSection" style="display: none;">
+            <div class="debug-panel">
+                <div class="panel-header">
+                    📈 Simulation Results
+                </div>
+                <div class="panel-content">
+                    <div id="statsContainer" class="stats-row"></div>
+                    <div id="issueAlertsContainer" class="issue-alerts"></div>
+                    <div id="candleTimelineContainer" class="candle-timeline"></div>
+                    
+                    <div class="toggle-section">
+                        <div class="toggle-header" onclick="toggleSection('codeAnalysis')">
+                            🔍 Code Analysis & Fixes
+                        </div>
+                        <div id="codeAnalysis" class="toggle-content"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sampleCandles = [];
+        let zoneConfig = {};
+
+        function generateCandles() {
+            const numCandles = parseInt(document.getElementById('numCandles').value);
+            const pattern = document.getElementById('pricePattern').value;
+            const zoneHigh = parseFloat(document.getElementById('zoneHigh').value);
+            const zoneLow = parseFloat(document.getElementById('zoneLow').value);
+            const midPrice = (zoneHigh + zoneLow) / 2;
+            const zoneRange = zoneHigh - zoneLow;
+
+            sampleCandles = [];
+            let baseTime = new Date('2025-05-22T14:00:00Z');
+
+            for (let i = 0; i < numCandles; i++) {
+                let open, high, low, close;
+                const time = new Date(baseTime.getTime() + i * 30 * 60 * 1000); // 30min intervals
+
+                switch (pattern) {
+                    case 'touch_once':
+                        if (i === 5) {
+                            // Touch the zone once
+                            open = midPrice + zoneRange * 0.3;
+                            high = zoneHigh + 0.00001; // Slightly above for supply touch
+                            low = zoneLow - 0.00001;
+                            close = midPrice + zoneRange * 0.2;
+                        } else {
+                            // Stay outside
+                            open = close = midPrice + zoneRange * (0.5 + Math.random() * 0.5);
+                            high = open + zoneRange * 0.1;
+                            low = open - zoneRange * 0.1;
+                        }
+                        break;
+
+                    case 'touch_multiple':
+                        if (i === 3 || i === 8 || i === 15) {
+                            // Touch multiple times
+                            open = midPrice + zoneRange * 0.3;
+                            high = zoneHigh + 0.00001;
+                            low = zoneLow - 0.00001;
+                            close = midPrice + zoneRange * 0.2;
+                        } else {
+                            open = close = midPrice + zoneRange * (0.5 + Math.random() * 0.5);
+                            high = open + zoneRange * 0.1;
+                            low = open - zoneRange * 0.1;
+                        }
+                        break;
+
+                    case 'break_zone':
+                        if (i === 10) {
+                            // Break the zone (invalidate)
+                            open = zoneHigh + 0.0001;
+                            high = zoneHigh + 0.0005;
+                            low = zoneHigh - 0.0001;
+                            close = zoneHigh + 0.0003;
+                        } else {
+                            open = close = midPrice + zoneRange * (0.3 + Math.random() * 0.4);
+                            high = open + zoneRange * 0.1;
+                            low = open - zoneRange * 0.1;
+                        }
+                        break;
+
+                    case 'stay_outside':
+                        // Always stay outside the zone
+                        open = close = midPrice + zoneRange * (0.6 + Math.random() * 0.4);
+                        high = open + zoneRange * 0.1;
+                        low = open - zoneRange * 0.1;
+                        break;
+
+                    default: // random
+                        open = midPrice + (Math.random() - 0.5) * zoneRange * 2;
+                        close = open + (Math.random() - 0.5) * zoneRange * 0.5;
+                        high = Math.max(open, close) + Math.random() * zoneRange * 0.3;
+                        low = Math.min(open, close) - Math.random() * zoneRange * 0.3;
+                        break;
+                }
+
+                sampleCandles.push({
+                    time: time.toISOString(),
+                    open: parseFloat(open.toFixed(5)),
+                    high: parseFloat(high.toFixed(5)),
+                    low: parseFloat(low.toFixed(5)),
+                    close: parseFloat(close.toFixed(5)),
+                    volume: 1000
+                });
+            }
+
+            alert(`Generated ${numCandles} sample candles with pattern: ${pattern}`);
+        }
+
+        function simulateEnrichment() {
+            if (sampleCandles.length === 0) {
+                generateCandles();
+            }
+
+            // Get zone configuration
+            zoneConfig = {
+                zoneHigh: parseFloat(document.getElementById('zoneHigh').value),
+                zoneLow: parseFloat(document.getElementById('zoneLow').value),
+                zoneType: document.getElementById('zoneType').value,
+                formationEndIdx: parseInt(document.getElementById('formationEndIdx').value)
+            };
+
+            const isSupply = zoneConfig.zoneType === 'supply';
+            const proximalLine = isSupply ? zoneConfig.zoneLow : zoneConfig.zoneHigh;
+            const distalLine = isSupply ? zoneConfig.zoneHigh : zoneConfig.zoneLow;
+
+            // Simulate the enrichment logic
+            let isCurrentlyActive = true;
+            let touchCount = 0;
+            let firstInvalidationIdx = null;
+            let isOutsideZone = true; // This is the problematic assumption
+            let touchPoints = [];
+            let timeline = [];
+
+            const checkStartIdx = zoneConfig.formationEndIdx + 1;
+            const candleCount = sampleCandles.length + zoneConfig.formationEndIdx + 1;
+
+            // Add formation info to timeline
+            timeline.push({
+                index: zoneConfig.formationEndIdx,
+                type: 'formation',
+                time: '2025-05-22T13:30:00Z', // Formation time
+                open: '-', high: '-', low: '-', close: '-',
+                interaction: false,
+                state: 'Formation Complete',
+                notes: 'Zone formed, checking starts next candle'
+            });
+
+            for (let i = 0; i < sampleCandles.length; i++) {
+                const candleIdx = checkStartIdx + i;
+                const candle = sampleCandles[i];
+
+                if (!isCurrentlyActive) break;
+
+                let interactionOccurred = false;
+                let interactionPrice = 0.0;
+                let notes = [];
+
+                // Check for invalidation (distal breach)
+                if (isSupply) {
+                    if (candle.high > distalLine) {
+                        isCurrentlyActive = false;
+                        if (firstInvalidationIdx === null) {
+                            firstInvalidationIdx = candleIdx;
+                        }
+                        notes.push(`INVALIDATED: High ${candle.high} > Distal ${distalLine}`);
+                    }
+                } else {
+                    if (candle.low < distalLine) {
+                        isCurrentlyActive = false;
+                        if (firstInvalidationIdx === null) {
+                            firstInvalidationIdx = candleIdx;
+                        }
+                        notes.push(`INVALIDATED: Low ${candle.low} < Distal ${distalLine}`);
+                    }
+                }
+
+                // Check for interaction (proximal breach)
+                if (isCurrentlyActive) {
+                    if (isSupply) {
+                        if (candle.high >= proximalLine) {
+                            interactionOccurred = true;
+                            interactionPrice = candle.high;
+                            notes.push(`INTERACTION: High ${candle.high} >= Proximal ${proximalLine}`);
+                        }
+                    } else {
+                        if (candle.low <= proximalLine) {
+                            interactionOccurred = true;
+                            interactionPrice = candle.low;
+                            notes.push(`INTERACTION: Low ${candle.low} <= Proximal ${proximalLine}`);
+                        }
+                    }
+
+                    // Record touch if transitioning from outside
+                    if (interactionOccurred && isOutsideZone) {
+                        touchCount += 1;
+                        touchPoints.push({
+                            time: candle.time,
+                            price: interactionPrice
+                        });
+                        notes.push(`TOUCH COUNTED: #${touchCount} (was outside: ${isOutsideZone})`);
+                    } else if (interactionOccurred && !isOutsideZone) {
+                        notes.push(`NO TOUCH: Still inside zone (was outside: ${isOutsideZone})`);
+                    }
+
+                    // Update state
+                    isOutsideZone = !interactionOccurred;
+                    notes.push(`Next state: ${isOutsideZone ? 'OUTSIDE' : 'INSIDE'} zone`);
+                }
+
+                timeline.push({
+                    index: candleIdx,
+                    type: firstInvalidationIdx === candleIdx ? 'invalidation' : 
+                          (interactionOccurred ? 'touch' : 'normal'),
+                    time: candle.time,
+                    open: candle.open,
+                    high: candle.high,
+                    low: candle.low,
+                    close: candle.close,
+                    interaction: interactionOccurred,
+                    state: isOutsideZone ? 'Outside' : 'Inside',
+                    notes: notes.join(' | ')
+                });
+            }
+
+            // Calculate bars_active (this is where the bug might be)
+            const endEventIdx = firstInvalidationIdx || candleCount;
+            let barsActive;
+            if (endEventIdx > checkStartIdx) {
+                barsActive = endEventIdx - checkStartIdx;
+            } else {
+                barsActive = 0;
+            }
+
+            // Display results
+            displaySimulationResults({
+                isActive: isCurrentlyActive,
+                touchCount: touchCount,
+                barsActive: barsActive,
+                invalidationIdx: firstInvalidationIdx,
+                timeline: timeline,
+                zoneConfig: zoneConfig,
+                proximalLine: proximalLine,
+                distalLine: distalLine,
+                candleCount: candleCount,
+                checkStartIdx: checkStartIdx
+            });
+
+            document.getElementById('resultsSection').style.display = 'block';
+            document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function displaySimulationResults(results) {
+            // Stats
+            document.getElementById('statsContainer').innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-number">${results.touchCount}</div>
+                    <div class="stat-label">Touch Count</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${results.barsActive === null ? 'N/A' : results.barsActive}</div>
+                    <div class="stat-label">Bars Active</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${results.isActive ? '✅' : '❌'}</div>
+                    <div class="stat-label">Is Active</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${results.invalidationIdx || 'None'}</div>
+                    <div class="stat-label">Invalidation Index</div>
+                </div>
+            `;
+
+            // Issue Analysis
+            let issues = [];
+            
+            if (results.barsActive === null || isNaN(results.barsActive)) {
+                issues.push({
+                    type: 'error',
+                    title: 'Bars Active Calculation Error',
+                    message: 'bars_active is null/NaN. This suggests an issue with the calculation logic.'
+                });
+            }
+
+            if (results.touchCount === 0 && results.timeline.some(t => t.interaction)) {
+                issues.push({
+                    type: 'warning',
+                    title: 'Touch Count Logic Issue',
+                    message: 'Candles interacted with the zone but touch count is 0. The state machine logic may be flawed.'
+                });
+            }
+
+            let issuesHtml = '';
+            issues.forEach(issue => {
+                issuesHtml += `
+                    <div class="alert alert-${issue.type}">
+                        <strong>${issue.title}:</strong> ${issue.message}
+                    </div>
+                `;
+            });
+
+            document.getElementById('issueAlertsContainer').innerHTML = issuesHtml;
+
+            // Timeline
+            let timelineHtml = `
+                <h4>Candle-by-Candle Timeline</h4>
+                <div class="timeline-header">
+                    <div>Index</div>
+                    <div>Time</div>
+                    <div>Open</div>
+                    <div>High</div>
+                    <div>Low</div>
+                    <div>Close</div>
+                    <div>Interaction</div>
+                    <div>State</div>
+                    <div>Notes</div>
+                </div>
+            `;
+
+            results.timeline.forEach(row => {
+                timelineHtml += `
+                    <div class="timeline-row ${row.type}">
+                        <div>${row.index}</div>
+                        <div>${row.time.split('T')[1]?.split('.')[0] || row.time}</div>
+                        <div>${row.open}</div>
+                        <div>${row.high}</div>
+                        <div>${row.low}</div>
+                        <div>${row.close}</div>
+                        <div>${row.interaction ? '✅' : '❌'}</div>
+                        <div>${row.state}</div>
+                        <div style="font-size: 11px;">${row.notes}</div>
+                    </div>
+                `;
+            });
+
+            document.getElementById('candleTimelineContainer').innerHTML = timelineHtml;
+
+            // Code Analysis
+            document.getElementById('codeAnalysis').innerHTML = `
+                <h4>🐛 Identified Issues & Fixes</h4>
+                
+                <div class="alert alert-info">
+                    <strong>Issue 1: Bars Active Calculation</strong><br>
+                    Current logic: <code>endEventIdx = firstInvalidationIdx || candleCount</code><br>
+                    Problem: Uses total candle count instead of last valid index.
+                </div>
+                
+                <div class="code-fix">// FIXED bars_active calculation
+let barsActive;
+if let Some(invalidation_idx) = first_invalidation_idx {
+    // Zone was invalidated
+    if invalidation_idx > check_start_idx {
+        barsActive = Some((invalidation_idx - check_start_idx) as u64);
+    } else {
+        barsActive = Some(0);
+    }
+} else {
+    // Zone is still active - count bars from start to end of data
+    if candle_count > check_start_idx {
+        barsActive = Some((candle_count - check_start_idx) as u64);
+    } else {
+        barsActive = Some(0);
+    }
+}
+enriched_zone_struct.bars_active = barsActive;</div>
+
+                <div class="alert alert-info">
+                    <strong>Issue 2: Touch Count State Logic</strong><br>
+                    Current assumption: Price starts "outside" zone after formation.<br>
+                    Problem: This may not always be true, especially for reversals.
+                </div>
+                
+                <div class="code-fix">// FIXED touch counting with better initial state detection
+let mut is_outside_zone = true;
+
+// Check the first candle after formation to set correct initial state
+if check_start_idx < candle_count {
+    let first_candle = &candles[check_start_idx];
+    if is_supply {
+        // For supply zone, if first candle high is >= proximal, we start "inside"
+        is_outside_zone = first_candle.high < proximal_line;
+    } else {
+        // For demand zone, if first candle low is <= proximal, we start "inside"  
+        is_outside_zone = first_candle.low > proximal_line;
+    }
+    
+    debug!("Initial state after formation: {}", 
+           if is_outside_zone { "OUTSIDE" } else { "INSIDE" });
+}</div>
+
+                <div class="alert alert-warning">
+                    <strong>Debugging Tip:</strong> Add more detailed logging in your enrichment logic to trace the state transitions candle by candle.
+                </div>
+            `;
+        }
+
+        function toggleSection(sectionId) {
+            const content = document.getElementById(sectionId);
+            content.classList.toggle('expanded');
+        }
+
+        // Initialize with sample data
+        window.onload = function() {
+            generateCandles();
+        };
+    </script>
+</body>
+</html>

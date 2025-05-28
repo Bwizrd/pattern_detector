@@ -90,6 +90,9 @@ pub struct EnrichedZone {
     // --- *** NEW FIELD for Touch Points *** ---
     #[serde(skip_serializing_if = "Option::is_none")]
     pub touch_points: Option<Vec<TouchPoint>>,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_candles: Option<Vec<serde_json::Value>>,
 
     // Optional: Include candles involved in the zone state? Might make JSON large.
     // #[serde(skip_serializing_if = "Option::is_none")]

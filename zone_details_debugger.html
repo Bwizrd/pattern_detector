@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zone Details Debugger</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .debug-panel {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        .panel-header {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            color: white;
+            padding: 20px;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .panel-content {
+            padding: 25px;
+        }
+
+        .input-section {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .input-row {
+            display: grid;
+            grid-template-columns: 200px 1fr 120px;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .input-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .input-label {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .input-field {
+            padding: 10px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .zone-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #4ecdc4 0%, #44a08d 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-card.warning {
+            background: linear-gradient(135deg, #ffa726 0%, #fb8c00 100%);
+        }
+
+        .stat-card.danger {
+            background: linear-gradient(135deg, #ef5350 0%, #e53935 100%);
+        }
+
+        .stat-card.success {
+            background: linear-gradient(135deg, #66bb6a 0%, #4caf50 100%);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        .zone-details {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .details-card {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .details-card h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .detail-value {
+            color: #6c757d;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+
+        .formation-candles {
+            margin-top: 30px;
+        }
+
+        .candles-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .candles-table th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 10px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .candles-table td {
+            padding: 12px 10px;
+            text-align: center;
+            border-bottom: 1px solid #e9ecef;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .candles-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        .candles-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .price-level {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .price-high {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .price-low {
+            background: #e8f5e8;
+            color: #2e7d32;
+        }
+
+        .price-neutral {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+
+        .analysis-section {
+            margin-top: 30px;
+        }
+
+        .analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .analysis-card {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .analysis-card h4 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .status-active {
+            background: #4caf50;
+        }
+
+        .status-inactive {
+            background: #f44336;
+        }
+
+        .status-warning {
+            background: #ff9800;
+        }
+
+        .issue-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .issue-list li {
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .issue-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+
+        .issue-error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .issue-info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+
+        .loading {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .json-viewer {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        @media (max-width: 768px) {
+            .zone-details {
+                grid-template-columns: 1fr;
+            }
+            
+            .zone-overview {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            }
+            
+            .input-row {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            
+            .candles-table {
+                font-size: 11px;
+            }
+            
+            .candles-table th,
+            .candles-table td {
+                padding: 8px 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Zone Details Debugger</h1>
+            <p>Analyze individual zone data and identify issues</p>
+        </div>
+
+        <div class="debug-panel">
+            <div class="panel-header">
+                🎯 Zone Query
+            </div>
+            <div class="panel-content">
+                <div class="input-section">
+                    <div class="input-row">
+                        <div class="input-label">Server URL:</div>
+                        <input type="text" id="serverUrl" class="input-field" value="http://localhost:8080" placeholder="http://localhost:8080">
+                        <button class="btn" onclick="fetchZoneData()" id="fetchBtn">🚀 Fetch Zone</button>
+                    </div>
+                    <div class="input-row">
+                        <div class="input-label">Zone ID:</div>
+                        <input type="text" id="zoneId" class="input-field" value="7e7488dea0758856" placeholder="Enter zone ID">
+                        <div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="resultsSection" style="display: none;">
+            <div class="debug-panel">
+                <div class="panel-header">
+                    📊 Zone Analysis Results
+                </div>
+                <div class="panel-content">
+                    <div id="zoneOverview" class="zone-overview"></div>
+                    <div id="zoneDetails" class="zone-details"></div>
+                    <div id="formationCandles" class="formation-candles"></div>
+                    <div id="analysisSection" class="analysis-section"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentZoneData = null;
+
+        async function fetchZoneData() {
+            const btn = document.getElementById('fetchBtn');
+            const btnText = btn.innerHTML;
+            const serverUrl = document.getElementById('serverUrl').value.trim();
+            const zoneId = document.getElementById('zoneId').value.trim();
+            
+            if (!zoneId) {
+                alert('Please enter a Zone ID');
+                return;
+            }
+            
+            // Show loading
+            btn.disabled = true;
+            btn.innerHTML = '<div class="loading"><div class="spinner"></div>Fetching...</div>';
+            
+            try {
+                const url = `${serverUrl}/zone?zone_id=${encodeURIComponent(zoneId)}`;
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const zoneData = await response.json();
+                currentZoneData = zoneData;
+                
+                displayZoneAnalysis(zoneData);
+                document.getElementById('resultsSection').style.display = 'block';
+                document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+                
+            } catch (error) {
+                console.error('Fetch failed:', error);
+                alert(`Failed to fetch zone data: ${error.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = btnText;
+            }
+        }
+
+        function displayZoneAnalysis(zone) {
+            displayOverview(zone);
+            displayDetails(zone);
+            displayFormationCandles(zone);
+            displayAnalysis(zone);
+        }
+
+        function displayOverview(zone) {
+            const overview = document.getElementById('zoneOverview');
+            
+            const touchCountClass = zone.touch_count === 0 ? 'warning' : 'success';
+            const barsActiveClass = zone.bars_active === 0 ? 'danger' : 'success';
+            const statusClass = zone.is_active ? 'success' : 'danger';
+            
+            overview.innerHTML = `
+                <div class="stat-card ${statusClass}">
+                    <div class="stat-number">${zone.is_active ? '✅' : '❌'}</div>
+                    <div class="stat-label">Zone Status</div>
+                </div>
+                <div class="stat-card ${touchCountClass}">
+                    <div class="stat-number">${zone.touch_count}</div>
+                    <div class="stat-label">Touch Count</div>
+                </div>
+                <div class="stat-card ${barsActiveClass}">
+                    <div class="stat-number">${zone.bars_active || 'N/A'}</div>
+                    <div class="stat-label">Bars Active</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${zone.strength_score?.toFixed(1) || 'N/A'}</div>
+                    <div class="stat-label">Strength Score</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${zone.formation_candles?.length || 0}</div>
+                    <div class="stat-label">Formation Candles</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${((zone.zone_high - zone.zone_low) * 100000).toFixed(1)}</div>
+                    <div class="stat-label">Zone Size (pips)</div>
+                </div>
+            `;
+        }
+
+        function displayDetails(zone) {
+            const details = document.getElementById('zoneDetails');
+            
+            const zoneRange = zone.zone_high - zone.zone_low;
+            const midPoint = (zone.zone_high + zone.zone_low) / 2;
+            
+            details.innerHTML = `
+                <div class="details-card">
+                    <h3>📋 Zone Properties</h3>
+                    <div class="detail-row">
+                        <span class="detail-label">Zone ID:</span>
+                        <span class="detail-value">${zone.zone_id}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Symbol:</span>
+                        <span class="detail-value">${zone.symbol}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Timeframe:</span>
+                        <span class="detail-value">${zone.timeframe}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Zone Type:</span>
+                        <span class="detail-value">${zone.zone_type}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Detection Method:</span>
+                        <span class="detail-value">${zone.detection_method}</span>
+                    </div>
+                </div>
+                
+                <div class="details-card">
+                    <h3>📊 Price Levels</h3>
+                    <div class="detail-row">
+                        <span class="detail-label">Zone High:</span>
+                        <span class="detail-value">${zone.zone_high?.toFixed(5)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Zone Low:</span>
+                        <span class="detail-value">${zone.zone_low?.toFixed(5)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">50% Line:</span>
+                        <span class="detail-value">${zone.fifty_percent_line?.toFixed(5)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Mid Point:</span>
+                        <span class="detail-value">${midPoint.toFixed(5)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Range (pips):</span>
+                        <span class="detail-value">${(zoneRange * 100000).toFixed(1)}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function displayFormationCandles(zone) {
+            const container = document.getElementById('formationCandles');
+            
+            if (!zone.formation_candles || zone.formation_candles.length === 0) {
+                container.innerHTML = `
+                    <h3>🕯️ Formation Candles</h3>
+                    <p style="text-align: center; color: #6c757d; padding: 20px;">No formation candles data available</p>
+                `;
+                return;
+            }
+            
+            let tableRows = '';
+            zone.formation_candles.forEach((candle, index) => {
+                const time = new Date(candle._time).toLocaleString();
+                const isHighest = candle.high === Math.max(...zone.formation_candles.map(c => c.high));
+                const isLowest = candle.low === Math.min(...zone.formation_candles.map(c => c.low));
+                
+                tableRows += `
+                    <tr>
+                        <td>${index + 1}</td>
+                        <td>${time}</td>
+                        <td>${candle.open?.toFixed(5)}</td>
+                        <td class="${isHighest ? 'price-high' : ''}">${candle.high?.toFixed(5)}</td>
+                        <td class="${isLowest ? 'price-low' : ''}">${candle.low?.toFixed(5)}</td>
+                        <td>${candle.close?.toFixed(5)}</td>
+                        <td>${candle.volume?.toLocaleString()}</td>
+                        <td>${((candle.high - candle.low) * 100000).toFixed(1)}</td>
+                    </tr>
+                `;
+            });
+            
+            container.innerHTML = `
+                <h3>🕯️ Formation Candles</h3>
+                <table class="candles-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Time</th>
+                            <th>Open</th>
+                            <th>High</th>
+                            <th>Low</th>
+                            <th>Close</th>
+                            <th>Volume</th>
+                            <th>Range (pips)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function displayAnalysis(zone) {
+            const container = document.getElementById('analysisSection');
+            
+            // Identify potential issues
+            const issues = analyzeZoneIssues(zone);
+            
+            let issuesHtml = '';
+            issues.forEach(issue => {
+                issuesHtml += `
+                    <li class="issue-${issue.type}">
+                        <span>${getIssueIcon(issue.type)}</span>
+                        <span>${issue.message}</span>
+                    </li>
+                `;
+            });
+            
+            const timeAnalysis = analyzeTimeGaps(zone);
+            const priceAnalysis = analyzePriceLevels(zone);
+            
+            container.innerHTML = `
+                <div class="analysis-grid">
+                    <div class="analysis-card">
+                        <h4>
+                            <span class="status-indicator ${issues.some(i => i.type === 'error') ? 'status-inactive' : issues.some(i => i.type === 'warning') ? 'status-warning' : 'status-active'}"></span>
+                            Issue Analysis
+                        </h4>
+                        <ul class="issue-list">
+                            ${issuesHtml || '<li class="issue-info"><span>✅</span><span>No issues detected</span></li>'}
+                        </ul>
+                    </div>
+                    
+                    <div class="analysis-card">
+                        <h4>
+                            <span class="status-indicator status-active"></span>
+                            Time Analysis
+                        </h4>
+                        <div class="detail-row">
+                            <span class="detail-label">Formation Start:</span>
+                            <span class="detail-value">${zone.start_time}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Formation End:</span>
+                            <span class="detail-value">${zone.end_time}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Formation Duration:</span>
+                            <span class="detail-value">${timeAnalysis.formationDuration}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Age:</span>
+                            <span class="detail-value">${timeAnalysis.age}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="analysis-card">
+                        <h4>
+                            <span class="status-indicator status-active"></span>
+                            Price Analysis
+                        </h4>
+                        <div class="detail-row">
+                            <span class="detail-label">Proximal Line:</span>
+                            <span class="detail-value">${priceAnalysis.proximalLine.toFixed(5)}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Distal Line:</span>
+                            <span class="detail-value">${priceAnalysis.distalLine.toFixed(5)}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Zone Quality:</span>
+                            <span class="detail-value">${priceAnalysis.quality}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Risk/Reward:</span>
+                            <span class="detail-value">${priceAnalysis.riskReward}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="analysis-card">
+                        <h4>
+                            <span class="status-indicator status-active"></span>
+                            Raw JSON Data
+                        </h4>
+                        <div class="json-viewer">${JSON.stringify(zone, null, 2)}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function analyzeZoneIssues(zone) {
+            const issues = [];
+            
+            // Check for missing indices
+            if (zone.start_idx === null || zone.end_idx === null) {
+                issues.push({
+                    type: 'warning',
+                    message: 'Missing start_idx or end_idx - this might affect enrichment logic'
+                });
+            }
+            
+            // Check for zero touch count
+            if (zone.touch_count === 0) {
+                issues.push({
+                    type: 'warning',
+                    message: 'Zero touch count - price may never have returned to test this zone'
+                });
+            }
+            
+            // Check for zero bars active
+            if (zone.bars_active === 0) {
+                issues.push({
+                    type: 'error',
+                    message: 'Zero bars active - no candles available after zone formation'
+                });
+            }
+            
+            // Check for very high bars active (might indicate old zone)
+            if (zone.bars_active > 5000) {
+                issues.push({
+                    type: 'info',
+                    message: `Very old zone (${zone.bars_active} bars active) - consider filtering`
+                });
+            }
+            
+            // Check for formation candles gaps
+            if (zone.formation_candles && zone.formation_candles.length > 1) {
+                const times = zone.formation_candles.map(c => new Date(c._time).getTime());
+                for (let i = 1; i < times.length; i++) {
+                    const gap = times[i] - times[i-1];
+                    if (gap > 2 * 60 * 60 * 1000) { // More than 2 hours gap
+                        issues.push({
+                            type: 'warning',
+                            message: 'Large time gaps in formation candles detected'
+                        });
+                        break;
+                    }
+                }
+            }
+            
+            // Check zone size
+            const zoneSize = (zone.zone_high - zone.zone_low) * 100000; // in pips
+            if (zoneSize < 1) {
+                issues.push({
+                    type: 'warning',
+                    message: `Very small zone (${zoneSize.toFixed(1)} pips) - might be noise`
+                });
+            } else if (zoneSize > 50) {
+                issues.push({
+                    type: 'warning',
+                    message: `Very large zone (${zoneSize.toFixed(1)} pips) - might be imprecise`
+                });
+            }
+            
+            return issues;
+        }
+
+        function analyzeTimeGaps(zone) {
+            const startTime = new Date(zone.start_time);
+            const endTime = new Date(zone.end_time);
+            const now = new Date();
+            
+            const formationDuration = endTime - startTime;
+            const age = now - endTime;
+            
+            return {
+                formationDuration: formatDuration(formationDuration),
+                age: formatDuration(age)
+            };
+        }
+
+        function analyzePriceLevels(zone) {
+            const isSupply = zone.zone_type === 'supply_zone';
+            const proximalLine = isSupply ? zone.zone_low : zone.zone_high;
+            const distalLine = isSupply ? zone.zone_high : zone.zone_low;
+            const zoneSize = Math.abs(zone.zone_high - zone.zone_low) * 100000;
+            
+            let quality = 'Good';
+            if (zoneSize < 2) quality = 'Tight';
+            else if (zoneSize > 30) quality = 'Wide';
+            
+            const riskReward = zoneSize < 10 ? 'Good (tight stop)' : 'Fair (wide stop)';
+            
+            return {
+                proximalLine,
+                distalLine,
+                quality,
+                riskReward
+            };
+        }
+
+        function formatDuration(ms) {
+            const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+            const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+            const minutes = Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000));
+            
+            if (days > 0) return `${days}d ${hours}h`;
+            if (hours > 0) return `${hours}h ${minutes}m`;
+            return `${minutes}m`;
+        }
+
+        function getIssueIcon(type) {
+            switch(type) {
+                case 'error': return '❌';
+                case 'warning': return '⚠️';
+                case 'info': return 'ℹ️';
+                default: return '✅';
+            }
+        }
+
+        // Auto-load with default zone ID
+        window.onload = function() {
+            fetchZoneData();
+        };
+
+        // Allow Enter key to fetch
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && event.ctrlKey) {
+                fetchZoneData();
+            }
+        });
+    </script>
+</body>
+</html>
