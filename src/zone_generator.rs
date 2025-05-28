@@ -751,6 +751,7 @@ async fn process_symbol_timeframe_pattern_and_collect_ids(
         stop_loss_pips: None, 
         take_profit_pips: None, 
         enable_trailing_stop: None,
+        max_touch_count: None,
     };
 
     // Call _fetch_and_detect_core and map its error to String

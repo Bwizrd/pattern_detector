@@ -306,6 +306,7 @@ fn create_test_chart_query() -> ChartQuery {
         stop_loss_pips: None,
         take_profit_pips: None,
         enable_trailing_stop: None,
+        max_touch_count: None,
     }
 }
 
@@ -321,6 +322,7 @@ fn create_test_chart_query_with_params(symbol: &str, timeframe: &str) -> ChartQu
         stop_loss_pips: None,
         take_profit_pips: None,
         enable_trailing_stop: None,
+        max_touch_count: None,
     }
 }
 

@@ -58,31 +58,91 @@ struct QueryParams {
     pattern: String,
 }
 
+
+// Create a simple query struct just for the UI endpoint
+#[derive(serde::Deserialize, Debug)]
+pub struct UIActiveZonesQuery {
+    #[serde(default)]
+    pub max_touch_count: Option<i64>,
+}
+
 pub async fn get_ui_active_zones_handler(
     zone_cache: web::Data<ActiveZoneCache>,
+    query: web::Query<UIActiveZonesQuery>, // Use the simpler query struct
 ) -> impl Responder {
     log::info!("[UI_ACTIVE_ZONES_HANDLER] Request for active zones for UI received.");
+    log::info!("[UI_ACTIVE_ZONES_HANDLER] Query parameters: {:?}", query);
+    log::info!("[UI_ACTIVE_ZONES_HANDLER] max_touch_count: {:?}", query.max_touch_count);
+    
     let cache_guard = zone_cache.lock().await;
-    let zones_list: Vec<StoredZone> = cache_guard
+    let mut zones_list: Vec<StoredZone> = cache_guard
         .values()
         .map(|live_state| live_state.zone_data.clone())
         .collect();
+    
+    let initial_count = zones_list.len();
+    
+    // Apply touch count filtering if specified
+    if let Some(max_touches) = query.max_touch_count {
+        log::info!(
+            "[UI_ACTIVE_ZONES_HANDLER] Applying touch count filter: max_touches = {}",
+            max_touches
+        );
+        
+        zones_list.retain(|zone| {
+            let touch_count = zone.touch_count.unwrap_or(0);
+            let zone_id = zone.zone_id.as_deref().unwrap_or("unknown");
+            
+            let should_keep = touch_count <= max_touches;
+            
+            if should_keep {
+                log::debug!(
+                    "[UI_ACTIVE_ZONES_HANDLER] KEEPING zone {} with touch_count: {} <= max: {}",
+                    zone_id, touch_count, max_touches
+                );
+            } else {
+                log::info!(
+                    "[UI_ACTIVE_ZONES_HANDLER] FILTERING OUT zone {} with touch_count: {} > max: {}",
+                    zone_id, touch_count, max_touches
+                );
+            }
+            
+            should_keep
+        });
+        
+        let filtered_count = zones_list.len();
+        log::info!(
+            "[UI_ACTIVE_ZONES_HANDLER] Touch count filtering complete: {} -> {} zones (max_touches: {})",
+            initial_count, filtered_count, max_touches
+        );
+    } else {
+        log::info!(
+            "[UI_ACTIVE_ZONES_HANDLER] No touch count filtering applied (max_touch_count is None)"
+        );
+    }
+    
     log::info!(
         "[UI_ACTIVE_ZONES_HANDLER] Returning {} active zones from Zone Monitor's cache.",
         zones_list.len()
     );
+    
     let monitor_symbols_for_display =
         env::var("ZONE_MONITOR_SYMBOLS").unwrap_or_else(|_| "Defaults used by monitor".to_string());
     let monitor_timeframes_for_display = env::var("ZONE_MONITOR_PATTERNTFS")
         .unwrap_or_else(|_| "Defaults used by monitor".to_string());
     let monitor_allowed_days_for_display = env::var("STRATEGY_ALLOWED_DAYS")
         .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+    
     HttpResponse::Ok().json(serde_json::json!({
         "tradeable_zones": zones_list,
         "monitoring_filters": {
             "symbols": monitor_symbols_for_display,
             "patternTimeframes": monitor_timeframes_for_display,
-            "allowedTradeDays": monitor_allowed_days_for_display
+            "allowedTradeDays": monitor_allowed_days_for_display,
+            // Include applied filter information in response
+            "applied_max_touch_count": query.max_touch_count,
+            "total_zones_before_filter": initial_count,
+            "zones_returned_after_filter": zones_list.len()
         }
     }))
 }

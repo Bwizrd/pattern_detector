@@ -57,6 +57,8 @@ pub struct ChartQuery {
     pub stop_loss_pips: Option<f64>,
     pub take_profit_pips: Option<f64>,
     pub enable_trailing_stop: Option<bool>,
+    #[serde(default)]
+    pub max_touch_count: Option<i64>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -425,6 +427,7 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
         "[get_active_zones] Handling /active-zones request: {:?}",
         query
     );
+     let max_touch_count = query.max_touch_count;
     match _fetch_and_detect_core(&query, "get_active_zones_handler").await {
         Ok((candles, _recognizer, mut detection_results)) => {
             debug!("[get_active_zones] Result from _fetch_and_detect_core (before enrichment): Candles: {}, Results JSON: {}", candles.len(), serde_json::to_string(&detection_results).unwrap_or_else(|e| format!("Error serializing: {}", e)));
@@ -443,11 +446,14 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
             }
 
             info!(
-                "[get_active_zones] Enriching detection results ({} candles)...",
-                candles.len()
+                "[get_active_zones] Enriching detection results ({} candles) with max_touch_count filter: {:?}...",
+                candles.len(),
+                max_touch_count
             );
+            
             let process_zones = |zones_option: Option<&mut Vec<Value>>, is_supply: bool| {
                 if let Some(zones) = zones_option {
+                    // First enrich all zones with activity status and candles
                     for zone_json in zones.iter_mut() {
                         let is_active = is_zone_still_active(zone_json, &candles, is_supply);
                         if let Some(obj) = zone_json.as_object_mut() {
@@ -459,8 +465,40 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
                             }
                         }
                     }
+                    
+                    // Apply touch count filtering if specified
+                    if let Some(max_touches) = max_touch_count {
+                        let initial_count = zones.len();
+                        zones.retain(|zone_json| {
+                            if let Some(touch_count) = zone_json.get("touch_count").and_then(|v| v.as_i64()) {
+                                let should_keep = touch_count <= max_touches;
+                                if !should_keep {
+                                    debug!(
+                                        "[get_active_zones] Filtering out zone with touch_count: {} > max: {} (zone_id: {:?})",
+                                        touch_count,
+                                        max_touches,
+                                        zone_json.get("zone_id")
+                                    );
+                                }
+                                should_keep
+                            } else {
+                                // If touch_count is missing, assume it's 0 and keep the zone
+                                debug!(
+                                    "[get_active_zones] Zone missing touch_count, keeping zone_id: {:?}",
+                                    zone_json.get("zone_id")
+                                );
+                                true
+                            }
+                        });
+                        let filtered_count = zones.len();
+                        info!(
+                            "[get_active_zones] Touch count filtering: {} -> {} zones (max_touches: {})",
+                            initial_count, filtered_count, max_touches
+                        );
+                    }
                 }
             };
+            
             if let Some(data) = detection_results
                 .get_mut("data")
                 .and_then(|d| d.get_mut("price"))
@@ -483,6 +521,7 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
                     detection_results
                 );
             }
+            
             info!("[get_active_zones] Enrichment complete.");
             HttpResponse::Ok().json(detection_results)
         }
@@ -555,6 +594,7 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
                 stop_loss_pips: None,
                 take_profit_pips: None,
                 enable_trailing_stop: None,
+                max_touch_count: None,
             };
 
             if current_query.pattern != "fifty_percent_before_big_bar" {
@@ -1073,6 +1113,7 @@ pub async fn debug_bulk_zones_handler(query: web::Query<SingleZoneQueryParams>) 
         stop_loss_pips: None,
         take_profit_pips: None,
         enable_trailing_stop: None,
+        max_touch_count: None,
     };
 
     // Check pattern support early
@@ -1699,6 +1740,7 @@ async fn execute_find_and_verify_zone_logic(
         end_time: query_params.fetch_window_end_time.clone(),
         pattern: query_params.pattern.clone(), // Use the specified pattern
         enable_trading: None, lot_size: None, stop_loss_pips: None, take_profit_pips: None, enable_trailing_stop: None,
+        max_touch_count: None,
     };
 
     let serializable_query_params = FindAndVerifyZoneQueryParamsSerializable {
