@@ -20,7 +20,7 @@ mod influx_fetcher;
 mod latest_zones_handler;
 mod multi_backtest_handler;
 mod patterns;
-mod stale_zone_checker;
+mod zone_lifecycle_updater;
 pub mod trades;
 pub mod trading;
 mod types;
@@ -32,6 +32,7 @@ mod optimize_handler;
 // --- Use necessary types ---
 use crate::types::StoredZone;
 use crate::zone_monitor_service::ActiveZoneCache;
+use crate::zone_lifecycle_updater::run_zone_lifecycle_updater_service;
 
 // --- API & Background Tasking Globals ---
 static ZONE_GENERATION_QUEUED: std::sync::atomic::AtomicBool =
@@ -185,9 +186,7 @@ async fn main() -> std::io::Result<()> {
 
     if enable_stale_checker {
         let http_client_for_stale_checker = Arc::clone(&shared_http_client);
-        tokio::spawn(stale_zone_checker::run_stale_zone_check_service(
-            http_client_for_stale_checker,
-        ));
+        tokio::spawn(run_zone_lifecycle_updater_service(http_client_for_stale_checker.clone()));
         log::info!("[MAIN] Stale Zone Check Service spawned.");
     } else {
         log::info!(

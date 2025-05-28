@@ -232,7 +232,7 @@ pub async fn revalidate_one_zone_activity_by_id(
         Ok(t) => t,
         Err(e) => return Err(format!("Error reading InfluxDB response text for zone {}: {}", zone_id_to_check, e)),
     };
-    log::error!("[REVALIDATE_RAW_CSV] For zone_id '{}', InfluxDB returned CSV:\n{}", zone_id_to_check, text);
+    log::debug!("[REVALIDATE_RAW_CSV] For zone_id '{}', InfluxDB returned CSV:\n{}", zone_id_to_check, text);
     // <<< --- END OF CRITICAL DEBUG LOG --- >>>
             
     let mut original_stored_zones: Vec<StoredZone> = Vec::new();
@@ -244,7 +244,7 @@ pub async fn revalidate_one_zone_activity_by_id(
                 Ok(csv_rec) => {
                     // Log the successfully deserialized CSV record before mapping
                     if csv_rec.zone_id.as_deref() == Some(&zone_id_to_check) {
-                        log::error!("[REVALIDATE_DESERIALIZED_CSV_REC] For target zone_id '{}', deserialized ZoneCsvRecord: {:?}", zone_id_to_check, csv_rec);
+                        log::debug!("[REVALIDATE_DESERIALIZED_CSV_REC] For target zone_id '{}', deserialized ZoneCsvRecord: {:?}", zone_id_to_check, csv_rec);
                     }
                     original_stored_zones.push(map_csv_to_stored_zone(csv_rec));
                 }
