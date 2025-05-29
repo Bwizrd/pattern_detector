@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Zone Monitor WebSocket Test</title>
+</head>
+<body>
+    <h1>Zone Monitor WebSocket Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const messagesDiv = document.getElementById('messages');
+        
+        function addMessage(message) {
+            const div = document.createElement('div');
+            div.textContent = new Date().toLocaleTimeString() + ': ' + JSON.stringify(message, null, 2);
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        const ws = new WebSocket('ws://localhost:8082');
+
+        ws.onopen = () => {
+            statusDiv.textContent = '✅ Connected to zone monitor';
+            addMessage('Connected');
+            
+            // Subscribe to all events
+            ws.send(JSON.stringify({
+                type: 'subscribe_all'
+            }));
+            
+            // Also subscribe to specific symbol
+            ws.send(JSON.stringify({
+                type: 'subscribe_symbol',
+                symbol: 'EURUSD_SB'
+            }));
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            addMessage(data);
+            
+            if (data.type === 'zone_event') {
+                console.log('🎯 ZONE EVENT:', data.event);
+                statusDiv.textContent = `🎯 Zone Event: ${data.event.event_type} for ${data.event.symbol}`;
+            }
+        };
+
+        ws.onclose = () => {
+            statusDiv.textContent = '❌ Disconnected';
+            addMessage('Disconnected');
+        };
+
+        ws.onerror = (error) => {
+            statusDiv.textContent = '❌ Connection Error';
+            addMessage('Error: ' + error);
+        };
+    </script>
+</body>
+</html>

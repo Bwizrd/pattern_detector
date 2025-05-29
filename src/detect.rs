@@ -24,7 +24,7 @@ use actix_web::{web, HttpResponse, Responder};
 use csv::ReaderBuilder;
 use dotenv::dotenv;
 use futures::future::join_all;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use reqwest;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,8 @@ use std::io::Cursor;
 
 use std::fs::OpenOptions;
 use std::io::Write;
+
+use crate::zone_detection::{ZoneDetectionEngine, ZoneDetectionRequest, InfluxDataFetcher};
 
 fn debug_to_file(message: &str) {
     let mut file = OpenOptions::new()
@@ -575,17 +577,491 @@ pub async fn get_active_zones_handler(query: web::Query<ChartQuery>) -> impl Res
     }
 }
 
+// pub async fn get_bulk_multi_tf_active_zones_handler(
+//     global_query: web::Query<ChartQuery>,
+//     items: web::Json<Vec<BulkSymbolTimeframesRequestItem>>,
+// ) -> impl Responder {
+//     let request_items = items.into_inner();
+    
+//     // ADD CLEAR ENTRY LOGGING
+//     debug_to_file(&format!("🚀 [BULK_HANDLER] ENTRY: {} symbol requests", request_items.len()));
+//     for (i, item) in request_items.iter().enumerate() {
+//         debug_to_file(&format!("🚀   [{}] Symbol: {}, Timeframes: {:?}", i, item.symbol, item.timeframes));
+//     }
+    
+//     info!(
+//         "[get_bulk_multi_tf] Handling request for {} symbol entries. Query: {:?}",
+//         request_items.len(),
+//         global_query
+//     );
+    
+//     let mut tasks = Vec::new();
+//     for item in request_items {
+//         let symbol_for_tasks = item.symbol.clone();
+//         for timeframe in item.timeframes {
+//             let current_symbol = symbol_for_tasks.clone();
+//             let current_timeframe = timeframe.clone();
+            
+//             // Symbol suffix logic
+//             let core_symbol = if current_symbol.ends_with("_SB") {
+//                 current_symbol.clone()
+//             } else {
+//                 format!("{}_SB", current_symbol)
+//             };
+
+//             let current_query = ChartQuery {
+//                 symbol: core_symbol.clone(),
+//                 timeframe: current_timeframe.clone(),
+//                 start_time: global_query.start_time.clone(),
+//                 end_time: global_query.end_time.clone(),
+//                 pattern: global_query.pattern.clone(),
+//                 enable_trading: None,
+//                 lot_size: None,
+//                 stop_loss_pips: None,
+//                 take_profit_pips: None,
+//                 enable_trailing_stop: None,
+//                 max_touch_count: None,
+//             };
+
+//             if current_query.pattern != "fifty_percent_before_big_bar" {
+//                 warn!("[get_bulk_multi_tf] Skipping task for unsupported pattern '{}' for {}/{}", 
+//                       current_query.pattern, current_symbol, current_timeframe);
+//                 tasks.push(tokio::spawn(async move {
+//                     BulkResultItem {
+//                         symbol: current_symbol,
+//                         timeframe: current_timeframe,
+//                         status: "Error: Pattern Not Supported".to_string(),
+//                         data: None,
+//                         error_message: Some(format!("Pattern '{}' not supported by this endpoint configuration.", current_query.pattern)),
+//                     }
+//                 }));
+//                 continue;
+//             }
+
+//             let task = tokio::spawn(async move {
+//                 let caller_task_id = format!("bulk_task_{}/{}", current_symbol, current_timeframe);
+                
+//                 // ADD TASK START LOGGING
+//                 debug_to_file(&format!("📋 [TASK_START] {}/{} - Calling _fetch_and_detect_core", current_symbol, current_timeframe));
+                
+//                 match _fetch_and_detect_core(&current_query, &caller_task_id).await {
+//                     Ok((candles, _recognizer, detection_results_json)) => {
+//                         debug_to_file(&format!("📋 [TASK_CORE] {}/{} - Got {} candles, processing results", current_symbol, current_timeframe, candles.len()));
+                        
+//                         if candles.is_empty() {
+//                             debug_to_file(&format!("📋 [TASK_EMPTY] {}/{} - No candle data", current_symbol, current_timeframe));
+//                             return BulkResultItem {
+//                                 symbol: current_symbol,
+//                                 timeframe: current_timeframe,
+//                                 status: "No Data".to_string(),
+//                                 data: None,
+//                                 error_message: Some("No candle data found.".to_string()),
+//                             };
+//                         }
+
+//                         let mut final_supply_zones: Vec<EnrichedZone> = Vec::new();
+//                         let mut final_demand_zones: Vec<EnrichedZone> = Vec::new();
+//                         let mut enrichment_error: Option<String> = None;
+//                         let candle_count = candles.len();
+//                         let last_candle_timestamp = candles.last().map(|c| c.time.clone());
+
+//                         // SIMPLIFIED ENRICHMENT CLOSURE WITH EXTENSIVE LOGGING
+//                         let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool, last_candle_time_for_zone: Option<String>| -> Result<Vec<EnrichedZone>, String> {
+//                             let mut processed_zones: Vec<EnrichedZone> = Vec::new();
+//                             let zone_type_str = if is_supply { "supply" } else { "demand" };
+                            
+//                            debug_to_file(&format!("🔧 [ENRICHMENT] {}/{} - Processing {} zones", current_symbol, current_timeframe, zone_type_str));
+//                             if let Some(zones) = zones_option {
+//                                  debug_to_file(&format!("🔧 [ENRICHMENT] Found {} raw {} zones", zones.len(), zone_type_str));
+                                
+//                                 for (zone_counter, zone_json) in zones.iter().enumerate() {
+//                                      debug_to_file(&format!("🔧 [ZONE_{}] Starting enrichment for {} zone #{}", 
+//                                            zone_counter + 1, zone_type_str, zone_counter + 1));
+                                    
+//                                     // ADD DETAILED DEBUGGING FOR FIRST ZONE
+//                                     if zone_counter == 0 {
+//                                         debug_zone_enrichment_step_by_step(zone_json, &candles, is_supply, &current_symbol, &current_timeframe);
+//                                     }
+                                    
+//                                     // Deserialize the zone
+//                                     let mut enriched_zone_struct = match crate::types::deserialize_raw_zone_value(zone_json) {
+//                                         Ok(mut z) => {
+//                                             if z.zone_id.is_none() {
+//                                                 let id = generate_deterministic_zone_id(
+//                                                     &core_symbol, &current_timeframe, 
+//                                                     if is_supply { "supply" } else { "demand" },
+//                                                     z.start_time.as_deref(), z.zone_high, z.zone_low,
+//                                                 );
+//                                                 z.zone_id = Some(id);
+//                                             }
+//                                             if z.zone_type.is_none() {
+//                                                 z.zone_type = Some(format!("{}_zone", zone_type_str));
+//                                             }
+//                                             z
+//                                         }
+//                                         Err(e) => {
+//                                             debug_to_file(&format!("🔧 [ZONE_{}] ❌ Deserialize failed: {}", zone_counter + 1, e));
+//                                             continue;
+//                                         }
+//                                     };
+
+//                                     enriched_zone_struct.end_time = None;
+//                                     enriched_zone_struct.end_idx = None;
+//                                     enriched_zone_struct.zone_end_time = None;
+//                                     enriched_zone_struct.zone_end_idx = None;
+//                                     enriched_zone_struct.invalidation_time = None;
+
+//                                     debug_to_file(&format!("🔍 [ZONE_{}] BEFORE ENRICHMENT:", zone_counter));
+//                                     debug_to_file(&format!("   - Original end_time: {:?}", enriched_zone_struct.end_time));
+//                                     debug_to_file(&format!("   - Original end_idx: {:?}", enriched_zone_struct.end_idx));
+//                                     debug_to_file(&format!("   - Original zone_end_time: {:?}", enriched_zone_struct.zone_end_time));
+//                                     debug_to_file(&format!("   - Original zone_end_idx: {:?}", enriched_zone_struct.zone_end_idx));
+//                                     debug_to_file(&format!("   - Original invalidation_time: {:?}", enriched_zone_struct.invalidation_time));
+                                    
+//                                     enriched_zone_struct.last_data_candle = last_candle_time_for_zone.clone();
+//                                     let zone_id_log = enriched_zone_struct.zone_id.as_deref().unwrap_or("UNKNOWN");
+
+//                                     // Get essential data
+//                                     let formation_end_idx = match enriched_zone_struct.start_idx {
+//                                         Some(start_idx) => start_idx as usize +1,
+//                                         None => {
+//                                             debug_to_file(&format!("🔧 [ZONE_{}] ❌ Missing end_idx", zone_counter + 1));
+//                                             continue;
+//                                         }
+//                                     };
+                                    
+//                                     let zone_high = match enriched_zone_struct.zone_high {
+//                                         Some(val) if val.is_finite() => val,
+//                                         _ => {
+//                                             debug_to_file(&format!("🔧 [ZONE_{}] ❌ Invalid zone_high", zone_counter + 1));
+//                                             continue;
+//                                         }
+//                                     };
+                                    
+//                                     let zone_low = match enriched_zone_struct.zone_low {
+//                                         Some(val) if val.is_finite() => val,
+//                                         _ => {
+//                                             debug_to_file(&format!("🔧 [ZONE_{}] ❌ Invalid zone_low", zone_counter + 1));
+//                                             continue;
+//                                         }
+//                                     };
+                                    
+//                                     let (proximal_line, distal_line) = if is_supply {
+//                                         (zone_low, zone_high)
+//                                     } else {
+//                                         (zone_high, zone_low)
+//                                     };
+
+//                                     debug_to_file(&format!("🔧 [ZONE_{}] ID:{} EndIdx:{} High:{:.5} Low:{:.5}", 
+//                                            zone_counter + 1, zone_id_log, formation_end_idx, zone_high, zone_low));
+
+//                                     // Initialize tracking
+//                                     let mut is_currently_active = true;
+//                                     let mut touch_count: i64 = 0;
+//                                     let mut first_invalidation_idx: Option<usize> = None;
+//                                     let mut current_touch_points: Vec<TouchPoint> = Vec::new();
+//                                     let check_start_idx = formation_end_idx + 1;
+                                    
+//                                     debug_to_file(&format!("🔧 [ZONE_{}] Activity check starts at index: {}", zone_counter + 1, check_start_idx));
+
+//                                     // FIXED: Determine initial state
+//                                     let mut is_outside_zone = true;
+//                                     if check_start_idx < candle_count {
+//                                         let first_candle_after_formation = &candles[check_start_idx];
+//                                         if is_supply {
+//                                             is_outside_zone = first_candle_after_formation.high < proximal_line;
+//                                         } else {
+//                                             is_outside_zone = first_candle_after_formation.low > proximal_line;
+//                                         }
+//                                         debug_to_file(&format!("🔧 [ZONE_{}] Initial state: {} (first candle H:{:.5} L:{:.5})", 
+//                                                zone_counter + 1, if is_outside_zone { "OUTSIDE" } else { "INSIDE" },
+//                                                first_candle_after_formation.high, first_candle_after_formation.low));
+//                                     } else {
+//                                         debug_to_file(&format!("🔧 [ZONE_{}] ❌ NO CANDLES AFTER FORMATION!", zone_counter + 1));
+//                                     }
+
+//                                     // Process candles after formation
+//                                     if check_start_idx < candle_count {
+//                                         for i in check_start_idx..candle_count {
+//                                             if !is_currently_active { break; }
+
+//                                             let candle = &candles[i];
+//                                             if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
+//                                                 continue;
+//                                             }
+
+//                                             let mut interaction_occurred = false;
+//                                             let mut interaction_price = 0.0;
+
+//                                             // Check for invalidation
+//                                             if is_supply {
+//                                                 if candle.high > distal_line {
+//                                                     is_currently_active = false;
+//                                                     first_invalidation_idx = Some(i);
+//                                                     debug_to_file(&format!("🔧 [ZONE_{}] ❌ INVALIDATED at [{}]: {:.5} > {:.5}", 
+//                                                            zone_counter + 1, i, candle.high, distal_line));
+//                                                     break;
+//                                                 }
+//                                             } else {
+//                                                 if candle.low < distal_line {
+//                                                     is_currently_active = false;
+//                                                     first_invalidation_idx = Some(i);
+//                                                     debug_to_file(&format!("🔧 [ZONE_{}] ❌ INVALIDATED at [{}]: {:.5} < {:.5}", 
+//                                                            zone_counter + 1, i, candle.low, distal_line));
+//                                                     break;
+//                                                 }
+//                                             }
+
+//                                             // Check for interaction
+//                                             if is_supply {
+//                                                 if candle.high >= proximal_line {
+//                                                     interaction_occurred = true;
+//                                                     interaction_price = candle.high;
+//                                                 }
+//                                             } else {
+//                                                 if candle.low <= proximal_line {
+//                                                     interaction_occurred = true;
+//                                                     interaction_price = candle.low;
+//                                                 }
+//                                             }
+
+//                                             // Count touches
+//                                             if interaction_occurred && is_outside_zone {
+//                                                 touch_count += 1;
+//                                                 current_touch_points.push(TouchPoint {
+//                                                     time: candle.time.clone(),
+//                                                     price: interaction_price,
+//                                                 });
+//                                                 debug_to_file(&format!("🔧 [ZONE_{}] ✅ TOUCH #{} at [{}]: {:.5}", 
+//                                                        zone_counter + 1, touch_count, i, interaction_price));
+//                                             }
+
+//                                             // Update state
+//                                             is_outside_zone = !interaction_occurred;
+//                                         }
+//                                     }
+
+//                                     // Finalize enrichment
+//                                     enriched_zone_struct.is_active = is_currently_active;
+//                                     enriched_zone_struct.touch_count = Some(touch_count);
+                                    
+//                                     if !current_touch_points.is_empty() {
+//                                         enriched_zone_struct.touch_points = Some(current_touch_points);
+//                                     }
+
+//                                     // FIXED: Calculate bars_active
+//                                     if !is_currently_active {
+//                                         if let Some(invalidation_idx) = first_invalidation_idx {
+//                                             if invalidation_idx > check_start_idx {
+//                                                 enriched_zone_struct.bars_active = Some((invalidation_idx - check_start_idx) as u64);
+//                                             } else {
+//                                                 enriched_zone_struct.bars_active = Some(0);
+//                                             }
+//                                         } else {
+//                                             enriched_zone_struct.bars_active = Some(0);
+//                                         }
+//                                     } else {
+//                                         if candle_count > check_start_idx {
+//                                             enriched_zone_struct.bars_active = Some((candle_count - check_start_idx) as u64);
+//                                         } else {
+//                                             enriched_zone_struct.bars_active = Some(0);
+//                                         }
+//                                     }
+
+//                                     let score_raw = 100.0 - (touch_count as f64 * 10.0);
+//                                     enriched_zone_struct.strength_score = Some(score_raw.max(0.0));
+
+//                                     debug_to_file(&format!("🔧 [ZONE_{}] ✅ FINAL: Active={} Touches={} BarsActive={:?}", 
+//                                            zone_counter + 1, enriched_zone_struct.is_active, 
+//                                            touch_count, enriched_zone_struct.bars_active));
+//                                                                         // Add debug candle data for analysis
+//                                     let mut debug_candles = Vec::new();
+//                                     let start_idx = enriched_zone_struct.start_idx.unwrap() as usize;
+
+//                                     debug_to_file(&format!("🕯️ [ZONE_{}] Adding debug candles for zone ID: {}", zone_counter, zone_id_log));
+
+//                                     // Add formation candles (always 2 candles)
+//                                     if start_idx < candles.len() {
+//                                         let fifty_candle = &candles[start_idx];
+//                                         debug_candles.push(json!({
+//                                             "idx": start_idx,
+//                                             "time": fifty_candle.time,
+//                                             "open": fifty_candle.open,
+//                                             "high": fifty_candle.high,
+//                                             "low": fifty_candle.low,
+//                                             "close": fifty_candle.close
+//                                         }));
+//                                         debug_to_file(&format!("🕯️   [{}] FORMATION-50%: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
+//                                                     start_idx, fifty_candle.time, fifty_candle.open, fifty_candle.high, fifty_candle.low, fifty_candle.close));
+//                                     }
+
+//                                     if start_idx + 1 < candles.len() {
+//                                         let big_candle = &candles[start_idx + 1];
+//                                         debug_candles.push(json!({
+//                                             "idx": start_idx + 1,
+//                                             "time": big_candle.time,
+//                                             "open": big_candle.open,
+//                                             "high": big_candle.high,
+//                                             "low": big_candle.low,
+//                                             "close": big_candle.close
+//                                         }));
+//                                         debug_to_file(&format!("🕯️   [{}] FORMATION-BIG: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
+//                                                     start_idx + 1, big_candle.time, big_candle.open, big_candle.high, big_candle.low, big_candle.close));
+//                                     }
+
+//                                     // Add activity candles (from formation end + 1 to end of data or invalidation)
+//                                     let activity_start = start_idx + 2;
+//                                     let activity_end = if !is_currently_active && first_invalidation_idx.is_some() {
+//                                         first_invalidation_idx.unwrap()
+//                                     } else {
+//                                         candles.len()
+//                                     };
+
+//                                     debug_to_file(&format!("🕯️ [ZONE_{}] Activity candles from {} to {} (total: {})", 
+//                                                 zone_counter, activity_start, activity_end - 1, activity_end - activity_start));
+
+//                                     for i in activity_start..activity_end {
+//                                         if i < candles.len() {
+//                                             let activity_candle = &candles[i];
+//                                             debug_candles.push(json!({
+//                                                 "idx": i,
+//                                                 "time": activity_candle.time,
+//                                                 "open": activity_candle.open,
+//                                                 "high": activity_candle.high,
+//                                                 "low": activity_candle.low,
+//                                                 "close": activity_candle.close
+//                                             }));
+//                                         }
+//                                     }
+
+//                                     debug_to_file(&format!("🕯️ [ZONE_{}] Total debug candles added: {}", zone_counter, debug_candles.len()));
+
+//                                     // Add debug candles to the zone
+//                                     enriched_zone_struct.debug_candles = Some(debug_candles);
+//                                     processed_zones.push(enriched_zone_struct);
+//                                 }
+//                             } else {
+//                                 debug_to_file(&format!("🔧 [ENRICHMENT] No {} zones found", zone_type_str));
+//                             }
+                            
+//                             Ok(processed_zones)
+//                         };
+
+//                         // Execute enrichment
+//                         if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
+//                             // Process supply zones
+//                             match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
+//                                 Some(raw_zones) => {
+//                                     match process_and_enrich_zones(Some(raw_zones), true, last_candle_timestamp.clone()) {
+//                                         Ok(zones) => final_supply_zones = zones,
+//                                         Err(e) => enrichment_error = Some(e),
+//                                     }
+//                                 }
+//                                 None => debug_to_file(&format!("📋 [TASK_SUPPLY] {}/{} - No supply zones", current_symbol, current_timeframe)),
+//                             }
+                            
+//                             // Process demand zones
+//                             if enrichment_error.is_none() {
+//                                 match data.get("demand_zones").and_then(|dz| dz.get("zones")).and_then(|z| z.as_array()) {
+//                                     Some(raw_zones) => {
+//                                         match process_and_enrich_zones(Some(raw_zones), false, last_candle_timestamp.clone()) {
+//                                             Ok(zones) => final_demand_zones = zones,
+//                                             Err(e) => enrichment_error = Some(e),
+//                                         }
+//                                     }
+//                                     None => debug_to_file(&format!("📋 [TASK_DEMAND] {}/{} - No demand zones", current_symbol, current_timeframe)),
+//                                 }
+//                             }
+//                         } else {
+//                             enrichment_error = Some("Missing 'data.price' structure.".to_string());
+//                         }
+
+//                         if let Some(err_msg) = enrichment_error {
+//                             debug_to_file(&format!("📋 [TASK_ERROR] {}/{} - Enrichment failed: {}", current_symbol, current_timeframe, err_msg));
+//                             BulkResultItem {
+//                                 symbol: current_symbol,
+//                                 timeframe: current_timeframe,
+//                                 status: "Error: Enrichment Failed".to_string(),
+//                                 data: None,
+//                                 error_message: Some(err_msg),
+//                             }
+//                         } else {
+//                             // Filter for active zones only
+//                             let active_supply_zones = final_supply_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
+//                             let active_demand_zones = final_demand_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
+
+//                             debug_to_file(&format!("📋 [TASK_SUCCESS] {}/{} - Returning {} supply, {} demand zones", 
+//                                    current_symbol, current_timeframe, active_supply_zones.len(), active_demand_zones.len()));
+
+//                             BulkResultItem {
+//                                 symbol: current_symbol,
+//                                 timeframe: current_timeframe,
+//                                 status: "Success".to_string(),
+//                                 data: Some(BulkResultData {
+//                                     supply_zones: active_supply_zones,
+//                                     demand_zones: active_demand_zones,
+//                                 }),
+//                                 error_message: None,
+//                             }
+//                         }
+//                     }
+//                     Err(core_err) => {
+//                         debug_to_file(&format!("📋 [TASK_CORE_ERROR] {}/{} - Core error: {}", current_symbol, current_timeframe, core_err));
+//                         BulkResultItem {
+//                             symbol: current_symbol,
+//                             timeframe: current_timeframe,
+//                             status: "Error: Core Failed".to_string(),
+//                             data: None,
+//                             error_message: Some(core_err.to_string()),
+//                         }
+//                     }
+//                 }
+//             });
+//             tasks.push(task);
+//         }
+//     }
+
+//     let task_results = join_all(tasks).await;
+//     let results: Vec<BulkResultItem> = task_results
+//         .into_iter()
+//         .map(|res| match res {
+//             Ok(item) => item,
+//             Err(e) => {
+//                 debug_to_file(&format!("🚀 [BULK_HANDLER] Task panicked: {}", e));
+//                 BulkResultItem {
+//                     symbol: "Unknown".into(),
+//                     timeframe: "Unknown".into(),
+//                     status: "Error: Task Panic".into(),
+//                     data: None,
+//                     error_message: Some(format!("Task panicked: {}", e)),
+//                 }
+//             }
+//         })
+//         .collect();
+
+//     let total_active_zones: usize = results
+//         .iter()
+//         .filter_map(|item| item.data.as_ref().map(|data| data.supply_zones.len() + data.demand_zones.len()))
+//         .sum();
+
+//     debug_to_file(&format!("🚀 [BULK_HANDLER] FINAL: {} combinations processed, {} total active zones", 
+//            results.len(), total_active_zones));
+
+//     let response = BulkActiveZonesResponse {
+//         results,
+//         query_params: Some(global_query.into_inner()),
+//         symbols: HashMap::new(),
+//     };
+    
+//     HttpResponse::Ok().json(response)
+// }
 pub async fn get_bulk_multi_tf_active_zones_handler(
     global_query: web::Query<ChartQuery>,
     items: web::Json<Vec<BulkSymbolTimeframesRequestItem>>,
 ) -> impl Responder {
     let request_items = items.into_inner();
     
-    // ADD CLEAR ENTRY LOGGING
     debug_to_file(&format!("🚀 [BULK_HANDLER] ENTRY: {} symbol requests", request_items.len()));
-    for (i, item) in request_items.iter().enumerate() {
-        debug_to_file(&format!("🚀   [{}] Symbol: {}, Timeframes: {:?}", i, item.symbol, item.timeframes));
-    }
     
     info!(
         "[get_bulk_multi_tf] Handling request for {} symbol entries. Query: {:?}",
@@ -593,432 +1069,121 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
         global_query
     );
     
+    // Create shared components
+    let zone_engine = ZoneDetectionEngine::new();
+    let data_fetcher = match InfluxDataFetcher::new() {
+        Ok(fetcher) => fetcher,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to initialize data fetcher: {}", e),
+            });
+        }
+    };
+    
     let mut tasks = Vec::new();
+    
     for item in request_items {
         let symbol_for_tasks = item.symbol.clone();
         for timeframe in item.timeframes {
             let current_symbol = symbol_for_tasks.clone();
             let current_timeframe = timeframe.clone();
             
-            // Symbol suffix logic
-            let core_symbol = if current_symbol.ends_with("_SB") {
-                current_symbol.clone()
-            } else {
-                format!("{}_SB", current_symbol)
-            };
-
-            let current_query = ChartQuery {
-                symbol: core_symbol.clone(),
-                timeframe: current_timeframe.clone(),
-                start_time: global_query.start_time.clone(),
-                end_time: global_query.end_time.clone(),
-                pattern: global_query.pattern.clone(),
-                enable_trading: None,
-                lot_size: None,
-                stop_loss_pips: None,
-                take_profit_pips: None,
-                enable_trailing_stop: None,
-                max_touch_count: None,
-            };
-
-            if current_query.pattern != "fifty_percent_before_big_bar" {
-                warn!("[get_bulk_multi_tf] Skipping task for unsupported pattern '{}' for {}/{}", 
-                      current_query.pattern, current_symbol, current_timeframe);
-                tasks.push(tokio::spawn(async move {
-                    BulkResultItem {
-                        symbol: current_symbol,
-                        timeframe: current_timeframe,
-                        status: "Error: Pattern Not Supported".to_string(),
-                        data: None,
-                        error_message: Some(format!("Pattern '{}' not supported by this endpoint configuration.", current_query.pattern)),
-                    }
-                }));
-                continue;
-            }
-
+            // Clone dependencies for the task
+            let engine = zone_engine.clone(); // If you make ZoneDetectionEngine Clone
+            let fetcher = data_fetcher.clone(); // If you make InfluxDataFetcher Clone
+            let query = global_query.clone();
+            
             let task = tokio::spawn(async move {
                 let caller_task_id = format!("bulk_task_{}/{}", current_symbol, current_timeframe);
                 
-                // ADD TASK START LOGGING
-                debug_to_file(&format!("📋 [TASK_START] {}/{} - Calling _fetch_and_detect_core", current_symbol, current_timeframe));
+                debug_to_file(&format!("📋 [TASK_START] {}/{} - Fetching candles", current_symbol, current_timeframe));
                 
-                match _fetch_and_detect_core(&current_query, &caller_task_id).await {
-                    Ok((candles, _recognizer, detection_results_json)) => {
-                        debug_to_file(&format!("📋 [TASK_CORE] {}/{} - Got {} candles, processing results", current_symbol, current_timeframe, candles.len()));
-                        
-                        if candles.is_empty() {
-                            debug_to_file(&format!("📋 [TASK_EMPTY] {}/{} - No candle data", current_symbol, current_timeframe));
-                            return BulkResultItem {
-                                symbol: current_symbol,
-                                timeframe: current_timeframe,
-                                status: "No Data".to_string(),
-                                data: None,
-                                error_message: Some("No candle data found.".to_string()),
-                            };
-                        }
-
-                        let mut final_supply_zones: Vec<EnrichedZone> = Vec::new();
-                        let mut final_demand_zones: Vec<EnrichedZone> = Vec::new();
-                        let mut enrichment_error: Option<String> = None;
-                        let candle_count = candles.len();
-                        let last_candle_timestamp = candles.last().map(|c| c.time.clone());
-
-                        // SIMPLIFIED ENRICHMENT CLOSURE WITH EXTENSIVE LOGGING
-                        let process_and_enrich_zones = |zones_option: Option<&Vec<Value>>, is_supply: bool, last_candle_time_for_zone: Option<String>| -> Result<Vec<EnrichedZone>, String> {
-                            let mut processed_zones: Vec<EnrichedZone> = Vec::new();
-                            let zone_type_str = if is_supply { "supply" } else { "demand" };
-                            
-                           debug_to_file(&format!("🔧 [ENRICHMENT] {}/{} - Processing {} zones", current_symbol, current_timeframe, zone_type_str));
-                            if let Some(zones) = zones_option {
-                                 debug_to_file(&format!("🔧 [ENRICHMENT] Found {} raw {} zones", zones.len(), zone_type_str));
-                                
-                                for (zone_counter, zone_json) in zones.iter().enumerate() {
-                                     debug_to_file(&format!("🔧 [ZONE_{}] Starting enrichment for {} zone #{}", 
-                                           zone_counter + 1, zone_type_str, zone_counter + 1));
-                                    
-                                    // ADD DETAILED DEBUGGING FOR FIRST ZONE
-                                    if zone_counter == 0 {
-                                        debug_zone_enrichment_step_by_step(zone_json, &candles, is_supply, &current_symbol, &current_timeframe);
-                                    }
-                                    
-                                    // Deserialize the zone
-                                    let mut enriched_zone_struct = match crate::types::deserialize_raw_zone_value(zone_json) {
-                                        Ok(mut z) => {
-                                            if z.zone_id.is_none() {
-                                                let id = generate_deterministic_zone_id(
-                                                    &core_symbol, &current_timeframe, 
-                                                    if is_supply { "supply" } else { "demand" },
-                                                    z.start_time.as_deref(), z.zone_high, z.zone_low,
-                                                );
-                                                z.zone_id = Some(id);
-                                            }
-                                            if z.zone_type.is_none() {
-                                                z.zone_type = Some(format!("{}_zone", zone_type_str));
-                                            }
-                                            z
-                                        }
-                                        Err(e) => {
-                                            debug_to_file(&format!("🔧 [ZONE_{}] ❌ Deserialize failed: {}", zone_counter + 1, e));
-                                            continue;
-                                        }
-                                    };
-
-                                    enriched_zone_struct.end_time = None;
-                                    enriched_zone_struct.end_idx = None;
-                                    enriched_zone_struct.zone_end_time = None;
-                                    enriched_zone_struct.zone_end_idx = None;
-                                    enriched_zone_struct.invalidation_time = None;
-
-                                    debug_to_file(&format!("🔍 [ZONE_{}] BEFORE ENRICHMENT:", zone_counter));
-                                    debug_to_file(&format!("   - Original end_time: {:?}", enriched_zone_struct.end_time));
-                                    debug_to_file(&format!("   - Original end_idx: {:?}", enriched_zone_struct.end_idx));
-                                    debug_to_file(&format!("   - Original zone_end_time: {:?}", enriched_zone_struct.zone_end_time));
-                                    debug_to_file(&format!("   - Original zone_end_idx: {:?}", enriched_zone_struct.zone_end_idx));
-                                    debug_to_file(&format!("   - Original invalidation_time: {:?}", enriched_zone_struct.invalidation_time));
-                                    
-                                    enriched_zone_struct.last_data_candle = last_candle_time_for_zone.clone();
-                                    let zone_id_log = enriched_zone_struct.zone_id.as_deref().unwrap_or("UNKNOWN");
-
-                                    // Get essential data
-                                    let formation_end_idx = match enriched_zone_struct.start_idx {
-                                        Some(start_idx) => start_idx as usize +1,
-                                        None => {
-                                            debug_to_file(&format!("🔧 [ZONE_{}] ❌ Missing end_idx", zone_counter + 1));
-                                            continue;
-                                        }
-                                    };
-                                    
-                                    let zone_high = match enriched_zone_struct.zone_high {
-                                        Some(val) if val.is_finite() => val,
-                                        _ => {
-                                            debug_to_file(&format!("🔧 [ZONE_{}] ❌ Invalid zone_high", zone_counter + 1));
-                                            continue;
-                                        }
-                                    };
-                                    
-                                    let zone_low = match enriched_zone_struct.zone_low {
-                                        Some(val) if val.is_finite() => val,
-                                        _ => {
-                                            debug_to_file(&format!("🔧 [ZONE_{}] ❌ Invalid zone_low", zone_counter + 1));
-                                            continue;
-                                        }
-                                    };
-                                    
-                                    let (proximal_line, distal_line) = if is_supply {
-                                        (zone_low, zone_high)
-                                    } else {
-                                        (zone_high, zone_low)
-                                    };
-
-                                    debug_to_file(&format!("🔧 [ZONE_{}] ID:{} EndIdx:{} High:{:.5} Low:{:.5}", 
-                                           zone_counter + 1, zone_id_log, formation_end_idx, zone_high, zone_low));
-
-                                    // Initialize tracking
-                                    let mut is_currently_active = true;
-                                    let mut touch_count: i64 = 0;
-                                    let mut first_invalidation_idx: Option<usize> = None;
-                                    let mut current_touch_points: Vec<TouchPoint> = Vec::new();
-                                    let check_start_idx = formation_end_idx + 1;
-                                    
-                                    debug_to_file(&format!("🔧 [ZONE_{}] Activity check starts at index: {}", zone_counter + 1, check_start_idx));
-
-                                    // FIXED: Determine initial state
-                                    let mut is_outside_zone = true;
-                                    if check_start_idx < candle_count {
-                                        let first_candle_after_formation = &candles[check_start_idx];
-                                        if is_supply {
-                                            is_outside_zone = first_candle_after_formation.high < proximal_line;
-                                        } else {
-                                            is_outside_zone = first_candle_after_formation.low > proximal_line;
-                                        }
-                                        debug_to_file(&format!("🔧 [ZONE_{}] Initial state: {} (first candle H:{:.5} L:{:.5})", 
-                                               zone_counter + 1, if is_outside_zone { "OUTSIDE" } else { "INSIDE" },
-                                               first_candle_after_formation.high, first_candle_after_formation.low));
-                                    } else {
-                                        debug_to_file(&format!("🔧 [ZONE_{}] ❌ NO CANDLES AFTER FORMATION!", zone_counter + 1));
-                                    }
-
-                                    // Process candles after formation
-                                    if check_start_idx < candle_count {
-                                        for i in check_start_idx..candle_count {
-                                            if !is_currently_active { break; }
-
-                                            let candle = &candles[i];
-                                            if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
-                                                continue;
-                                            }
-
-                                            let mut interaction_occurred = false;
-                                            let mut interaction_price = 0.0;
-
-                                            // Check for invalidation
-                                            if is_supply {
-                                                if candle.high > distal_line {
-                                                    is_currently_active = false;
-                                                    first_invalidation_idx = Some(i);
-                                                    debug_to_file(&format!("🔧 [ZONE_{}] ❌ INVALIDATED at [{}]: {:.5} > {:.5}", 
-                                                           zone_counter + 1, i, candle.high, distal_line));
-                                                    break;
-                                                }
-                                            } else {
-                                                if candle.low < distal_line {
-                                                    is_currently_active = false;
-                                                    first_invalidation_idx = Some(i);
-                                                    debug_to_file(&format!("🔧 [ZONE_{}] ❌ INVALIDATED at [{}]: {:.5} < {:.5}", 
-                                                           zone_counter + 1, i, candle.low, distal_line));
-                                                    break;
-                                                }
-                                            }
-
-                                            // Check for interaction
-                                            if is_supply {
-                                                if candle.high >= proximal_line {
-                                                    interaction_occurred = true;
-                                                    interaction_price = candle.high;
-                                                }
-                                            } else {
-                                                if candle.low <= proximal_line {
-                                                    interaction_occurred = true;
-                                                    interaction_price = candle.low;
-                                                }
-                                            }
-
-                                            // Count touches
-                                            if interaction_occurred && is_outside_zone {
-                                                touch_count += 1;
-                                                current_touch_points.push(TouchPoint {
-                                                    time: candle.time.clone(),
-                                                    price: interaction_price,
-                                                });
-                                                debug_to_file(&format!("🔧 [ZONE_{}] ✅ TOUCH #{} at [{}]: {:.5}", 
-                                                       zone_counter + 1, touch_count, i, interaction_price));
-                                            }
-
-                                            // Update state
-                                            is_outside_zone = !interaction_occurred;
-                                        }
-                                    }
-
-                                    // Finalize enrichment
-                                    enriched_zone_struct.is_active = is_currently_active;
-                                    enriched_zone_struct.touch_count = Some(touch_count);
-                                    
-                                    if !current_touch_points.is_empty() {
-                                        enriched_zone_struct.touch_points = Some(current_touch_points);
-                                    }
-
-                                    // FIXED: Calculate bars_active
-                                    if !is_currently_active {
-                                        if let Some(invalidation_idx) = first_invalidation_idx {
-                                            if invalidation_idx > check_start_idx {
-                                                enriched_zone_struct.bars_active = Some((invalidation_idx - check_start_idx) as u64);
-                                            } else {
-                                                enriched_zone_struct.bars_active = Some(0);
-                                            }
-                                        } else {
-                                            enriched_zone_struct.bars_active = Some(0);
-                                        }
-                                    } else {
-                                        if candle_count > check_start_idx {
-                                            enriched_zone_struct.bars_active = Some((candle_count - check_start_idx) as u64);
-                                        } else {
-                                            enriched_zone_struct.bars_active = Some(0);
-                                        }
-                                    }
-
-                                    let score_raw = 100.0 - (touch_count as f64 * 10.0);
-                                    enriched_zone_struct.strength_score = Some(score_raw.max(0.0));
-
-                                    debug_to_file(&format!("🔧 [ZONE_{}] ✅ FINAL: Active={} Touches={} BarsActive={:?}", 
-                                           zone_counter + 1, enriched_zone_struct.is_active, 
-                                           touch_count, enriched_zone_struct.bars_active));
-                                                                        // Add debug candle data for analysis
-                                    let mut debug_candles = Vec::new();
-                                    let start_idx = enriched_zone_struct.start_idx.unwrap() as usize;
-
-                                    debug_to_file(&format!("🕯️ [ZONE_{}] Adding debug candles for zone ID: {}", zone_counter, zone_id_log));
-
-                                    // Add formation candles (always 2 candles)
-                                    if start_idx < candles.len() {
-                                        let fifty_candle = &candles[start_idx];
-                                        debug_candles.push(json!({
-                                            "idx": start_idx,
-                                            "time": fifty_candle.time,
-                                            "open": fifty_candle.open,
-                                            "high": fifty_candle.high,
-                                            "low": fifty_candle.low,
-                                            "close": fifty_candle.close
-                                        }));
-                                        debug_to_file(&format!("🕯️   [{}] FORMATION-50%: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
-                                                    start_idx, fifty_candle.time, fifty_candle.open, fifty_candle.high, fifty_candle.low, fifty_candle.close));
-                                    }
-
-                                    if start_idx + 1 < candles.len() {
-                                        let big_candle = &candles[start_idx + 1];
-                                        debug_candles.push(json!({
-                                            "idx": start_idx + 1,
-                                            "time": big_candle.time,
-                                            "open": big_candle.open,
-                                            "high": big_candle.high,
-                                            "low": big_candle.low,
-                                            "close": big_candle.close
-                                        }));
-                                        debug_to_file(&format!("🕯️   [{}] FORMATION-BIG: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
-                                                    start_idx + 1, big_candle.time, big_candle.open, big_candle.high, big_candle.low, big_candle.close));
-                                    }
-
-                                    // Add activity candles (from formation end + 1 to end of data or invalidation)
-                                    let activity_start = start_idx + 2;
-                                    let activity_end = if !is_currently_active && first_invalidation_idx.is_some() {
-                                        first_invalidation_idx.unwrap()
-                                    } else {
-                                        candles.len()
-                                    };
-
-                                    debug_to_file(&format!("🕯️ [ZONE_{}] Activity candles from {} to {} (total: {})", 
-                                                zone_counter, activity_start, activity_end - 1, activity_end - activity_start));
-
-                                    for i in activity_start..activity_end {
-                                        if i < candles.len() {
-                                            let activity_candle = &candles[i];
-                                            debug_candles.push(json!({
-                                                "idx": i,
-                                                "time": activity_candle.time,
-                                                "open": activity_candle.open,
-                                                "high": activity_candle.high,
-                                                "low": activity_candle.low,
-                                                "close": activity_candle.close
-                                            }));
-                                        }
-                                    }
-
-                                    debug_to_file(&format!("🕯️ [ZONE_{}] Total debug candles added: {}", zone_counter, debug_candles.len()));
-
-                                    // Add debug candles to the zone
-                                    enriched_zone_struct.debug_candles = Some(debug_candles);
-                                    processed_zones.push(enriched_zone_struct);
-                                }
-                            } else {
-                                debug_to_file(&format!("🔧 [ENRICHMENT] No {} zones found", zone_type_str));
-                            }
-                            
-                            Ok(processed_zones)
+                // Fetch candles using shared fetcher
+                let candles = match fetcher.fetch_candles(
+                    &current_symbol,
+                    &current_timeframe,
+                    &query.start_time,
+                    &query.end_time,
+                ).await {
+                    Ok(candles) => candles,
+                    Err(e) => {
+                        debug_to_file(&format!("📋 [TASK_ERROR] {}/{} - Fetch failed: {}", current_symbol, current_timeframe, e));
+                        return BulkResultItem {
+                            symbol: current_symbol,
+                            timeframe: current_timeframe,
+                            status: "Error: Data Fetch Failed".to_string(),
+                            data: None,
+                            error_message: Some(format!("Failed to fetch candles: {}", e)),
                         };
-
-                        // Execute enrichment
-                        if let Some(data) = detection_results_json.get("data").and_then(|d| d.get("price")) {
-                            // Process supply zones
-                            match data.get("supply_zones").and_then(|sz| sz.get("zones")).and_then(|z| z.as_array()) {
-                                Some(raw_zones) => {
-                                    match process_and_enrich_zones(Some(raw_zones), true, last_candle_timestamp.clone()) {
-                                        Ok(zones) => final_supply_zones = zones,
-                                        Err(e) => enrichment_error = Some(e),
-                                    }
-                                }
-                                None => debug_to_file(&format!("📋 [TASK_SUPPLY] {}/{} - No supply zones", current_symbol, current_timeframe)),
-                            }
-                            
-                            // Process demand zones
-                            if enrichment_error.is_none() {
-                                match data.get("demand_zones").and_then(|dz| dz.get("zones")).and_then(|z| z.as_array()) {
-                                    Some(raw_zones) => {
-                                        match process_and_enrich_zones(Some(raw_zones), false, last_candle_timestamp.clone()) {
-                                            Ok(zones) => final_demand_zones = zones,
-                                            Err(e) => enrichment_error = Some(e),
-                                        }
-                                    }
-                                    None => debug_to_file(&format!("📋 [TASK_DEMAND] {}/{} - No demand zones", current_symbol, current_timeframe)),
-                                }
-                            }
-                        } else {
-                            enrichment_error = Some("Missing 'data.price' structure.".to_string());
-                        }
-
-                        if let Some(err_msg) = enrichment_error {
-                            debug_to_file(&format!("📋 [TASK_ERROR] {}/{} - Enrichment failed: {}", current_symbol, current_timeframe, err_msg));
-                            BulkResultItem {
-                                symbol: current_symbol,
-                                timeframe: current_timeframe,
-                                status: "Error: Enrichment Failed".to_string(),
-                                data: None,
-                                error_message: Some(err_msg),
-                            }
-                        } else {
-                            // Filter for active zones only
-                            let active_supply_zones = final_supply_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-                            let active_demand_zones = final_demand_zones.into_iter().filter(|zone| zone.is_active).collect::<Vec<_>>();
-
-                            debug_to_file(&format!("📋 [TASK_SUCCESS] {}/{} - Returning {} supply, {} demand zones", 
-                                   current_symbol, current_timeframe, active_supply_zones.len(), active_demand_zones.len()));
-
-                            BulkResultItem {
-                                symbol: current_symbol,
-                                timeframe: current_timeframe,
-                                status: "Success".to_string(),
-                                data: Some(BulkResultData {
-                                    supply_zones: active_supply_zones,
-                                    demand_zones: active_demand_zones,
-                                }),
-                                error_message: None,
-                            }
-                        }
                     }
-                    Err(core_err) => {
-                        debug_to_file(&format!("📋 [TASK_CORE_ERROR] {}/{} - Core error: {}", current_symbol, current_timeframe, core_err));
+                };
+                
+                if candles.is_empty() {
+                    debug_to_file(&format!("📋 [TASK_EMPTY] {}/{} - No candle data", current_symbol, current_timeframe));
+                    return BulkResultItem {
+                        symbol: current_symbol,
+                        timeframe: current_timeframe,
+                        status: "No Data".to_string(),
+                        data: None,
+                        error_message: Some("No candle data found.".to_string()),
+                    };
+                }
+                
+                debug_to_file(&format!("📋 [TASK_DETECT] {}/{} - Running zone detection on {} candles", 
+                       current_symbol, current_timeframe, candles.len()));
+                
+                // Run zone detection using shared engine
+                let detection_request = ZoneDetectionRequest {
+                    symbol: current_symbol.clone(),
+                    timeframe: current_timeframe.clone(),
+                    pattern: query.pattern.clone(),
+                    candles,
+                    max_touch_count: query.max_touch_count,
+                };
+                
+                match engine.detect_zones(detection_request) {
+                    Ok(result) => {
+                        // Filter for active zones only (to match existing behavior)
+                        let active_supply_zones = result.supply_zones.into_iter()
+                            .filter(|zone| zone.is_active)
+                            .collect::<Vec<_>>();
+                        let active_demand_zones = result.demand_zones.into_iter()
+                            .filter(|zone| zone.is_active)
+                            .collect::<Vec<_>>();
+                        
+                        debug_to_file(&format!("📋 [TASK_SUCCESS] {}/{} - Returning {} supply, {} demand zones", 
+                               current_symbol, current_timeframe, active_supply_zones.len(), active_demand_zones.len()));
+                        
                         BulkResultItem {
                             symbol: current_symbol,
                             timeframe: current_timeframe,
-                            status: "Error: Core Failed".to_string(),
+                            status: "Success".to_string(),
+                            data: Some(BulkResultData {
+                                supply_zones: active_supply_zones,
+                                demand_zones: active_demand_zones,
+                            }),
+                            error_message: None,
+                        }
+                    }
+                    Err(e) => {
+                        debug_to_file(&format!("📋 [TASK_DETECT_ERROR] {}/{} - Detection failed: {}", 
+                               current_symbol, current_timeframe, e));
+                        BulkResultItem {
+                            symbol: current_symbol,
+                            timeframe: current_timeframe,
+                            status: "Error: Zone Detection Failed".to_string(),
                             data: None,
-                            error_message: Some(core_err.to_string()),
+                            error_message: Some(format!("Zone detection failed: {}", e)),
                         }
                     }
                 }
             });
+            
             tasks.push(task);
         }
     }
-
+    
+    // Wait for all tasks to complete
     let task_results = join_all(tasks).await;
     let results: Vec<BulkResultItem> = task_results
         .into_iter()
@@ -1036,15 +1201,15 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
             }
         })
         .collect();
-
+    
     let total_active_zones: usize = results
         .iter()
         .filter_map(|item| item.data.as_ref().map(|data| data.supply_zones.len() + data.demand_zones.len()))
         .sum();
-
+    
     debug_to_file(&format!("🚀 [BULK_HANDLER] FINAL: {} combinations processed, {} total active zones", 
            results.len(), total_active_zones));
-
+    
     let response = BulkActiveZonesResponse {
         results,
         query_params: Some(global_query.into_inner()),
@@ -1053,6 +1218,7 @@ pub async fn get_bulk_multi_tf_active_zones_handler(
     
     HttpResponse::Ok().json(response)
 }
+
 
 // PASTE THIS ENTIRE FUNCTION AT THE END OF src/detect.rs
 
