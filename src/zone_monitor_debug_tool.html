@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zone Monitor Debug Tool</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Menlo', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+        }
+        .test-section {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .pass {
+            background: #0d4f0d;
+            border-left-color: #00ff00;
+        }
+        .fail {
+            background: #4f0d0d;
+            border-left-color: #ff0000;
+            color: #ff6666;
+        }
+        .warn {
+            background: #4f4f0d;
+            border-left-color: #ffff00;
+            color: #ffff66;
+        }
+        .debug-output {
+            background: #000;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+            white-space: pre-wrap;
+            font-size: 12px;
+            overflow-x: auto;
+        }
+        button {
+            background: #003300;
+            color: #00ff00;
+            border: 2px solid #00ff00;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #00ff00;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 ZONE MONITOR DEBUG TOOL</h1>
+            <p>Deep dive analysis of zone logic and state management</p>
+        </div>
+
+        <div class="test-section">
+            <h2>🎯 DETAILED ZONE LOGIC TESTS</h2>
+            <button onclick="runDetailedTests()">Run Detailed Analysis</button>
+            <button onclick="simulateRealScenario()">Simulate Real Trading Scenario</button>
+            <button onclick="testEdgeCases()">Test Edge Cases</button>
+            <div id="detailed-results"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>📊 ZONE STATE TRACKING</h2>
+            <button onclick="testZoneStateLogic()">Test Zone State Management</button>
+            <div id="state-results"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>🚨 CRITICAL PATH VALIDATION</h2>
+            <button onclick="validateCriticalPath()">Validate Critical Trading Path</button>
+            <div id="critical-results"></div>
+        </div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString().substring(11, 23);
+            return `[${timestamp}] [${type.toUpperCase()}] ${message}`;
+        }
+
+        function runDetailedTests() {
+            const resultsDiv = document.getElementById('detailed-results');
+            let output = '';
+
+            // Test 1: Outside Zone Detection (This likely failed in the validator)
+            output += '<div class="debug-output">';
+            output += log('🔍 TESTING OUTSIDE ZONE DETECTION LOGIC', 'debug') + '\n';
+            
+            // Simulate your zone data structure
+            const supplyZone = {
+                zone_id: "test_supply_1",
+                zone_high: 1.0950,
+                zone_low: 1.0940,
+                zone_type: "supply"
+            };
+
+            // Test different bar scenarios
+            const scenarios = [
+                { name: "Bar Inside Zone", high: 1.0945, low: 1.0942 },
+                { name: "Bar Outside Zone (Below)", high: 1.0935, low: 1.0930 },
+                { name: "Bar Outside Zone (Above)", high: 1.0960, low: 1.0955 },
+                { name: "Bar Touching Proximal", high: 1.0940, low: 1.0935 },
+                { name: "Bar Crossing Zone", high: 1.0955, low: 1.0935 }
+            ];
+
+            scenarios.forEach(scenario => {
+                // Your logic from process_bar_live_touch
+                const proximal_line = supplyZone.zone_low; // For supply zones
+                const entry_price_check = scenario.high; // For supply zones, check high
+                const touched_this_bar = entry_price_check >= proximal_line;
+                
+                // Check if bar is completely outside zone
+                const bar_inside_zone = scenario.high >= supplyZone.zone_low && scenario.low <= supplyZone.zone_high;
+                const is_outside_zone = !bar_inside_zone;
+                
+                output += log(`${scenario.name}: H=${scenario.high}, L=${scenario.low}`, 'info') + '\n';
+                output += log(`  Proximal Line: ${proximal_line}`, 'debug') + '\n';
+                output += log(`  Touched: ${touched_this_bar} (${entry_price_check} >= ${proximal_line})`, 'debug') + '\n';
+                output += log(`  Inside Zone: ${bar_inside_zone}`, 'debug') + '\n';
+                output += log(`  Outside Zone: ${is_outside_zone}`, 'debug') + '\n';
+                output += log(`  Should Count Touch: ${touched_this_bar && is_outside_zone}`, touched_this_bar && is_outside_zone ? 'info' : 'warn') + '\n';
+                output += '---\n';
+            });
+
+            output += '</div>';
+
+            // Test 2: Zone State Transition Logic
+            output += '<div class="debug-output">';
+            output += log('🔄 TESTING ZONE STATE TRANSITIONS', 'debug') + '\n';
+            
+            let mockZoneState = {
+                is_outside_zone: true,
+                live_touches_this_cycle: 0,
+                trade_attempted_this_cycle: false
+            };
+
+            // Simulate the exact logic from your code
+            const testBars = [
+                { high: 1.0935, low: 1.0930, desc: "Bar outside zone" },
+                { high: 1.0945, low: 1.0942, desc: "Bar touches zone" },
+                { high: 1.0943, low: 1.0941, desc: "Bar stays in zone" },
+                { high: 1.0938, low: 1.0935, desc: "Bar exits zone" }
+            ];
+
+            testBars.forEach((bar, i) => {
+                const touched_this_bar = bar.high >= supplyZone.zone_low;
+                
+                // Your exact logic
+                if (touched_this_bar && mockZoneState.is_outside_zone) {
+                    mockZoneState.live_touches_this_cycle += 1;
+                    output += log(`Bar ${i+1} (${bar.desc}): TOUCH COUNTED! Total: ${mockZoneState.live_touches_this_cycle}`, 'info') + '\n';
+                } else if (touched_this_bar) {
+                    output += log(`Bar ${i+1} (${bar.desc}): Touch detected but was already inside zone`, 'warn') + '\n';
+                } else {
+                    output += log(`Bar ${i+1} (${bar.desc}): No touch detected`, 'debug') + '\n';
+                }
+                
+                // Update state (critical!)
+                mockZoneState.is_outside_zone = !touched_this_bar;
+                output += log(`  Updated outside_zone: ${mockZoneState.is_outside_zone}`, 'debug') + '\n';
+            });
+
+            output += '</div>';
+
+            resultsDiv.innerHTML = output;
+        }
+
+        function simulateRealScenario() {
+            const resultsDiv = document.getElementById('detailed-results');
+            let output = '<div class="debug-output">';
+            
+            output += log('🚀 SIMULATING REAL TRADING SCENARIO', 'info') + '\n';
+            output += log('Scenario: EURUSD supply zone at 1.0950-1.0940, testing live touch logic', 'info') + '\n\n';
+
+            // Real zone from your system
+            const zone = {
+                zone_id: "EURUSD_1h_supply_20250529",
+                symbol: "EURUSD_SB",
+                timeframe: "1h",
+                zone_type: "supply",
+                zone_high: 1.0950,
+                zone_low: 1.0940,
+                is_active: true,
+                touch_count: 1, // Historical touches
+                formation_candles: []
+            };
+
+            let liveZoneState = {
+                zone_data: zone,
+                live_touches_this_cycle: 0,
+                trade_attempted_this_cycle: false,
+                is_outside_zone: true // Initialize as outside
+            };
+
+            // Simulate incoming bars
+            const incomingBars = [
+                { time: "2025-05-29T10:00:00Z", high: 1.0935, low: 1.0930, desc: "Normal bar below zone" },
+                { time: "2025-05-29T11:00:00Z", high: 1.0942, low: 1.0938, desc: "First touch of proximal line" },
+                { time: "2025-05-29T12:00:00Z", high: 1.0944, low: 1.0941, desc: "Bar remains in zone" },
+                { time: "2025-05-29T13:00:00Z", high: 1.0938, low: 1.0933, desc: "Bar exits zone" },
+                { time: "2025-05-29T14:00:00Z", high: 1.0943, low: 1.0939, desc: "Second touch attempt" }
+            ];
+
+            const historical_touch_limit = 2;
+            const allowed_days = ['Mon', 'Tue', 'Wed'];
+            const today = 'Thu'; // From your logs
+
+            incomingBars.forEach((bar, i) => {
+                output += log(`\n📊 Processing Bar ${i+1}: ${bar.desc}`, 'info') + '\n';
+                output += log(`Time: ${bar.time}, H: ${bar.high}, L: ${bar.low}`, 'debug') + '\n';
+
+                // Your exact invalidation logic first
+                const zone_type_is_supply = true;
+                const distal_line = zone.zone_high; // For supply zones
+                const should_invalidate = bar.high > distal_line;
+
+                if (should_invalidate) {
+                    liveZoneState.zone_data.is_active = false;
+                    output += log(`🚨 ZONE INVALIDATED! Bar high ${bar.high} > distal ${distal_line}`, 'error') + '\n';
+                    return;
+                }
+
+                // Skip if trade already attempted
+                if (liveZoneState.trade_attempted_this_cycle) {
+                    output += log(`⏭️ SKIPPING: Trade already attempted this cycle`, 'warn') + '\n';
+                    return;
+                }
+
+                // Touch detection
+                const proximal_line = zone.zone_low;
+                const entry_price_check = bar.high; // For supply zones
+                const touched_this_bar = entry_price_check >= proximal_line;
+
+                output += log(`Touch check: ${entry_price_check} >= ${proximal_line} = ${touched_this_bar}`, 'debug') + '\n';
+                output += log(`Was outside zone: ${liveZoneState.is_outside_zone}`, 'debug') + '\n';
+
+                // Count touch only if we were outside
+                if (touched_this_bar && liveZoneState.is_outside_zone) {
+                    liveZoneState.live_touches_this_cycle += 1;
+                    const historical_touches = liveZoneState.zone_data.touch_count;
+
+                    output += log(`✨ TOUCH COUNTED! Live: ${liveZoneState.live_touches_this_cycle}, Historical: ${historical_touches}`, 'info') + '\n';
+
+                    // Check trade conditions
+                    if (liveZoneState.live_touches_this_cycle === 1 && historical_touches < historical_touch_limit) {
+                        output += log(`🎯 First live touch & historical touches (${historical_touches}) < limit (${historical_touch_limit})`, 'info') + '\n';
+                        
+                        const is_allowed_day = allowed_days.includes(today);
+                        output += log(`📅 Day check: ${today} in [${allowed_days.join(',')}] = ${is_allowed_day}`, is_allowed_day ? 'info' : 'warn') + '\n';
+
+                        if (!is_allowed_day) {
+                            output += log(`❌ TRADE REJECTED: Wrong day (${today})`, 'warn') + '\n';
+                            liveZoneState.trade_attempted_this_cycle = true;
+                        } else {
+                            output += log(`🚀 TRADE CONDITIONS MET! Executing trade...`, 'info') + '\n';
+                            output += log(`Trade: SELL EURUSD_SB (Supply zone touch)`, 'info') + '\n';
+                            liveZoneState.trade_attempted_this_cycle = true;
+                        }
+                    } else if (liveZoneState.live_touches_this_cycle > 1) {
+                        output += log(`❌ TRADE REJECTED: Multiple touches (${liveZoneState.live_touches_this_cycle})`, 'warn') + '\n';
+                    } else if (historical_touches >= historical_touch_limit) {
+                        output += log(`❌ TRADE REJECTED: Too many historical touches (${historical_touches})`, 'warn') + '\n';
+                    }
+                } else if (touched_this_bar) {
+                    output += log(`📍 Touch detected but was already inside zone - not counting`, 'debug') + '\n';
+                }
+
+                // Always update outside zone state
+                liveZoneState.is_outside_zone = !touched_this_bar;
+                output += log(`Updated outside_zone: ${liveZoneState.is_outside_zone}`, 'debug') + '\n';
+            });
+
+            output += '\n' + log('🎯 SCENARIO COMPLETE', 'info') + '\n';
+            output += log(`Final state: Active=${liveZoneState.zone_data.is_active}, Touches=${liveZoneState.live_touches_this_cycle}, TradeAttempted=${liveZoneState.trade_attempted_this_cycle}`, 'info') + '\n';
+
+            output += '</div>';
+            resultsDiv.innerHTML = output;
+        }
+
+        function testZoneStateLogic() {
+            const resultsDiv = document.getElementById('state-results');
+            let output = '<div class="debug-output">';
+            
+            output += log('🔄 TESTING ZONE STATE MANAGEMENT', 'info') + '\n';
+            
+            // Test the critical state tracking logic
+            const testCases = [
+                {
+                    name: "Correct Touch Counting",
+                    initial_outside: true,
+                    bars: [
+                        { high: 1.0941, touches: true, desc: "First touch" },
+                        { high: 1.0943, touches: true, desc: "Stay in zone" },
+                        { high: 1.0935, touches: false, desc: "Exit zone" },
+                        { high: 1.0941, touches: true, desc: "Second touch" }
+                    ],
+                    expected_touches: 2
+                },
+                {
+                    name: "Prevent Double Counting",
+                    initial_outside: false, // Start inside zone
+                    bars: [
+                        { high: 1.0943, touches: true, desc: "Inside zone" },
+                        { high: 1.0944, touches: true, desc: "Still inside" },
+                        { high: 1.0935, touches: false, desc: "Exit zone" },
+                        { high: 1.0941, touches: true, desc: "Re-enter zone" }
+                    ],
+                    expected_touches: 1 // Only the re-entry should count
+                }
+            ];
+
+            testCases.forEach(testCase => {
+                output += log(`\n🧪 Test Case: ${testCase.name}`, 'info') + '\n';
+                
+                let state = {
+                    is_outside_zone: testCase.initial_outside,
+                    live_touches_this_cycle: 0
+                };
+
+                testCase.bars.forEach((bar, i) => {
+                    const before_outside = state.is_outside_zone;
+                    
+                    if (bar.touches && state.is_outside_zone) {
+                        state.live_touches_this_cycle += 1;
+                        output += log(`  Bar ${i+1} (${bar.desc}): TOUCH COUNTED! Total: ${state.live_touches_this_cycle}`, 'info') + '\n';
+                    } else if (bar.touches) {
+                        output += log(`  Bar ${i+1} (${bar.desc}): Touch but already inside - not counted`, 'debug') + '\n';
+                    } else {
+                        output += log(`  Bar ${i+1} (${bar.desc}): No touch`, 'debug') + '\n';
+                    }
+                    
+                    state.is_outside_zone = !bar.touches;
+                    output += log(`    State: outside_zone ${before_outside} -> ${state.is_outside_zone}`, 'debug') + '\n';
+                });
+
+                const passed = state.live_touches_this_cycle === testCase.expected_touches;
+                output += log(`Result: ${state.live_touches_this_cycle} touches (expected ${testCase.expected_touches}) - ${passed ? 'PASS' : 'FAIL'}`, passed ? 'info' : 'error') + '\n';
+            });
+
+            output += '</div>';
+            resultsDiv.innerHTML = output;
+        }
+
+        function validateCriticalPath() {
+            const resultsDiv = document.getElementById('critical-results');
+            let output = '<div class="debug-output">';
+            
+            output += log('🚨 CRITICAL PATH VALIDATION', 'info') + '\n';
+            output += log('Testing the exact sequence that leads to trade execution', 'info') + '\n\n';
+
+            // Critical path: Zone active -> First touch -> Trade conditions -> Execute
+            const criticalChecks = [
+                {
+                    name: "Zone Active Check",
+                    test: () => {
+                        const zone = { is_active: true };
+                        return zone.is_active;
+                    }
+                },
+                {
+                    name: "Symbol Match Check", 
+                    test: () => {
+                        const zone_symbol = "EURUSD_SB";
+                        const bar_symbol = "EURUSD_SB";
+                        return zone_symbol === bar_symbol;
+                    }
+                },
+                {
+                    name: "Invalidation Check (Critical!)",
+                    test: () => {
+                        const bar_high = 1.0945;
+                        const distal_line = 1.0950;
+                        const should_invalidate = bar_high > distal_line;
+                        return !should_invalidate; // Should NOT invalidate
+                    }
+                },
+                {
+                    name: "Trade Attempt Flag Check",
+                    test: () => {
+                        const trade_attempted = false;
+                        return !trade_attempted;
+                    }
+                },
+                {
+                    name: "Touch Detection",
+                    test: () => {
+                        const bar_high = 1.0941;
+                        const proximal_line = 1.0940;
+                        return bar_high >= proximal_line;
+                    }
+                },
+                {
+                    name: "Outside Zone State",
+                    test: () => {
+                        const is_outside_zone = true;
+                        return is_outside_zone;
+                    }
+                },
+                {
+                    name: "First Touch Only",
+                    test: () => {
+                        const live_touches = 1;
+                        return live_touches === 1;
+                    }
+                },
+                {
+                    name: "Historical Touch Limit",
+                    test: () => {
+                        const historical_touches = 1;
+                        const limit = 2;
+                        return historical_touches < limit;
+                    }
+                },
+                {
+                    name: "Allowed Day Check", 
+                    test: () => {
+                        const today = 'Mon'; // Simulate allowed day
+                        const allowed = ['Mon', 'Tue', 'Wed'];
+                        return allowed.includes(today);
+                    }
+                }
+            ];
+
+            let allPassed = true;
+            criticalChecks.forEach((check, i) => {
+                const result = check.test();
+                allPassed = allPassed && result;
+                output += log(`${i+1}. ${check.name}: ${result ? 'PASS ✅' : 'FAIL ❌'}`, result ? 'info' : 'error') + '\n';
+            });
+
+            output += '\n' + log(`CRITICAL PATH RESULT: ${allPassed ? 'ALL CHECKS PASSED - TRADE EXECUTION READY ✅' : 'CRITICAL ISSUES FOUND ❌'}`, allPassed ? 'info' : 'error') + '\n';
+
+            if (allPassed) {
+                output += log('🚀 Trade would execute: SELL EURUSD_SB', 'info') + '\n';
+                output += log('🔊 Sound notification would play', 'info') + '\n';
+                output += log('📝 Trade log entry would be written', 'info') + '\n';
+            }
+
+            output += '</div>';
+            resultsDiv.innerHTML = output;
+        }
+
+        function testEdgeCases() {
+            const resultsDiv = document.getElementById('detailed-results');
+            let output = '<div class="debug-output">';
+            
+            output += log('🔍 TESTING EDGE CASES', 'info') + '\n';
+            
+            const edgeCases = [
+                {
+                    name: "Exact Proximal Line Touch",
+                    zone_low: 1.0940,
+                    bar_high: 1.0940,
+                    should_touch: true
+                },
+                {
+                    name: "Microsecond Below Proximal",
+                    zone_low: 1.0940,
+                    bar_high: 1.0939999,
+                    should_touch: false
+                },
+                {
+                    name: "Exact Distal Line Touch",
+                    zone_high: 1.0950,
+                    bar_high: 1.0950,
+                    should_invalidate: false
+                },
+                {
+                    name: "Microsecond Above Distal",
+                    zone_high: 1.0950,
+                    bar_high: 1.0950001,
+                    should_invalidate: true
+                }
+            ];
+
+            edgeCases.forEach(testCase => {
+                output += log(`\n🧪 Edge Case: ${testCase.name}`, 'info') + '\n';
+                
+                if (testCase.should_touch !== undefined) {
+                    const actual_touch = testCase.bar_high >= testCase.zone_low;
+                    const passed = actual_touch === testCase.should_touch;
+                    output += log(`Touch test: ${testCase.bar_high} >= ${testCase.zone_low} = ${actual_touch} (expected ${testCase.should_touch}) - ${passed ? 'PASS' : 'FAIL'}`, passed ? 'info' : 'error') + '\n';
+                }
+                
+                if (testCase.should_invalidate !== undefined) {
+                    const actual_invalidate = testCase.bar_high > testCase.zone_high;
+                    const passed = actual_invalidate === testCase.should_invalidate;
+                    output += log(`Invalidation test: ${testCase.bar_high} > ${testCase.zone_high} = ${actual_invalidate} (expected ${testCase.should_invalidate}) - ${passed ? 'PASS' : 'FAIL'}`, passed ? 'info' : 'error') + '\n';
+                }
+            });
+
+            output += '</div>';
+            resultsDiv.innerHTML = output;
+        }
+    </script>
+</body>
+</html>

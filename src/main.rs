@@ -66,63 +66,93 @@ pub struct UIActiveZonesQuery {
     pub max_touch_count: Option<i64>,
 }
 
+// In main.rs
 pub async fn get_ui_active_zones_handler(
     zone_cache: web::Data<ActiveZoneCache>,
-    query: web::Query<UIActiveZonesQuery>, // Use the simpler query struct
+    query: web::Query<UIActiveZonesQuery>,
 ) -> impl Responder {
-    log::info!("[UI_ACTIVE_ZONES_HANDLER] Request for active zones for UI received.");
-    log::info!("[UI_ACTIVE_ZONES_HANDLER] Query parameters: {:?}", query);
-    log::info!("[UI_ACTIVE_ZONES_HANDLER] max_touch_count: {:?}", query.max_touch_count);
+    log::info!("[UI_HANDLER] Request for active zones for UI received. Query: {:?}", query);
     
     let cache_guard = zone_cache.lock().await;
-    let mut zones_list: Vec<StoredZone> = cache_guard
-        .values()
-        .map(|live_state| live_state.zone_data.clone())
-        .collect();
+    log::info!("[UI_HANDLER] Cache locked. Size: {}", cache_guard.len());
+    
+    let mut zones_list: Vec<StoredZone> = Vec::new();
+
+    log::info!("[UI_HANDLER_CACHE_DUMP] --- START Cache Content for UI (Size: {}) ---", cache_guard.len());
+    for (cache_key, live_state) in cache_guard.iter() {
+        let zone_from_cache = &live_state.zone_data;
+
+        log::info!(
+            "[UI_CACHE_READ_CHECK] CacheKey: {:?}, Zone ID: {:?}, Symbol: {:?}, TF: {:?}, Type: {:?}, \
+            CACHE_StartTime: {:?}, CACHE_ZoneHigh: {:?}, CACHE_ZoneLow: {:?}, CACHE_TouchCount: {:?}, \
+            CACHE_IsActive: {}, CACHE_StartIdx: {:?}, CACHE_EndIdx: {:?}",
+            cache_key,
+            zone_from_cache.zone_id,
+            zone_from_cache.symbol,
+            zone_from_cache.timeframe,
+            zone_from_cache.zone_type,
+            zone_from_cache.start_time,
+            zone_from_cache.zone_high,
+            zone_from_cache.zone_low,
+            zone_from_cache.touch_count,
+            zone_from_cache.is_active,
+            zone_from_cache.start_idx,
+            zone_from_cache.end_idx
+        );
+
+        if zone_from_cache.zone_type.as_deref().unwrap_or("").to_lowercase().contains("supply") &&
+           zone_from_cache.zone_high.is_some() &&
+           zone_from_cache.zone_high == Some(0.0) {
+            log::error!(
+                "[UI_CACHE_READ_ERROR_DETECTED] SUPPLY ZONE ID {:?} (CacheKey: {:?}) HAS ZONE_HIGH OF 0.0 WHEN READ FROM CACHE! StoredZone: {:?}",
+                zone_from_cache.zone_id,
+                cache_key,
+                zone_from_cache // Log the whole struct
+            );
+        }
+        if zone_from_cache.touch_count.is_none() {
+             log::warn!(
+                "[UI_CACHE_READ_WARN_DETECTED] ZONE ID {:?} (CacheKey: {:?}) HAS touch_count of None WHEN READ FROM CACHE! StoredZone: {:?}",
+                zone_from_cache.zone_id,
+                cache_key,
+                zone_from_cache // Log the whole struct
+             );
+        }
+        zones_list.push(zone_from_cache.clone());
+    }
+    log::info!("[UI_HANDLER_CACHE_DUMP] --- END Cache Content for UI ---");
     
     let initial_count = zones_list.len();
+    log::info!("[UI_HANDLER] Extracted {} zones from cache before UI filtering.", initial_count);
     
     // Apply touch count filtering if specified
     if let Some(max_touches) = query.max_touch_count {
         log::info!(
-            "[UI_ACTIVE_ZONES_HANDLER] Applying touch count filter: max_touches = {}",
+            "[UI_HANDLER] Applying touch count filter for UI: max_touches = {}",
             max_touches
         );
         
         zones_list.retain(|zone| {
-            let touch_count = zone.touch_count.unwrap_or(0);
-            let zone_id = zone.zone_id.as_deref().unwrap_or("unknown");
-            
-            let should_keep = touch_count <= max_touches;
-            
-            if should_keep {
-                log::debug!(
-                    "[UI_ACTIVE_ZONES_HANDLER] KEEPING zone {} with touch_count: {} <= max: {}",
-                    zone_id, touch_count, max_touches
-                );
-            } else {
-                log::info!(
-                    "[UI_ACTIVE_ZONES_HANDLER] FILTERING OUT zone {} with touch_count: {} > max: {}",
-                    zone_id, touch_count, max_touches
-                );
+            let tc = zone.touch_count.unwrap_or(0); // Use historical touch_count from DB
+            let zid = zone.zone_id.as_deref().unwrap_or("unknown_id_for_filter");
+            let should_keep = tc <= max_touches;
+            if !should_keep {
+                log::debug!("[UI_HANDLER] Filtering out zone {} (touches: {}) for UI due to max_touches: {}", zid, tc, max_touches);
             }
-            
             should_keep
         });
         
         let filtered_count = zones_list.len();
         log::info!(
-            "[UI_ACTIVE_ZONES_HANDLER] Touch count filtering complete: {} -> {} zones (max_touches: {})",
+            "[UI_HANDLER] Touch count filtering for UI complete: {} -> {} zones (max_touches: {})",
             initial_count, filtered_count, max_touches
         );
     } else {
-        log::info!(
-            "[UI_ACTIVE_ZONES_HANDLER] No touch count filtering applied (max_touch_count is None)"
-        );
+        log::info!("[UI_HANDLER] No touch count filtering applied for UI (max_touch_count is None).");
     }
     
     log::info!(
-        "[UI_ACTIVE_ZONES_HANDLER] Returning {} active zones from Zone Monitor's cache.",
+        "[UI_HANDLER] Returning {} active zones to UI.",
         zones_list.len()
     );
     
@@ -139,10 +169,9 @@ pub async fn get_ui_active_zones_handler(
             "symbols": monitor_symbols_for_display,
             "patternTimeframes": monitor_timeframes_for_display,
             "allowedTradeDays": monitor_allowed_days_for_display,
-            // Include applied filter information in response
             "applied_max_touch_count": query.max_touch_count,
-            "total_zones_before_filter": initial_count,
-            "zones_returned_after_filter": zones_list.len()
+            "total_zones_before_filter": initial_count, // Count from cache before UI filter
+            "zones_returned_after_filter": zones_list.len() // Count after UI filter
         }
     }))
 }
@@ -233,12 +262,21 @@ async fn main() -> std::io::Result<()> {
     }
 
     let active_zones_shared_cache: zone_monitor_service::ActiveZoneCache =
-        Arc::new(Mutex::new(HashMap::new()));
-    let cache_for_monitor = Arc::clone(&active_zones_shared_cache);
-    tokio::spawn(zone_monitor_service::run_zone_monitor_service(
-        cache_for_monitor,
-    ));
-    log::info!("[MAIN] Zone Monitor Service spawned.");
+        Arc::new(Mutex::new(HashMap::new())); // Cache is still needed for UI even if monitor is off
+
+    let enable_zone_monitor_env = env::var("ENABLE_ZONE_MONITOR_SERVICE")
+        .unwrap_or_else(|_| "true".to_string()); // Default to true if not set
+    let enable_zone_monitor = enable_zone_monitor_env.trim().to_lowercase() == "true";
+
+    if enable_zone_monitor {
+        let cache_for_monitor = Arc::clone(&active_zones_shared_cache);
+        tokio::spawn(zone_monitor_service::run_zone_monitor_service(
+            cache_for_monitor,
+        ));
+        log::info!("[MAIN] Zone Monitor Service SPAWNED (ENABLE_ZONE_MONITOR_SERVICE=true).");
+    } else {
+        log::info!("[MAIN] Zone Monitor Service is DISABLED via ENABLE_ZONE_MONITOR_SERVICE='{}'.", enable_zone_monitor_env);
+    }
 
     let enable_stale_checker = env::var("STALE_ZONE_CHECKER_ON")
         .map(|val| val.trim().to_lowercase() == "true")

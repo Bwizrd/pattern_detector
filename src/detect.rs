@@ -2095,333 +2095,233 @@ pub async fn fetch_candles_direct(
 
 // Add this to detect.rs - extracted from get_bulk_multi_tf_active_zones_handler
 pub fn enrich_zones_with_activity(
-    zones_option: Option<&Vec<Value>>,
+    raw_zones_option: Option<&Vec<serde_json::Value>>,
     is_supply: bool,
-    candles: &[CandleData],
-    candle_count: usize,
-    last_candle_time: Option<String>,
+    all_candles: &[CandleData],
+    total_candle_count: usize,
+    last_candle_timestamp: Option<String>,
     symbol: &str,
     timeframe: &str,
-) -> Result<Vec<crate::types::EnrichedZone>, String> {
-    let mut processed_zones: Vec<crate::types::EnrichedZone> = Vec::new();
+) -> Result<Vec<EnrichedZone>, String> {
+    let mut enriched_zones: Vec<EnrichedZone> = Vec::new();
     let zone_type_str = if is_supply { "supply" } else { "demand" };
-    let mut zone_counter = 0;
-
-    if let Some(zones) = zones_option {
-        info!(
-            "[ENRICH_ZONES] Processing {} {} zones for {}/{}",
-            zones.len(), zone_type_str, symbol, timeframe
-        );
+    
+    debug!("[ENRICH_GENERATOR] Processing {} zones for {}/{}", zone_type_str, symbol, timeframe);
+    
+    if let Some(raw_zones) = raw_zones_option {
+        debug!("[ENRICH_GENERATOR] Found {} raw {} zones", raw_zones.len(), zone_type_str);
         
-        for zone_json in zones.iter() {
-            zone_counter += 1;
-            // --- 1. Deserialize the base zone ---
-            let mut enriched_zone_struct = match crate::types::deserialize_raw_zone_value(zone_json) {
+        for (zone_counter, zone_json) in raw_zones.iter().enumerate() {
+            debug!("[ENRICH_GENERATOR] Processing {} zone #{}", zone_type_str, zone_counter + 1);
+            
+            // Deserialize the zone
+            let mut enriched_zone = match crate::types::deserialize_raw_zone_value(zone_json) {
                 Ok(mut z) => {
+                    // Generate zone_id if missing
                     if z.zone_id.is_none() {
-                        let symbol_for_id = symbol;
-                        let zone_type_for_id = if is_supply { "supply" } else { "demand" };
                         let id = generate_deterministic_zone_id(
-                            symbol_for_id,
-                            timeframe,
-                            zone_type_for_id,
-                            z.start_time.as_deref(),
-                            z.zone_high,
-                            z.zone_low,
+                            symbol, timeframe, 
+                            if is_supply { "supply" } else { "demand" },
+                            z.start_time.as_deref(), z.zone_high, z.zone_low,
                         );
-                        info!("[ENRICH_ZONES] Generated Zone ID {} for {} zone #{}", id, zone_type_str, zone_counter);
                         z.zone_id = Some(id);
                     }
+                    // Set zone_type if missing
                     if z.zone_type.is_none() {
                         z.zone_type = Some(format!("{}_zone", zone_type_str));
                     }
                     z
                 }
                 Err(e) => {
-                    debug_to_file(&format!("[ENRICH_ZONES] Deserialize failed for {} zone #{}: {}. Value: {:?}", zone_type_str, zone_counter, e, zone_json));
-                    continue; // Skip this zone if deserialization fails
+                    warn!("[ENRICH_GENERATOR] Failed to deserialize zone #{}: {}", zone_counter + 1, e);
+                    continue;
                 }
             };
-
-            debug_to_file(&format!("🔍 [ZONE_{}] BEFORE ENRICHMENT:", zone_counter));
-            debug_to_file(&format!("   - Original end_time: {:?}", enriched_zone_struct.end_time));
-            debug_to_file(&format!("   - Original end_idx: {:?}", enriched_zone_struct.end_idx));
-            debug_to_file(&format!("   - Original zone_end_time: {:?}", enriched_zone_struct.zone_end_time));
-            debug_to_file(&format!("   - Original zone_end_idx: {:?}", enriched_zone_struct.zone_end_idx));
-            debug_to_file(&format!("   - Original invalidation_time: {:?}", enriched_zone_struct.invalidation_time));
             
-            enriched_zone_struct.last_data_candle = last_candle_time.clone();
-            let zone_id_log = enriched_zone_struct.zone_id.as_deref().unwrap_or("UNKNOWN");
-
-            // --- 2. Get Essential Info for Tracking ---
-            let formation_end_idx = match enriched_zone_struct.start_idx {
-    Some(start_idx) => start_idx as usize + 1, // Formation is always start_idx + 1 for this pattern
-    None => {
-        debug_to_file(&format!("🔧 [ZONE_{}] ❌ Missing start_idx", zone_counter + 1));
-        continue;
-    }
-};
-            let zone_high = match enriched_zone_struct.zone_high {
-                Some(val) if val.is_finite() => val,
-                _ => {
-                    warn!("[ENRICH_ZONES] {} zone {} (ID: {}) missing/invalid 'zone_high'. Skipping.", zone_type_str, zone_counter, zone_id_log);
+            // CRITICAL: Clear any existing end time data (match bulk handler)
+            enriched_zone.end_time = None;
+            enriched_zone.end_idx = None;
+            enriched_zone.zone_end_time = None;
+            enriched_zone.zone_end_idx = None;
+            enriched_zone.invalidation_time = None;
+            enriched_zone.last_data_candle = last_candle_timestamp.clone();
+            
+            let zone_id_log = enriched_zone.zone_id.as_deref().unwrap_or("UNKNOWN");
+            
+            // Get formation end index (MATCH BULK HANDLER LOGIC)
+            let formation_end_idx = match enriched_zone.start_idx {
+                Some(start_idx) => start_idx as usize + 1, // Formation ends after the big bar
+                None => {
+                    warn!("[ENRICH_GENERATOR] Zone {} missing start_idx", zone_id_log);
                     continue;
                 }
             };
-            let zone_low = match enriched_zone_struct.zone_low {
+            
+            // Validate zone prices
+            let zone_high = match enriched_zone.zone_high {
                 Some(val) if val.is_finite() => val,
                 _ => {
-                    warn!("[ENRICH_ZONES] {} zone {} (ID: {}) missing/invalid 'zone_low'. Skipping.", zone_type_str, zone_counter, zone_id_log);
+                    warn!("[ENRICH_GENERATOR] Zone {} invalid zone_high", zone_id_log);
                     continue;
                 }
             };
+            
+            let zone_low = match enriched_zone.zone_low {
+                Some(val) if val.is_finite() => val,
+                _ => {
+                    warn!("[ENRICH_GENERATOR] Zone {} invalid zone_low", zone_id_log);
+                    continue;
+                }
+            };
+            
+            // Set proximal/distal lines (MATCH BULK HANDLER)
             let (proximal_line, distal_line) = if is_supply {
-                (zone_low, zone_high) // Supply: Proximal=Low, Distal=High
+                (zone_low, zone_high)
             } else {
-                (zone_high, zone_low) // Demand: Proximal=High, Distal=Low
+                (zone_high, zone_low)
             };
-
-            debug!("[ENRICH_ZONES] Enriching {} zone #{} (ID: {}), FormedEndIdx: {}, H: {}, L: {}, P: {}, D: {}", zone_type_str, zone_counter, zone_id_log, formation_end_idx, zone_high, zone_low, proximal_line, distal_line);
-
-            // --- 3. Initialize Tracking Variables ---
-            let mut is_currently_active = true; // Assume active initially
-            let mut touch_count: i64 = 0;
-            let mut first_invalidation_idx: Option<usize> = None; // Distal break ONLY
-            let mut current_touch_points: Vec<crate::types::TouchPoint> = Vec::new();
-
-            // --- 4. Loop Through Candles *After* Formation ---
+            
+            debug!("[ENRICH_GENERATOR] Zone {} - Formation ends at idx {}, High: {:.5}, Low: {:.5}", 
+                   zone_id_log, formation_end_idx, zone_high, zone_low);
+            
+            // CRITICAL: Activity check starts AFTER formation (MATCH BULK HANDLER)
             let check_start_idx = formation_end_idx + 1;
             
-            // FIXED: Determine correct initial state based on first candle after formation
+            // Initialize tracking variables
+            let mut is_currently_active = true;
+            let mut touch_count: i64 = 0;
+            let mut first_invalidation_idx: Option<usize> = None;
+            let mut current_touch_points: Vec<TouchPoint> = Vec::new();
+            
+            debug!("[ENRICH_GENERATOR] Zone {} activity check starts at index: {}", zone_id_log, check_start_idx);
+            
+            // CRITICAL: Determine initial state (MATCH BULK HANDLER EXACTLY)
             let mut is_outside_zone = true;
-            if check_start_idx < candle_count {
-                let first_candle_after_formation = &candles[check_start_idx];
-                
+            if check_start_idx < total_candle_count {
+                let first_candle_after_formation = &all_candles[check_start_idx];
                 if is_supply {
-                    // For supply zone: if first candle's high reaches proximal line, we start "inside"
                     is_outside_zone = first_candle_after_formation.high < proximal_line;
                 } else {
-                    // For demand zone: if first candle's low reaches proximal line, we start "inside"
                     is_outside_zone = first_candle_after_formation.low > proximal_line;
                 }
-                
-                debug!("[ENRICH_ZONES] Zone {} initial state after formation: {} (first candle H:{}, L:{})", 
-                       zone_counter,
-                       if is_outside_zone { "OUTSIDE" } else { "INSIDE" },
+                debug!("[ENRICH_GENERATOR] Zone {} initial state: {} (first candle H:{:.5} L:{:.5})", 
+                       zone_id_log, if is_outside_zone { "OUTSIDE" } else { "INSIDE" },
                        first_candle_after_formation.high, first_candle_after_formation.low);
+            } else {
+                warn!("[ENRICH_GENERATOR] Zone {} has no candles after formation!", zone_id_log);
             }
-
-            if check_start_idx < candle_count {
-                for i in check_start_idx..candle_count {
-                    // Stop checking if the zone is no longer active (distal break)
-                    if !is_currently_active {
-                        break;
-                    }
-
-                    let candle = &candles[i];
+            
+            // Process candles after formation (MATCH BULK HANDLER LOGIC)
+            if check_start_idx < total_candle_count {
+                for i in check_start_idx..total_candle_count {
+                    if !is_currently_active { break; }
+                    
+                    let candle = &all_candles[i];
                     if !candle.high.is_finite() || !candle.low.is_finite() || !candle.close.is_finite() {
-                        continue; // Skip malformed candles
+                        continue;
                     }
-
+                    
                     let mut interaction_occurred = false;
                     let mut interaction_price = 0.0;
-
-                    // --- Check for Invalidation (Distal Breach) ---
-                    // This check determines if the zone is *still* active
+                    
+                    // CRITICAL: Check for invalidation FIRST (MATCH BULK HANDLER)
                     if is_supply {
-                        // Supply invalidated if candle HIGH goes ABOVE distal line (zone_high)
                         if candle.high > distal_line {
                             is_currently_active = false;
-                            if first_invalidation_idx.is_none() {
-                                first_invalidation_idx = Some(i);
-                            }
-                            debug!("[ENRICH_ZONES] Supply zone {} (ID: {}) invalidated at index {}", zone_counter, zone_id_log, i);
-                            break; // Stop processing this zone after invalidation
+                            first_invalidation_idx = Some(i);
+                            enriched_zone.invalidation_time = Some(candle.time.clone());
+                            enriched_zone.end_time = Some(candle.time.clone());
+                            enriched_zone.end_idx = Some(i as u64);
+                            debug!("[ENRICH_GENERATOR] Zone {} INVALIDATED at [{}]: {:.5} > {:.5}", 
+                                   zone_id_log, i, candle.high, distal_line);
+                            break;
                         }
                     } else {
-                        // Demand invalidated if candle LOW goes BELOW distal line (zone_low)
                         if candle.low < distal_line {
                             is_currently_active = false;
-                            if first_invalidation_idx.is_none() {
-                                first_invalidation_idx = Some(i);
-                            }
-                            debug!("[ENRICH_ZONES] Demand zone {} (ID: {}) invalidated at index {}", zone_counter, zone_id_log, i);
-                            break; // Stop processing this zone after invalidation
+                            first_invalidation_idx = Some(i);
+                            enriched_zone.invalidation_time = Some(candle.time.clone());
+                            enriched_zone.end_time = Some(candle.time.clone());
+                            enriched_zone.end_idx = Some(i as u64);
+                            debug!("[ENRICH_GENERATOR] Zone {} INVALIDATED at [{}]: {:.5} < {:.5}", 
+                                   zone_id_log, i, candle.low, distal_line);
+                            break;
                         }
                     }
-
-                    // --- Check for Interaction (Proximal Breach) ---
-                    // This check determines if the candle *entered* or *touched* the zone
-                    // Only check if the zone hasn't been invalidated by the distal check above
+                    
+                    // Check for interaction with proximal line
                     if is_supply {
-                        // Supply interaction if candle HIGH reaches or crosses proximal line (zone_low)
                         if candle.high >= proximal_line {
                             interaction_occurred = true;
-                            interaction_price = candle.high; // Price at interaction point
+                            interaction_price = candle.high;
                         }
                     } else {
-                        // Demand interaction if candle LOW reaches or crosses proximal line (zone_high)
                         if candle.low <= proximal_line {
                             interaction_occurred = true;
-                            interaction_price = candle.low; // Price at interaction point
+                            interaction_price = candle.low;
                         }
                     }
-
-                    // --- Record Interaction and Increment Count ONLY IF transitioning from OUTSIDE ---
+                    
+                    // CRITICAL: Count touches only when transitioning from outside to inside (MATCH BULK HANDLER)
                     if interaction_occurred && is_outside_zone {
-                        touch_count += 1; // Count this as one "touch" event (entry)
-                        current_touch_points.push(crate::types::TouchPoint {
+                        touch_count += 1;
+                        current_touch_points.push(TouchPoint {
                             time: candle.time.clone(),
                             price: interaction_price,
                         });
-                        debug!("[ENRICH_ZONES] Zone {} (ID: {}) ENTRY recorded at index {}. Price: {}. Total Touches: {}", zone_counter, zone_id_log, i, interaction_price, touch_count);
+                        debug!("[ENRICH_GENERATOR] Zone {} TOUCH #{} at [{}]: {:.5}", 
+                               zone_id_log, touch_count, i, interaction_price);
                     }
-
-                    // --- Update State for the NEXT candle's check ---
-                    // If interaction occurred, we are now inside/touching, so not "outside" for the next candle.
-                    // If no interaction occurred, we remain outside.
+                    
+                    // Update state for next iteration
                     is_outside_zone = !interaction_occurred;
-
-                } // End candle loop (for i in check_start_idx..candle_count)
-            } else {
-                debug!("[ENRICH_ZONES] Zone {} (ID: {}) - No candles after formation index {}.", zone_counter, zone_id_log, formation_end_idx);
+                }
             }
-
-            // --- 5. Finalize Enrichment ---
-            enriched_zone_struct.is_active = is_currently_active;
-            enriched_zone_struct.touch_count = Some(touch_count); // Set the final calculated touch count
             
-            if !current_touch_points.is_empty() {
-                enriched_zone_struct.touch_points = Some(current_touch_points);
-            } else {
-                enriched_zone_struct.touch_points = None; // Explicitly set to None if no touches were recorded
-            }
-
-            // Populate invalidation/end fields only if the zone was invalidated
+            // CRITICAL: Calculate bars_active correctly (MATCH BULK HANDLER EXACTLY)
             if !is_currently_active {
-                enriched_zone_struct.invalidation_time = first_invalidation_idx
-                    .and_then(|idx| candles.get(idx)) // Safely get candle
-                    .map(|c| c.time.clone());
-                enriched_zone_struct.zone_end_idx = first_invalidation_idx.map(|idx| idx as u64);
-                enriched_zone_struct.zone_end_time = enriched_zone_struct.invalidation_time.clone(); // Reuse invalidation time
-            } else {
-                // Ensure these are None if the zone is still active
-                enriched_zone_struct.invalidation_time = None;
-                enriched_zone_struct.zone_end_idx = None;
-                enriched_zone_struct.zone_end_time = None;
-            }
-
-            // FIXED: Calculate bars_active correctly
-            if !is_currently_active {
-                // Zone was invalidated - calculate from formation to invalidation
+                // Zone was invalidated - count bars from activity start to invalidation
                 if let Some(invalidation_idx) = first_invalidation_idx {
                     if invalidation_idx > check_start_idx {
-                        enriched_zone_struct.bars_active = Some((invalidation_idx - check_start_idx) as u64);
+                        enriched_zone.bars_active = Some((invalidation_idx - check_start_idx) as u64);
                     } else {
-                        enriched_zone_struct.bars_active = Some(0);
+                        enriched_zone.bars_active = Some(0);
                     }
                 } else {
-                    enriched_zone_struct.bars_active = Some(0);
+                    enriched_zone.bars_active = Some(0);
                 }
             } else {
-                // Zone is still active - calculate from formation to end of available data
-                if candle_count > check_start_idx {
-                    enriched_zone_struct.bars_active = Some((candle_count - check_start_idx) as u64);
+                // Zone is still active - count bars from activity start to end of data
+                if total_candle_count > check_start_idx {
+                    enriched_zone.bars_active = Some((total_candle_count - check_start_idx) as u64);
                 } else {
-                    enriched_zone_struct.bars_active = Some(0);
+                    enriched_zone.bars_active = Some(0);
                 }
             }
-
-            // Calculate strength score based on the corrected touch count
-            let score_raw = 100.0 - (touch_count as f64 * 10.0); // Example scoring
-            enriched_zone_struct.strength_score = Some(score_raw.max(0.0)); // Ensure score is not negative
-
-            debug!("[ENRICH_ZONES] Zone {} (ID: {}) Final Status: Active={}, Touches={}, BarsActive={:?}, InvalidatedT={:?}",
-                zone_counter, zone_id_log,
-                enriched_zone_struct.is_active, enriched_zone_struct.touch_count.unwrap_or(0), enriched_zone_struct.bars_active,
-                enriched_zone_struct.invalidation_time.is_some()
-            );
-
-            let mut debug_candles = Vec::new();
-            let start_idx = enriched_zone_struct.start_idx.unwrap() as usize;
-
-            debug_to_file(&format!("🕯️ [ZONE_{}] Adding debug candles for zone ID: {}", zone_counter, zone_id_log));
-
-            // Add formation candles (always 2 candles)
-            if start_idx < candles.len() {
-                let fifty_candle = &candles[start_idx];
-                debug_candles.push(json!({
-                    "idx": start_idx,
-                    "time": fifty_candle.time,
-                    "open": fifty_candle.open,
-                    "high": fifty_candle.high,
-                    "low": fifty_candle.low,
-                    "close": fifty_candle.close
-                }));
-                debug_to_file(&format!("🕯️   [{}] FORMATION-50%: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
-                            start_idx, fifty_candle.time, fifty_candle.open, fifty_candle.high, fifty_candle.low, fifty_candle.close));
+            
+            // Finalize enrichment (MATCH BULK HANDLER)
+            enriched_zone.is_active = is_currently_active;
+            enriched_zone.touch_count = Some(touch_count);
+            
+            if !current_touch_points.is_empty() {
+                enriched_zone.touch_points = Some(current_touch_points);
             }
-
-            if start_idx + 1 < candles.len() {
-                let big_candle = &candles[start_idx + 1];
-                debug_candles.push(json!({
-                    "idx": start_idx + 1,
-                    "time": big_candle.time,
-                    "open": big_candle.open,
-                    "high": big_candle.high,
-                    "low": big_candle.low,
-                    "close": big_candle.close
-                }));
-                debug_to_file(&format!("🕯️   [{}] FORMATION-BIG: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
-                            start_idx + 1, big_candle.time, big_candle.open, big_candle.high, big_candle.low, big_candle.close));
-            }
-
-            // Add activity candles (from formation end + 1 to end of data or invalidation)
-            let activity_start = start_idx + 2;
-            let activity_end = if !is_currently_active && first_invalidation_idx.is_some() {
-                first_invalidation_idx.unwrap()
-            } else {
-                candles.len()
-            };
-
-            debug_to_file(&format!("🕯️ [ZONE_{}] Activity candles from {} to {} (total: {})", 
-                        zone_counter, activity_start, activity_end - 1, activity_end - activity_start));
-
-            for i in activity_start..activity_end {
-                if i < candles.len() {
-                    let activity_candle = &candles[i];
-                    debug_candles.push(json!({
-                        "idx": i,
-                        "time": activity_candle.time,
-                        "open": activity_candle.open,
-                        "high": activity_candle.high,
-                        "low": activity_candle.low,
-                        "close": activity_candle.close
-                    }));
-                    
-                    // Log first 5 and last 5 activity candles to avoid spam
-                    if i < activity_start + 5 || i >= activity_end - 5 {
-                        debug_to_file(&format!("🕯️   [{}] ACTIVITY: {} O:{:.5} H:{:.5} L:{:.5} C:{:.5}", 
-                                    i, activity_candle.time, activity_candle.open, activity_candle.high, activity_candle.low, activity_candle.close));
-                    } else if i == activity_start + 5 {
-                        debug_to_file(&format!("🕯️   ... (logging {} middle candles) ...", activity_end - activity_start - 10));
-                    }
-                }
-            }
-
-            debug_to_file(&format!("🕯️ [ZONE_{}] Total debug candles added: {}", zone_counter, debug_candles.len()));
-
-            // Add debug candles to the zone (you'll need to add this field to EnrichedZone struct)
-            enriched_zone_struct.debug_candles = Some(debug_candles);
-
-            processed_zones.push(enriched_zone_struct);
-        } // End loop through zones (for zone_json in zones.iter())
+            
+            // Calculate strength score
+            let score_raw = 100.0 - (touch_count as f64 * 10.0);
+            enriched_zone.strength_score = Some(score_raw.max(0.0));
+            
+            debug!("[ENRICH_GENERATOR] Zone {} FINAL: Active={} Touches={} BarsActive={:?} EndTime={:?}", 
+                   zone_id_log, enriched_zone.is_active, touch_count, 
+                   enriched_zone.bars_active, enriched_zone.end_time);
+            
+            enriched_zones.push(enriched_zone);
+        }
     } else {
-        // This case means the key (e.g., "supply_zones") existed, but its "zones" array was null or missing.
-        info!("[ENRICH_ZONES] No raw {} zones found in detection results structure (key existed but 'zones' was empty/null).", zone_type_str);
+        debug!("[ENRICH_GENERATOR] No {} zones found", zone_type_str);
     }
     
-    Ok(processed_zones)
+    Ok(enriched_zones)
 }
 
 pub fn debug_zone_enrichment_step_by_step(

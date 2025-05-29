@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Active Zones Monitor</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        h1, h2 { color: #333; border-bottom: 2px solid #ddd; padding-bottom: 10px;}
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        button { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-bottom:20px; }
+        button:hover { background-color: #0056b3; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #e9e9e9; }
+        .error-message { color: red; font-weight: bold; padding: 10px; background-color: #ffebee; border: 1px solid #e57373; border-radius: 4px; margin-bottom: 15px; }
+        .warning { color: orange; }
+        .supply { background-color: #ffebee; } /* Light red for supply */
+        .demand { background-color: #e8f5e9; } /* Light green for demand */
+        .inactive { background-color: #f0f0f0; opacity: 0.7; }
+        .details-section { margin-bottom: 20px; padding: 15px; background-color: #eef; border-radius: 5px; }
+        .details-section p { margin: 5px 0; }
+        .details-section strong { color: #0056b3; }
+        .zone-id-error { background-color: #fff0f0; color: red; font-weight: bold; }
+        .zone-value-error { color: red; }
+        .boolean-true { color: green; font-weight: bold; }
+        .boolean-false { color: #cc0000; }
+        label { margin-right: 10px; }
+        input[type="number"] { padding: 5px; width: 60px; margin-right: 20px;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Active Zones Viewer</h1>
+        <div>
+            <label for="maxTouchCount">Max Touch Count:</label>
+            <input type="number" id="maxTouchCount" value="1" min="0">
+            <button onclick="fetchAndDisplayZones()">Fetch & Display Zones</button>
+        </div>
+        <div id="errorMessage" class="error-message" style="display:none;"></div>
+
+        <div id="monitoringFilters" class="details-section" style="display:none;">
+            <h2>Monitoring Filters</h2>
+            <p><strong>Allowed Trade Days:</strong> <span id="allowedDays"></span></p>
+            <p><strong>Applied Max Touch Count:</strong> <span id="appliedTouches"></span></p>
+            <p><strong>Pattern Timeframes:</strong> <span id="patternTFs"></span></p>
+            <p><strong>Monitored Symbols:</strong> <span id="symbols" style="word-break: break-all;"></span></p>
+            <p><strong>Total Zones Before Filter:</strong> <span id="totalBeforeFilter"></span></p>
+            <p><strong>Zones Returned After Filter:</strong> <span id="totalAfterFilter"></span></p>
+        </div>
+
+        <h2>Tradeable Zones</h2>
+        <table id="zonesTable">
+            <thead>
+                <tr>
+                    <th>Zone ID</th>
+                    <th>Symbol</th>
+                    <th>TF</th>
+                    <th>Type</th>
+                    <th>Is Active</th>
+                    <th>Zone High</th>
+                    <th>Zone Low</th>
+                    <th>Bars Active</th>
+                    <th>Touch Count</th>
+                    <th>Strength</th>
+                    <th>Start Time</th>
+                    <th>Pattern</th>
+                    <th>Detection Method</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Zone data will be inserted here -->
+            </tbody>
+        </table>
+    </div>
+
+        <script>
+        async function fetchAndDisplayZones() {
+            const tableBody = document.getElementById('zonesTable').getElementsByTagName('tbody')[0];
+            const errorMessageDiv = document.getElementById('errorMessage');
+            const filtersDiv = document.getElementById('monitoringFilters');
+            const maxTouchCountInput = document.getElementById('maxTouchCount');
+            
+            tableBody.innerHTML = '<tr><td colspan="13" style="text-align:center;">Loading...</td></tr>';
+            errorMessageDiv.style.display = 'none';
+            errorMessageDiv.textContent = '';
+            filtersDiv.style.display = 'none';
+
+            const maxTouches = maxTouchCountInput.value;
+            let apiUrl = 'http://localhost:8080/ui/active-zones';
+            if (maxTouches !== "" && !isNaN(parseInt(maxTouches)) && parseInt(maxTouches) >= 0) { // Ensure it's a non-negative number
+                apiUrl += `?max_touch_count=${parseInt(maxTouches)}`;
+            }
+
+
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText || 'No error message from server'}`);
+                }
+                const data = await response.json();
+                displayData(data);
+            } catch (e) {
+                console.error("Error fetching or parsing data:", e);
+                errorMessageDiv.textContent = "Error fetching data: " + e.message;
+                errorMessageDiv.style.display = 'block';
+                tableBody.innerHTML = `<tr><td colspan="13" style="text-align:center;">Failed to load data. Check browser console for more details.</td></tr>`;
+            }
+        }
+
+        function displayData(data) {
+            const tableBody = document.getElementById('zonesTable').getElementsByTagName('tbody')[0];
+            tableBody.innerHTML = ''; // Clear loading or previous data
+
+            const filtersDiv = document.getElementById('monitoringFilters');
+            const allowedDaysEl = document.getElementById('allowedDays');
+            const appliedTouchesEl = document.getElementById('appliedTouches');
+            const patternTFsEl = document.getElementById('patternTFs');
+            const symbolsEl = document.getElementById('symbols');
+            const totalBeforeEl = document.getElementById('totalBeforeFilter');
+            const totalAfterEl = document.getElementById('totalAfterFilter');
+
+            if (data.monitoring_filters) {
+                filtersDiv.style.display = 'block';
+                allowedDaysEl.textContent = data.monitoring_filters.allowedTradeDays || 'N/A';
+                appliedTouchesEl.textContent = data.monitoring_filters.applied_max_touch_count !== undefined ? data.monitoring_filters.applied_max_touch_count : 'N/A (None Applied)';
+                patternTFsEl.textContent = data.monitoring_filters.patternTimeframes || 'N/A';
+                symbolsEl.textContent = data.monitoring_filters.symbols || 'N/A';
+                totalBeforeEl.textContent = data.monitoring_filters.total_zones_before_filter !== undefined ? data.monitoring_filters.total_zones_before_filter : 'N/A';
+                totalAfterEl.textContent = data.monitoring_filters.zones_returned_after_filter !== undefined ? data.monitoring_filters.zones_returned_after_filter : 'N/A';
+            } else {
+                filtersDiv.style.display = 'none';
+            }
+
+            if (data.tradeable_zones && Array.isArray(data.tradeable_zones)) {
+                 if (data.tradeable_zones.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="13" style="text-align:center;">No tradeable zones found matching the criteria.</td></tr>`;
+                    return;
+                }
+                data.tradeable_zones.forEach(zone => {
+                    const row = tableBody.insertRow();
+
+                    if (zone.zone_type) {
+                        if (zone.zone_type.toLowerCase().includes('supply')) row.classList.add('supply');
+                        else if (zone.zone_type.toLowerCase().includes('demand')) row.classList.add('demand');
+                    }
+                    if (zone.is_active === false) row.classList.add('inactive');
+
+                    const zoneIdCell = row.insertCell();
+                    zoneIdCell.textContent = zone.zone_id || 'N/A';
+                    const isValidNumericId = /^\d+$/.test(zone.zone_id);
+                    const isValidHexId = /^[0-9a-fA-F]{8,}$/.test(zone.zone_id);
+                    if (!zone.zone_id || (!isValidNumericId && !isValidHexId) || zone.zone_id === "zone_id" || zone.zone_id === "touch_count" ) {
+                         if (zone.zone_id === "zone_id" || zone.zone_id === "touch_count") {
+                            zoneIdCell.classList.add('zone-id-error');
+                            zoneIdCell.title = 'Error: Invalid Zone ID string literal!';
+                         }
+                    }
+
+                    row.insertCell().textContent = zone.symbol || 'N/A';
+                    row.insertCell().textContent = zone.timeframe || 'N/A';
+                    row.insertCell().textContent = zone.zone_type || 'N/A';
+
+                    const isActiveCell = row.insertCell();
+                    isActiveCell.innerHTML = zone.is_active ? '<span class="boolean-true">TRUE</span>' : '<span class="boolean-false">FALSE</span>';
+
+                    // More robust check for numbers before toFixed()
+                    const zoneHighCell = row.insertCell();
+                    zoneHighCell.textContent = (typeof zone.zone_high === 'number') ? zone.zone_high.toFixed(5) : 'N/A';
+                    if (zone.zone_type && zone.zone_type.toLowerCase().includes('supply')) {
+                        if (zone.zone_high === 0.0 || typeof zone.zone_high !== 'number') { // Check for 0.0 or not a number
+                            zoneHighCell.classList.add('zone-value-error');
+                            zoneHighCell.title = 'Error: Supply zone_high is 0.0 or not a valid number!';
+                        } else if (typeof zone.zone_low === 'number' && zone.zone_high <= zone.zone_low) {
+                            zoneHighCell.classList.add('zone-value-error');
+                            zoneHighCell.title = 'Error: Supply zone_high is not greater than zone_low!';
+                        }
+                    }
+
+                    const zoneLowCell = row.insertCell();
+                    zoneLowCell.textContent = (typeof zone.zone_low === 'number') ? zone.zone_low.toFixed(5) : 'N/A';
+                     if (zone.zone_type && zone.zone_type.toLowerCase().includes('demand')) {
+                        if (zone.zone_low === 0.0 || typeof zone.zone_low !== 'number') { // Check for 0.0 or not a number
+                            zoneLowCell.classList.add('zone-value-error');
+                            zoneLowCell.title = 'Error: Demand zone_low is 0.0 or not a valid number!';
+                        } else if (typeof zone.zone_high === 'number' && zone.zone_low >= zone.zone_high) {
+                            zoneLowCell.classList.add('zone-value-error');
+                            zoneLowCell.title = 'Error: Demand zone_low is not less than zone_high!';
+                        }
+                    }
+
+                    row.insertCell().textContent = (typeof zone.bars_active === 'number') ? zone.bars_active : 'N/A';
+                    row.insertCell().textContent = (typeof zone.touch_count === 'number') ? zone.touch_count : 'N/A';
+                    row.insertCell().textContent = (typeof zone.strength_score === 'number') ? zone.strength_score.toFixed(1) : 'N/A';
+                    
+                    row.insertCell().textContent = zone.start_time || 'N/A';
+                    row.insertCell().textContent = zone.pattern || 'N/A';
+                    row.insertCell().textContent = zone.detection_method || 'N/A';
+                });
+            } else {
+                tableBody.innerHTML = `<tr><td colspan="13" style="text-align:center;">tradeable_zones data is missing or not an array.</td></tr>`;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', fetchAndDisplayZones);
+    </script>
+</body>
+</html>

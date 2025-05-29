@@ -811,6 +811,20 @@ async fn process_symbol_timeframe_pattern_and_collect_ids(
             })?;
 
             for enriched_zone_item in enriched_zones_vec {
+                if let Some(ref zone_id) = enriched_zone_item.zone_id {
+                    debug!("[GENERATOR_DEBUG] Zone ID: {}", zone_id);
+                    debug!("[GENERATOR_DEBUG]   Symbol/TF: {}/{}", symbol, timeframe);
+                    debug!("[GENERATOR_DEBUG]   Active: {}", enriched_zone_item.is_active);
+                    debug!("[GENERATOR_DEBUG]   Touch Count: {:?}", enriched_zone_item.touch_count);
+                    debug!("[GENERATOR_DEBUG]   Bars Active: {:?}", enriched_zone_item.bars_active);
+                    debug!("[GENERATOR_DEBUG]   Start Time: {:?}", enriched_zone_item.start_time);
+                    debug!("[GENERATOR_DEBUG]   End Time: {:?}", enriched_zone_item.end_time);
+                    debug!("[GENERATOR_DEBUG]   Start Idx: {:?}", enriched_zone_item.start_idx);
+                    debug!("[GENERATOR_DEBUG]   End Idx: {:?}", enriched_zone_item.end_idx);
+                    debug!("[GENERATOR_DEBUG]   Zone Type: {:?}", enriched_zone_item.zone_type);
+                    debug!("[GENERATOR_DEBUG]   Invalidation Time: {:?}", enriched_zone_item.invalidation_time);
+                    debug!("[GENERATOR_DEBUG]   ---");
+                }
                 // --- CHECK IF ZONE ALREADY EXISTS ---
                 if let Some(ref current_zone_id) = enriched_zone_item.zone_id {
                     if existing_zone_ids.contains(current_zone_id) {

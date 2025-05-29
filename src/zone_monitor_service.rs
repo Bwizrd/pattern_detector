@@ -161,7 +161,7 @@ fn build_or_filter(tag_name: &str, values: &[String]) -> String {
 
 async fn fetch_and_cache_active_zones(
     passed_in_cache: ActiveZoneCache,
-    http_client: &HttpClient,
+    http_client: &HttpClient, 
     influx_host: &str,
     influx_org: &str,
     influx_token: &str,
@@ -175,11 +175,8 @@ async fn fetch_and_cache_active_zones(
         target_symbols, target_pattern_timeframes
     );
 
-    if target_symbols.is_empty() || target_pattern_timeframes.is_empty() {
-        warn!("[ZONE_MONITOR_CACHE] No target symbols or TFs for cache refresh. Clearing cache.");
-        let mut cache = passed_in_cache.lock().await;
-        cache.clear();
-        return Ok(0);
+    if target_symbols.is_empty() && target_pattern_timeframes.is_empty() {
+        warn!("[ZONE_MONITOR_CACHE] No target symbols or TFs specified for specific filtering in cache refresh. Will fetch all active zones based on query lookback.");
     }
 
     let symbol_filter_str = build_or_filter("symbol", target_symbols);
@@ -189,37 +186,35 @@ async fn fetch_and_cache_active_zones(
         env::var("ZONE_MONITOR_DB_QUERY_LOOKBACK_DAYS").unwrap_or_else(|_| "35".to_string());
     let query_lookback_days = query_lookback_days_str.parse::<i64>().unwrap_or(35);
 
-    // Fixed query using int() conversion for is_active
     let flux_query = format!(
         r#"
         from(bucket: "{zone_bucket}")
           |> range(start: -{query_lookback_days}d)
           |> filter(fn: (r) => r._measurement == "{zone_measurement}")
-          |> filter(fn: (r) => exists r.symbol and exists r.timeframe)
-          |> filter(fn: (r) => ({symbol_filter_str}))
-          |> filter(fn: (r) => ({timeframe_filter_str}))
+          |> filter(fn: (r) => exists r.symbol and ({symbol_filter_str}))      // CORRECTED: Use symbol_filter_str
+          |> filter(fn: (r) => exists r.timeframe and ({timeframe_filter_str}))  // CORRECTED: Use timeframe_filter_str
           |> pivot(
-              rowKey:["_time", "symbol", "timeframe", "pattern", "zone_type"],
+              rowKey:["_time", "symbol", "timeframe", "pattern", "zone_type", "zone_id"], 
               columnKey: ["_field"],
               valueColumn: "_value"
              )
-          |> filter(fn: (r) => exists r.is_active and int(v: r.is_active) == 1)
+          |> filter(fn: (r) => exists r.is_active and r.is_active == 1) 
           |> sort(columns: ["_time"], desc: true)
         "#,
         zone_bucket = zone_bucket,
         query_lookback_days = query_lookback_days,
         zone_measurement = zone_measurement,
-        symbol_filter_str = symbol_filter_str,
-        timeframe_filter_str = timeframe_filter_str
+        symbol_filter_str = symbol_filter_str,      
+        timeframe_filter_str = timeframe_filter_str 
     );
 
     let query_url = format!("{}/api/v2/query?org={}", influx_host, influx_org);
     debug!(
-        "[ZONE_MONITOR_CACHE] Influx query with fixed is_active filter: {}",
+        "[ZONE_MONITOR_CACHE] Influx query for cache refresh: {}",
         flux_query
     );
 
-    let fetched_zones_from_db: Vec<StoredZone> = match http_client
+    let response_text = match http_client
         .post(&query_url)
         .bearer_auth(influx_token)
         .header("Accept", "application/csv")
@@ -231,30 +226,10 @@ async fn fetch_and_cache_active_zones(
         Ok(response) => {
             let status = response.status();
             if status.is_success() {
-                let response_text = response
+                response
                     .text()
                     .await
-                    .map_err(|e| format!("Influx response text error: {}", e))?;
-                let mut zones = Vec::new();
-                if response_text
-                    .lines()
-                    .skip_while(|l| l.starts_with('#') || l.is_empty())
-                    .count()
-                    > 1
-                {
-                    let mut rdr = csv::ReaderBuilder::new()
-                        .has_headers(true)
-                        .flexible(true)
-                        .comment(Some(b'#'))
-                        .from_reader(response_text.as_bytes());
-                    for result in rdr.deserialize::<ZoneCsvRecord>() {
-                        match result {
-                            Ok(csv_rec) => zones.push(map_csv_to_stored_zone(csv_rec)),
-                            Err(e) => warn!("[ZONE_MONITOR_CACHE] CSV deserialize error: {}", e),
-                        }
-                    }
-                }
-                zones
+                    .map_err(|e| format!("Influx response text error: {}", e))?
             } else {
                 let err_text = response
                     .text()
@@ -279,19 +254,129 @@ async fn fetch_and_cache_active_zones(
         }
     };
 
+    if response_text.len() < 5000 { 
+        log::info!("[RAW_CSV_DEBUG] START --- Raw CSV for Zone Cache ({} bytes) --- START", response_text.len());
+        log::info!("{}", response_text);
+        log::info!("[RAW_CSV_DEBUG] END --- Raw CSV for Zone Cache --- END");
+    } else {
+        log::info!("[RAW_CSV_DEBUG] Raw CSV for Zone Cache is large ({} bytes). Logging first 2000 and last 1000 chars.", response_text.len());
+        log::info!("[RAW_CSV_DEBUG] First 2000 chars:\n{}", &response_text[..2000.min(response_text.len())]);
+        log::info!("[RAW_CSV_DEBUG] Last 1000 chars:\n{}", &response_text[(response_text.len() - 1000.min(response_text.len()))..]);
+    }
+
+    let mut processed_lines: Vec<String> = Vec::new();
+    let mut actual_header_line: Option<String> = None;
+    let mut first_header_found_and_added = false;
+
+    for line_content in response_text.lines() {
+        let trimmed_line_content = line_content.trim();
+        if trimmed_line_content.is_empty() {
+            if !first_header_found_and_added && trimmed_line_content.starts_with('#') {
+                 processed_lines.push(trimmed_line_content.to_string());
+            }
+            continue; 
+        }
+        if trimmed_line_content.starts_with('#') {
+            if !first_header_found_and_added {
+                processed_lines.push(trimmed_line_content.to_string());
+            } 
+            continue;
+        }
+
+        if !first_header_found_and_added {
+            actual_header_line = Some(trimmed_line_content.to_string());
+            processed_lines.push(trimmed_line_content.to_string());
+            first_header_found_and_added = true;
+            info!("[ZONE_MONITOR_CACHE_CSV_PROCESS] Identified primary header: {}", trimmed_line_content);
+        } else {
+            if Some(trimmed_line_content) != actual_header_line.as_deref() {
+                processed_lines.push(trimmed_line_content.to_string());
+            } else {
+                info!("[ZONE_MONITOR_CACHE_CSV_PROCESS] Skipping repeated header line in CSV: {}", trimmed_line_content);
+            }
+        }
+    }
+
+    let cleaned_csv_text = processed_lines.join("\n");
+    let mut fetched_zones_from_db: Vec<StoredZone> = Vec::new();
+
+    if cleaned_csv_text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).count() > 1 {
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true) 
+            .flexible(true)    
+            .comment(Some(b'#')) 
+            .from_reader(cleaned_csv_text.as_bytes());
+
+        for (idx, result) in rdr.deserialize::<ZoneCsvRecord>().enumerate() {
+            match result {
+                Ok(csv_rec) => {
+                    log::debug!("[ZONE_MONITOR_CACHE_CSV_DEBUG] Deserialized (cleaned) CSV Record #{}: {:?}", idx + 1, csv_rec);
+                    let stored_zone = map_csv_to_stored_zone(csv_rec); 
+                    log::debug!("[ZONE_MONITOR_CACHE_MAP_DEBUG] Mapped StoredZone #{}: {:?}", idx + 1, stored_zone);
+                    fetched_zones_from_db.push(stored_zone);
+                }
+                Err(e) => warn!("[ZONE_MONITOR_CACHE] CSV deserialize error (from cleaned CSV) for row #{}: {}", idx + 1, e),
+            }
+        }
+    } else {
+        info!("[ZONE_MONITOR_CACHE] No data rows in (cleaned) CSV response from InfluxDB.");
+    }
+
     let mut cache = passed_in_cache.lock().await;
-    cache.clear();
-    for zone_db in fetched_zones_from_db {
-        if let Some(id) = &zone_db.zone_id {
+    cache.clear(); 
+
+    log::info!("[CACHE_POPULATE] About to populate cache. Number of StoredZones from DB parse (after cleaning): {}", fetched_zones_from_db.len());
+
+    for zone_to_cache in fetched_zones_from_db {
+        if let Some(id_to_log) = &zone_to_cache.zone_id {
+            log::info!(
+                "[CACHE_INSERT_CHECK] Zone ID: {:?}, Symbol: {:?}, TF: {:?}, Type: {:?}, \
+                DB_StartTime: {:?}, DB_ZoneHigh: {:?}, DB_ZoneLow: {:?}, DB_TouchCount: {:?}, \
+                DB_IsActive: {}, DB_StartIdx: {:?}, DB_EndIdx: {:?}",
+                id_to_log,
+                zone_to_cache.symbol,
+                zone_to_cache.timeframe,
+                zone_to_cache.zone_type,
+                zone_to_cache.start_time,
+                zone_to_cache.zone_high,
+                zone_to_cache.zone_low,
+                zone_to_cache.touch_count,
+                zone_to_cache.is_active,
+                zone_to_cache.start_idx,
+                zone_to_cache.end_idx
+            );
+
+            if zone_to_cache.zone_type.as_deref().unwrap_or("").to_lowercase().contains("supply") &&
+               zone_to_cache.zone_high.is_some() &&
+               zone_to_cache.zone_high == Some(0.0) {
+                log::error!(
+                    "[CACHE_INSERT_ERROR_DETECTED] SUPPLY ZONE ID {:?} HAS ZONE_HIGH OF 0.0 BEFORE CACHE INSERT! StoredZone: {:?}",
+                    id_to_log,
+                    &zone_to_cache
+                );
+            }
+            if zone_to_cache.touch_count.is_none() {
+                 log::warn!(
+                    "[CACHE_INSERT_WARN_DETECTED] ZONE ID {:?} HAS touch_count of None BEFORE CACHE INSERT! StoredZone: {:?}",
+                    id_to_log,
+                    &zone_to_cache
+                 );
+            }
+            
+            // Ensure LiveZoneState is correctly referenced
+            // If LiveZoneState is in the same module (zone_monitor_service.rs), this is fine.
+            // Otherwise, use fully qualified path e.g. crate::types::LiveZoneState or crate::LiveZoneState
             cache.insert(
-                id.clone(),
-                LiveZoneState {
-                    zone_data: zone_db,
+                id_to_log.clone(),
+                LiveZoneState { 
+                    zone_data: zone_to_cache,
                     live_touches_this_cycle: 0,
                     trade_attempted_this_cycle: false,
-                    is_outside_zone: true, // Initialize as outside zone - FIX APPLIED
+                    is_outside_zone: true, 
                 },
             );
+        } else {
+            log::warn!("[CACHE_POPULATE] Encountered a StoredZone from DB parse (after cleaning) with no zone_id. Skipping cache insert. Zone: {:?}", zone_to_cache);
         }
     }
     let final_cache_size = cache.len();
