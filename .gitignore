@@ -6,3 +6,4 @@ detected_raw_zones.txt
 /logs
 stale_zone_checker_log.txt
 
+zone_debug.log
