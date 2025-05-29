@@ -137,59 +137,68 @@ impl RealTimeZoneMonitor {
         Ok(())
     }
     
-    async fn refresh_zones(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("🔄 [RT_MONITOR] Refreshing zones...");
-        
-        let mut all_zones = Vec::new();
-        
-        for symbol_config in &self.config.monitored_symbols {
-            for timeframe in &symbol_config.timeframes {
-                debug!("📊 [RT_MONITOR] Fetching zones for {}/{}", symbol_config.symbol, timeframe);
+   async fn refresh_zones(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    info!("🔄 [RT_MONITOR] Refreshing zones...");
+    
+    let mut all_zones = Vec::new();
+    
+    for symbol_config in &self.config.monitored_symbols {
+        for timeframe in &symbol_config.timeframes {
+            debug!("📊 [RT_MONITOR] Fetching zones for {}/{}", symbol_config.symbol, timeframe);
+            
+            // Fetch candles for this symbol/timeframe
+            let candles = self.data_fetcher.fetch_candles(
+                &symbol_config.symbol,
+                timeframe,
+                "-7d",
+                "now()",
+            ).await?;
+            
+            info!("🕯️ [RT_MONITOR] Got {} candles for {}/{}", candles.len(), symbol_config.symbol, timeframe); // ADD THIS
+            
+            if !candles.is_empty() {
+                let request = ZoneDetectionRequest {
+                    symbol: symbol_config.symbol.clone(),
+                    timeframe: timeframe.clone(),
+                    pattern: "fifty_percent_before_big_bar".to_string(),
+                    candles,
+                    max_touch_count: None,
+                };
                 
-                // Fetch candles for this symbol/timeframe
-                let candles = self.data_fetcher.fetch_candles(
-                    &symbol_config.symbol,
-                    timeframe,
-                    "-7d",
-                    "now()",
-                ).await?;
-                
-                if !candles.is_empty() {
-                    let request = ZoneDetectionRequest {
-                        symbol: symbol_config.symbol.clone(),
-                        timeframe: timeframe.clone(),
-                        pattern: "fifty_percent_before_big_bar".to_string(),
-                        candles,
-                        max_touch_count: None,
-                    };
-                    
-                    match self.zone_engine.detect_zones(request) {
-                        Ok(result) => {
-                            for zone in result.supply_zones {
-                                if zone.is_active {
-                                    all_zones.push(zone);
-                                }
-                            }
-                            for zone in result.demand_zones {
-                                if zone.is_active {
-                                    all_zones.push(zone);
-                                }
+                match self.zone_engine.detect_zones(request) {
+                    Ok(result) => {
+                        info!("🔍 [RT_MONITOR] Found {} supply + {} demand zones for {}/{}", 
+                              result.supply_zones.len(), result.demand_zones.len(), 
+                              symbol_config.symbol, timeframe); // ADD THIS
+                        
+                        for zone in result.supply_zones {
+                            if zone.is_active {
+                                all_zones.push(zone);
                             }
                         }
-                        Err(e) => {
-                            warn!("⚠️  [RT_MONITOR] Zone detection failed for {}/{}: {}", 
-                                  symbol_config.symbol, timeframe, e);
+                        for zone in result.demand_zones {
+                            if zone.is_active {
+                                all_zones.push(zone);
+                            }
                         }
                     }
+                    Err(e) => {
+                        warn!("⚠️  [RT_MONITOR] Zone detection failed for {}/{}: {}", 
+                              symbol_config.symbol, timeframe, e);
+                    }
                 }
+            } else {
+                warn!("⚠️ [RT_MONITOR] No candles found for {}/{}", symbol_config.symbol, timeframe); // ADD THIS
             }
         }
-        
-        self.cache.update_zones(all_zones);
-        info!("✅ [RT_MONITOR] Zone refresh complete");
-        
-        Ok(())
     }
+    
+    info!("📦 [RT_MONITOR] Total zones before cache update: {}", all_zones.len()); // ADD THIS
+    self.cache.update_zones(all_zones);
+    info!("✅ [RT_MONITOR] Zone refresh complete");
+    
+    Ok(())
+}
     
     async fn price_monitoring_loop(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("👀 [RT_MONITOR] Starting price monitoring loop");

@@ -34,6 +34,9 @@ mod price_feed;
 mod realtime_monitor;
 mod websocket_server;
 
+mod minimal_zone_cache;
+use minimal_zone_cache::{test_minimal_cache, CacheSymbolConfig, MinimalZoneCache};
+
 // --- Use necessary types ---
 use crate::types::StoredZone;
 use crate::zone_lifecycle_updater::run_zone_lifecycle_updater_service;
@@ -75,133 +78,133 @@ pub struct UIActiveZonesQuery {
 }
 
 // In main.rs
-pub async fn get_ui_active_zones_handler(
-    zone_cache: web::Data<ActiveZoneCache>,
-    query: web::Query<UIActiveZonesQuery>,
-) -> impl Responder {
-    log::info!(
-        "[UI_HANDLER] Request for active zones for UI received. Query: {:?}",
-        query
-    );
+// pub async fn get_ui_active_zones_handler(
+//     zone_cache: web::Data<ActiveZoneCache>,
+//     query: web::Query<UIActiveZonesQuery>,
+// ) -> impl Responder {
+//     log::info!(
+//         "[UI_HANDLER] Request for active zones for UI received. Query: {:?}",
+//         query
+//     );
 
-    let cache_guard = zone_cache.lock().await;
-    log::info!("[UI_HANDLER] Cache locked. Size: {}", cache_guard.len());
+//     let cache_guard = zone_cache.lock().await;
+//     log::info!("[UI_HANDLER] Cache locked. Size: {}", cache_guard.len());
 
-    let mut zones_list: Vec<StoredZone> = Vec::new();
+//     let mut zones_list: Vec<StoredZone> = Vec::new();
 
-    log::info!(
-        "[UI_HANDLER_CACHE_DUMP] --- START Cache Content for UI (Size: {}) ---",
-        cache_guard.len()
-    );
-    for (cache_key, live_state) in cache_guard.iter() {
-        let zone_from_cache = &live_state.zone_data;
+//     log::info!(
+//         "[UI_HANDLER_CACHE_DUMP] --- START Cache Content for UI (Size: {}) ---",
+//         cache_guard.len()
+//     );
+//     for (cache_key, live_state) in cache_guard.iter() {
+//         let zone_from_cache = &live_state.zone_data;
 
-        log::info!(
-            "[UI_CACHE_READ_CHECK] CacheKey: {:?}, Zone ID: {:?}, Symbol: {:?}, TF: {:?}, Type: {:?}, \
-            CACHE_StartTime: {:?}, CACHE_ZoneHigh: {:?}, CACHE_ZoneLow: {:?}, CACHE_TouchCount: {:?}, \
-            CACHE_IsActive: {}, CACHE_StartIdx: {:?}, CACHE_EndIdx: {:?}",
-            cache_key,
-            zone_from_cache.zone_id,
-            zone_from_cache.symbol,
-            zone_from_cache.timeframe,
-            zone_from_cache.zone_type,
-            zone_from_cache.start_time,
-            zone_from_cache.zone_high,
-            zone_from_cache.zone_low,
-            zone_from_cache.touch_count,
-            zone_from_cache.is_active,
-            zone_from_cache.start_idx,
-            zone_from_cache.end_idx
-        );
+//         log::info!(
+//             "[UI_CACHE_READ_CHECK] CacheKey: {:?}, Zone ID: {:?}, Symbol: {:?}, TF: {:?}, Type: {:?}, \
+//             CACHE_StartTime: {:?}, CACHE_ZoneHigh: {:?}, CACHE_ZoneLow: {:?}, CACHE_TouchCount: {:?}, \
+//             CACHE_IsActive: {}, CACHE_StartIdx: {:?}, CACHE_EndIdx: {:?}",
+//             cache_key,
+//             zone_from_cache.zone_id,
+//             zone_from_cache.symbol,
+//             zone_from_cache.timeframe,
+//             zone_from_cache.zone_type,
+//             zone_from_cache.start_time,
+//             zone_from_cache.zone_high,
+//             zone_from_cache.zone_low,
+//             zone_from_cache.touch_count,
+//             zone_from_cache.is_active,
+//             zone_from_cache.start_idx,
+//             zone_from_cache.end_idx
+//         );
 
-        if zone_from_cache
-            .zone_type
-            .as_deref()
-            .unwrap_or("")
-            .to_lowercase()
-            .contains("supply")
-            && zone_from_cache.zone_high.is_some()
-            && zone_from_cache.zone_high == Some(0.0)
-        {
-            log::error!(
-                "[UI_CACHE_READ_ERROR_DETECTED] SUPPLY ZONE ID {:?} (CacheKey: {:?}) HAS ZONE_HIGH OF 0.0 WHEN READ FROM CACHE! StoredZone: {:?}",
-                zone_from_cache.zone_id,
-                cache_key,
-                zone_from_cache // Log the whole struct
-            );
-        }
-        if zone_from_cache.touch_count.is_none() {
-            log::warn!(
-                "[UI_CACHE_READ_WARN_DETECTED] ZONE ID {:?} (CacheKey: {:?}) HAS touch_count of None WHEN READ FROM CACHE! StoredZone: {:?}",
-                zone_from_cache.zone_id,
-                cache_key,
-                zone_from_cache // Log the whole struct
-             );
-        }
-        zones_list.push(zone_from_cache.clone());
-    }
-    log::info!("[UI_HANDLER_CACHE_DUMP] --- END Cache Content for UI ---");
+//         if zone_from_cache
+//             .zone_type
+//             .as_deref()
+//             .unwrap_or("")
+//             .to_lowercase()
+//             .contains("supply")
+//             && zone_from_cache.zone_high.is_some()
+//             && zone_from_cache.zone_high == Some(0.0)
+//         {
+//             log::error!(
+//                 "[UI_CACHE_READ_ERROR_DETECTED] SUPPLY ZONE ID {:?} (CacheKey: {:?}) HAS ZONE_HIGH OF 0.0 WHEN READ FROM CACHE! StoredZone: {:?}",
+//                 zone_from_cache.zone_id,
+//                 cache_key,
+//                 zone_from_cache // Log the whole struct
+//             );
+//         }
+//         if zone_from_cache.touch_count.is_none() {
+//             log::warn!(
+//                 "[UI_CACHE_READ_WARN_DETECTED] ZONE ID {:?} (CacheKey: {:?}) HAS touch_count of None WHEN READ FROM CACHE! StoredZone: {:?}",
+//                 zone_from_cache.zone_id,
+//                 cache_key,
+//                 zone_from_cache // Log the whole struct
+//              );
+//         }
+//         zones_list.push(zone_from_cache.clone());
+//     }
+//     log::info!("[UI_HANDLER_CACHE_DUMP] --- END Cache Content for UI ---");
 
-    let initial_count = zones_list.len();
-    log::info!(
-        "[UI_HANDLER] Extracted {} zones from cache before UI filtering.",
-        initial_count
-    );
+//     let initial_count = zones_list.len();
+//     log::info!(
+//         "[UI_HANDLER] Extracted {} zones from cache before UI filtering.",
+//         initial_count
+//     );
 
-    // Apply touch count filtering if specified
-    if let Some(max_touches) = query.max_touch_count {
-        log::info!(
-            "[UI_HANDLER] Applying touch count filter for UI: max_touches = {}",
-            max_touches
-        );
+//     // Apply touch count filtering if specified
+//     if let Some(max_touches) = query.max_touch_count {
+//         log::info!(
+//             "[UI_HANDLER] Applying touch count filter for UI: max_touches = {}",
+//             max_touches
+//         );
 
-        zones_list.retain(|zone| {
-            let tc = zone.touch_count.unwrap_or(0); // Use historical touch_count from DB
-            let zid = zone.zone_id.as_deref().unwrap_or("unknown_id_for_filter");
-            let should_keep = tc <= max_touches;
-            if !should_keep {
-                log::debug!("[UI_HANDLER] Filtering out zone {} (touches: {}) for UI due to max_touches: {}", zid, tc, max_touches);
-            }
-            should_keep
-        });
+//         zones_list.retain(|zone| {
+//             let tc = zone.touch_count.unwrap_or(0); // Use historical touch_count from DB
+//             let zid = zone.zone_id.as_deref().unwrap_or("unknown_id_for_filter");
+//             let should_keep = tc <= max_touches;
+//             if !should_keep {
+//                 log::debug!("[UI_HANDLER] Filtering out zone {} (touches: {}) for UI due to max_touches: {}", zid, tc, max_touches);
+//             }
+//             should_keep
+//         });
 
-        let filtered_count = zones_list.len();
-        log::info!(
-            "[UI_HANDLER] Touch count filtering for UI complete: {} -> {} zones (max_touches: {})",
-            initial_count,
-            filtered_count,
-            max_touches
-        );
-    } else {
-        log::info!(
-            "[UI_HANDLER] No touch count filtering applied for UI (max_touch_count is None)."
-        );
-    }
+//         let filtered_count = zones_list.len();
+//         log::info!(
+//             "[UI_HANDLER] Touch count filtering for UI complete: {} -> {} zones (max_touches: {})",
+//             initial_count,
+//             filtered_count,
+//             max_touches
+//         );
+//     } else {
+//         log::info!(
+//             "[UI_HANDLER] No touch count filtering applied for UI (max_touch_count is None)."
+//         );
+//     }
 
-    log::info!(
-        "[UI_HANDLER] Returning {} active zones to UI.",
-        zones_list.len()
-    );
+//     log::info!(
+//         "[UI_HANDLER] Returning {} active zones to UI.",
+//         zones_list.len()
+//     );
 
-    let monitor_symbols_for_display =
-        env::var("ZONE_MONITOR_SYMBOLS").unwrap_or_else(|_| "Defaults used by monitor".to_string());
-    let monitor_timeframes_for_display = env::var("ZONE_MONITOR_PATTERNTFS")
-        .unwrap_or_else(|_| "Defaults used by monitor".to_string());
-    let monitor_allowed_days_for_display = env::var("STRATEGY_ALLOWED_DAYS")
-        .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+//     let monitor_symbols_for_display =
+//         env::var("ZONE_MONITOR_SYMBOLS").unwrap_or_else(|_| "Defaults used by monitor".to_string());
+//     let monitor_timeframes_for_display = env::var("ZONE_MONITOR_PATTERNTFS")
+//         .unwrap_or_else(|_| "Defaults used by monitor".to_string());
+//     let monitor_allowed_days_for_display = env::var("STRATEGY_ALLOWED_DAYS")
+//         .unwrap_or_else(|_| "Defaults used by monitor".to_string());
 
-    HttpResponse::Ok().json(serde_json::json!({
-        "tradeable_zones": zones_list,
-        "monitoring_filters": {
-            "symbols": monitor_symbols_for_display,
-            "patternTimeframes": monitor_timeframes_for_display,
-            "allowedTradeDays": monitor_allowed_days_for_display,
-            "applied_max_touch_count": query.max_touch_count,
-            "total_zones_before_filter": initial_count, // Count from cache before UI filter
-            "zones_returned_after_filter": zones_list.len() // Count after UI filter
-        }
-    }))
-}
+//     HttpResponse::Ok().json(serde_json::json!({
+//         "tradeable_zones": zones_list,
+//         "monitoring_filters": {
+//             "symbols": monitor_symbols_for_display,
+//             "patternTimeframes": monitor_timeframes_for_display,
+//             "allowedTradeDays": monitor_allowed_days_for_display,
+//             "applied_max_touch_count": query.max_touch_count,
+//             "total_zones_before_filter": initial_count, // Count from cache before UI filter
+//             "zones_returned_after_filter": zones_list.len() // Count after UI filter
+//         }
+//     }))
+// }
 
 async fn echo(query: web::Query<QueryParams>) -> impl Responder {
     let response = EchoResponse {
@@ -485,6 +488,12 @@ async fn main() -> std::io::Result<()> {
             env::var("STALE_ZONE_CHECKER_ON").unwrap_or_else(|_| "not set or false".to_string())
         );
     }
+    use log::{info, error,};
+
+    info!("🚀 Testing minimal zone cache...");
+    if let Err(e) = test_minimal_cache().await {
+        error!("❌ Cache test failed: {}", e);
+    }
 
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port_str = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
@@ -646,10 +655,10 @@ async fn main() -> std::io::Result<()> {
                 "/latest-formed-zones",
                 web::get().to(latest_zones_handler::get_latest_formed_zones_handler),
             )
-            .route(
-                "/ui/active-zones",
-                web::get().to(get_ui_active_zones_handler),
-            )
+            // .route(
+            //     "/ui/active-zones",
+            //     web::get().to(get_ui_active_zones_handler),
+            // )
             .route(
                 "/find-and-verify-zone",
                 web::get().to(detect::find_and_verify_zone_handler),
@@ -662,6 +671,7 @@ async fn main() -> std::io::Result<()> {
                 "/admin/deactivate-stuck-zones",
                 web::post().to(admin_handlers::handle_deactivate_stuck_zones_request),
             )
+            .route("/test-cache", web::get().to(test_cache_endpoint))
     })
     .bind((host, port))?
     .run();
@@ -866,4 +876,168 @@ async fn process_ctrader_message(
     }
 
     Ok(())
+}
+use crate::types::{BulkActiveZonesResponse, BulkResultItem, BulkResultData, ChartQuery, EnrichedZone};
+// Add this endpoint to test your cache
+async fn test_cache_endpoint() -> impl Responder {
+    log::info!("[TEST_CACHE_ENDPOINT] Received request for /test-cache (100% identical response test mode)");
+
+    // Define the symbols and timeframes for the cache to load.
+    // MUST MATCH THE EXACT POSTMAN BODY for the 100% identical test
+    let symbols_for_cache_config = vec![
+        CacheSymbolConfig {
+            symbol: "EURUSD".to_string(), 
+            timeframes: vec!["1h".to_string(), "4h".to_string()],
+        },
+        // If your Postman request includes more symbols/timeframes, add them here identically.
+    ];
+
+    // Log the config being used for the cache
+    log::debug!("[TEST_CACHE_ENDPOINT] Initializing cache with config: {:?}", symbols_for_cache_config);
+
+    let mut cache = match MinimalZoneCache::new(symbols_for_cache_config.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[TEST_CACHE_ENDPOINT] Failed to create MinimalZoneCache: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to create cache: {}", e)
+            }));
+        }
+    };
+
+    // MinimalZoneCache::refresh_zones() will now use the hardcoded dates internally.
+    if let Err(e) = cache.refresh_zones().await {
+        log::error!("[TEST_CACHE_ENDPOINT] Failed to refresh zones in MinimalZoneCache: {}", e);
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to refresh zones: {}", e)
+        }));
+    }
+    log::info!("[TEST_CACHE_ENDPOINT] Cache refresh complete. Total zones in cache: {}", cache.get_all_zones().len());
+
+
+    let all_enriched_zones_from_cache: Vec<EnrichedZone> = cache.get_all_zones();
+    log::debug!("[TEST_CACHE_ENDPOINT] Retrieved {} zones from cache. First few: {:?}",
+        all_enriched_zones_from_cache.len(),
+        all_enriched_zones_from_cache.iter().take(2).collect::<Vec<_>>()
+    );
+
+
+    // Group zones by symbol and then by timeframe
+    // The symbol in EnrichedZone should now be "EURUSD" (not "EURUSD_SB") 
+    // because we set ZoneDetectionRequest.symbol to the non-SB version.
+    let mut grouped_by_symbol_tf: HashMap<String, HashMap<String, (Vec<EnrichedZone>, Vec<EnrichedZone>)>> = HashMap::new();
+
+    for zone in all_enriched_zones_from_cache {
+        let symbol_key = zone.symbol.clone().unwrap_or_else(|| {
+            log::warn!("[TEST_CACHE_ENDPOINT] Zone found with no symbol: {:?}", zone.zone_id);
+            "UNKNOWN_SYMBOL".to_string()
+        });
+        let timeframe_key = zone.timeframe.clone().unwrap_or_else(|| {
+            log::warn!("[TEST_CACHE_ENDPOINT] Zone found with no timeframe: {:?}", zone.zone_id);
+            "UNKNOWN_TIMEFRAME".to_string()
+        });
+
+        // Log the zone being grouped
+        log::trace!("[TEST_CACHE_ENDPOINT] Grouping zone: ID {:?}, Symbol '{}', TF '{}', Type {:?}", 
+            zone.zone_id, symbol_key, timeframe_key, zone.zone_type);
+
+        let symbol_entry = grouped_by_symbol_tf.entry(symbol_key).or_default();
+        let timeframe_entry = symbol_entry.entry(timeframe_key).or_insert_with(|| (Vec::new(), Vec::new()));
+
+        if zone.zone_type.as_deref().unwrap_or("").contains("supply") {
+            timeframe_entry.0.push(zone);
+        } else if zone.zone_type.as_deref().unwrap_or("").contains("demand") {
+            timeframe_entry.1.push(zone);
+        } else {
+            log::warn!("[TEST_CACHE_ENDPOINT] Zone {:?} has unknown type: {:?}", zone.zone_id, zone.zone_type);
+        }
+    }
+    log::debug!("[TEST_CACHE_ENDPOINT] Grouped zones map: {:?}", grouped_by_symbol_tf.keys());
+
+
+    // Construct BulkResultItems, ensuring the order matches symbols_for_cache_config
+    let mut bulk_results: Vec<BulkResultItem> = Vec::new();
+
+    for config_item in &symbols_for_cache_config { // Iterate based on input config to try and match order
+        let symbol_for_item = &config_item.symbol; // This is "EURUSD"
+
+        // Check if this symbol was actually processed and has entries in the grouped map
+        if let Some(timeframe_map_for_symbol) = grouped_by_symbol_tf.get(symbol_for_item) {
+            for timeframe_for_item in &config_item.timeframes { // Iterate based on input config
+                if let Some((supply_zones, demand_zones)) = timeframe_map_for_symbol.get(timeframe_for_item) {
+                    log::debug!("[TEST_CACHE_ENDPOINT] For {}/{}: Found {} supply, {} demand zones in grouped map.",
+                        symbol_for_item, timeframe_for_item, supply_zones.len(), demand_zones.len());
+                    bulk_results.push(BulkResultItem {
+                        symbol: symbol_for_item.clone(),
+                        timeframe: timeframe_for_item.clone(),
+                        status: "Success".to_string(),
+                        data: Some(BulkResultData {
+                            supply_zones: supply_zones.clone(),
+                            demand_zones: demand_zones.clone(),
+                        }),
+                        error_message: None,
+                    });
+                } else {
+                    // This case means the symbol was found, but this specific timeframe for it wasn't (e.g. no zones)
+                    log::warn!("[TEST_CACHE_ENDPOINT] For {}/{}: No data found in grouped map (expected timeframe missing). Adding empty entry.",
+                        symbol_for_item, timeframe_for_item);
+                    bulk_results.push(BulkResultItem {
+                        symbol: symbol_for_item.clone(),
+                        timeframe: timeframe_for_item.clone(),
+                        status: "Success".to_string(), 
+                        data: Some(BulkResultData {
+                            supply_zones: Vec::new(),
+                            demand_zones: Vec::new(),
+                        }),
+                        error_message: None, // Or a message like "No zones found for this timeframe"
+                    });
+                }
+            }
+        } else {
+            // This case means the entire symbol from config wasn't found in grouped data
+            // (e.g., fetch failed for all its timeframes, or no zones at all for that symbol)
+            log::warn!("[TEST_CACHE_ENDPOINT] Symbol {} from config not found in grouped_by_symbol_tf. Adding empty entries for its timeframes.", symbol_for_item);
+            for timeframe_for_item in &config_item.timeframes {
+                bulk_results.push(BulkResultItem {
+                    symbol: symbol_for_item.clone(),
+                    timeframe: timeframe_for_item.clone(),
+                    status: "Success".to_string(), // Or "No Data" if more appropriate
+                    data: Some(BulkResultData {
+                        supply_zones: Vec::new(),
+                        demand_zones: Vec::new(),
+                    }),
+                    error_message: None, // Or Some("No data found for this symbol.".to_string())
+                });
+            }
+        }
+    }
+    log::debug!("[TEST_CACHE_ENDPOINT] Constructed {} bulk_results items.", bulk_results.len());
+
+
+    // Construct the ChartQuery for the query_params field.
+    // MUST MATCH THE EXACT POSTMAN QUERY PARAMETERS for the 100% identical test
+    let query_params_for_response = ChartQuery {
+        start_time: "2025-05-22T00:00:00Z".to_string(),
+        end_time: "2025-05-29T23:59:59Z".to_string(),
+        symbol: "DUMMY".to_string(),   // As in your Postman example's query params
+        timeframe: "DUMMY".to_string(),// As in your Postman example's query params
+        pattern: "fifty_percent_before_big_bar".to_string(), // As in your Postman
+        enable_trading: None,
+        lot_size: None,
+        stop_loss_pips: None,
+        take_profit_pips: None,
+        enable_trailing_stop: None,
+        max_touch_count: None, // Postman query has no max_touch_count
+    };
+    log::debug!("[TEST_CACHE_ENDPOINT] Using query_params_for_response: {:?}", query_params_for_response);
+
+
+    let response_payload = BulkActiveZonesResponse {
+        results: bulk_results,
+        query_params: Some(query_params_for_response),
+        symbols: HashMap::new(), // As per your Postman example response (empty for this type of bulk request)
+    };
+
+    log::info!("[TEST_CACHE_ENDPOINT] Sending response for /test-cache.");
+    HttpResponse::Ok().json(response_payload)
 }

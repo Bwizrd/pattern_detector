@@ -2,7 +2,6 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::fmt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -13,7 +12,7 @@ use dashmap::DashMap;
 use log::{info, warn, error, debug};
 use tokio::sync::Mutex;
 
-use crate::realtime_monitor::{ZoneEvent, ZoneEventType}; // Import both types
+use crate::realtime_monitor::ZoneEvent;
 use crate::realtime_monitor::RealTimeZoneMonitor;
 
 #[derive(Debug, Clone)]
@@ -41,7 +40,7 @@ impl WebSocketServer {
         }
     }
     
-   pub async fn start(&mut self, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn start(&mut self, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let listener = TcpListener::bind(addr).await?;
         info!("📡 [WS_SERVER] WebSocket server listening on {}", addr);
         
@@ -66,9 +65,8 @@ impl WebSocketServer {
             });
         }
         
-         Ok(())
+        Ok(())
     }
-    
     
     async fn handle_connection(
         stream: TcpStream,
@@ -150,44 +148,88 @@ impl WebSocketServer {
         Ok(())
     }
     
-   async fn handle_client_message(
+    async fn handle_client_message(
         clients: &Arc<DashMap<String, ClientConnection>>,
         client_id: &str,
         message: &str,
         zone_monitor: &Option<Arc<Mutex<RealTimeZoneMonitor>>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        debug!("📨 [WS_SERVER] Received message from client {}: {}", client_id, message);
+        
         let request: serde_json::Value = serde_json::from_str(message)?;
         
         match request.get("type").and_then(|t| t.as_str()) {
             Some("get_zones") => {
+                info!("🗂️ [WS_SERVER] Client {} requested zones", client_id);
+                
                 if let Some(monitor) = zone_monitor {
-                    let monitor_guard = monitor.lock().await;
-                    let zones = monitor_guard.get_all_zones().await; // We need to add this method
+                    debug!("🔍 [WS_SERVER] Zone monitor available, fetching zones...");
                     
-                    if let Some(client) = clients.get(client_id) {
-                        let response = json!({
-                            "type": "zones_data",
-                            "zones": zones,
-                            "timestamp": chrono::Utc::now().to_rfc3339()
-                        });
-                        
-                        let _ = client.sender.send(Message::Text(response.to_string()));
-                        debug!("📝 [WS_SERVER] Sent {} zones to client {}", zones.len(), client_id);
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), monitor.lock()).await {
+                        Ok(monitor_guard) => {
+                            debug!("🔒 [WS_SERVER] Monitor lock acquired");
+                            
+                            // Get zones from monitor
+                            let zones = monitor_guard.get_all_zones().await;
+                            let zone_count = zones.len();
+                            
+                            drop(monitor_guard); // Release lock early
+                            
+                            if let Some(client) = clients.get(client_id) {
+                                let response = json!({
+                                    "type": "zones_data",
+                                    "zones": zones,
+                                    "count": zone_count,
+                                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                                    "source": "realtime_monitor"
+                                });
+                                
+                                match client.sender.send(Message::Text(response.to_string())) {
+                                    Ok(_) => {
+                                        info!("📤 [WS_SERVER] Sent {} zones to client {}", zone_count, client_id);
+                                    }
+                                    Err(e) => {
+                                        error!("❌ [WS_SERVER] Failed to send zones to client {}: {}", client_id, e);
+                                    }
+                                }
+                            } else {
+                                warn!("⚠️ [WS_SERVER] Client {} not found when sending zones", client_id);
+                            }
+                        }
+                        Err(_) => {
+                            error!("⏰ [WS_SERVER] Timeout acquiring monitor lock for client {}", client_id);
+                            
+                            if let Some(client) = clients.get(client_id) {
+                                let error_response = json!({
+                                    "type": "zones_data",
+                                    "zones": [],
+                                    "error": "Monitor temporarily unavailable (timeout)",
+                                    "timestamp": chrono::Utc::now().to_rfc3339()
+                                });
+                                
+                                let _ = client.sender.send(Message::Text(error_response.to_string()));
+                            }
+                        }
                     }
                 } else {
-                    // No zone monitor available, send empty array
+                    warn!("🚫 [WS_SERVER] No zone monitor available for client {}", client_id);
+                    
                     if let Some(client) = clients.get(client_id) {
-                        let response = json!({
+                        let fallback_response = json!({
                             "type": "zones_data",
                             "zones": [],
-                            "message": "Zone monitor not available",
-                            "timestamp": chrono::Utc::now().to_rfc3339()
+                            "error": "Real-time monitor not available",
+                            "message": "Check server configuration - ENABLE_REALTIME_MONITOR might be false",
+                            "timestamp": chrono::Utc::now().to_rfc3339(),
+                            "source": "error"
                         });
                         
-                        let _ = client.sender.send(Message::Text(response.to_string()));
+                        let _ = client.sender.send(Message::Text(fallback_response.to_string()));
+                        info!("📤 [WS_SERVER] Sent error response to client {}", client_id);
                     }
                 }
             }
+            
             Some("subscribe_zone") => {
                 if let Some(zone_id) = request.get("zone_id").and_then(|z| z.as_str()) {
                     if let Some(mut client) = clients.get_mut(client_id) {
@@ -201,10 +243,11 @@ impl WebSocketServer {
                         });
                         
                         let _ = client.sender.send(Message::Text(response.to_string()));
-                        debug!("📝 [WS_SERVER] Client {} subscribed to zone {}", client_id, zone_id);
+                        info!("📝 [WS_SERVER] Client {} subscribed to zone {}", client_id, zone_id);
                     }
                 }
             }
+            
             Some("subscribe_symbol") => {
                 if let Some(symbol) = request.get("symbol").and_then(|s| s.as_str()) {
                     if let Some(mut client) = clients.get_mut(client_id) {
@@ -219,10 +262,11 @@ impl WebSocketServer {
                         });
                         
                         let _ = client.sender.send(Message::Text(response.to_string()));
-                        debug!("📝 [WS_SERVER] Client {} subscribed to symbol {}", client_id, symbol);
+                        info!("📝 [WS_SERVER] Client {} subscribed to symbol {}", client_id, symbol);
                     }
                 }
             }
+            
             Some("subscribe_all") => {
                 if let Some(mut client) = clients.get_mut(client_id) {
                     client.subscriptions.insert("*".to_string());
@@ -235,9 +279,10 @@ impl WebSocketServer {
                     });
                     
                     let _ = client.sender.send(Message::Text(response.to_string()));
-                    debug!("📝 [WS_SERVER] Client {} subscribed to all events", client_id);
+                    info!("📝 [WS_SERVER] Client {} subscribed to all events", client_id);
                 }
             }
+            
             Some("unsubscribe") => {
                 if let Some(subscription) = request.get("subscription").and_then(|s| s.as_str()) {
                     if let Some(mut client) = clients.get_mut(client_id) {
@@ -250,31 +295,84 @@ impl WebSocketServer {
                         });
                         
                         let _ = client.sender.send(Message::Text(response.to_string()));
-                        debug!("📝 [WS_SERVER] Client {} unsubscribed from {}", client_id, subscription);
+                        info!("📝 [WS_SERVER] Client {} unsubscribed from {}", client_id, subscription);
                     }
                 }
             }
+            
             Some("get_stats") => {
+                debug!("📊 [WS_SERVER] Client {} requested stats", client_id);
+                
                 if let Some(client) = clients.get(client_id) {
                     let response = json!({
                         "type": "stats",
                         "connected_clients": clients.len(),
                         "your_subscriptions": client.subscriptions.len(),
+                        "subscription_list": client.subscriptions.iter().collect::<Vec<_>>(),
                         "timestamp": chrono::Utc::now().to_rfc3339()
                     });
                     
                     let _ = client.sender.send(Message::Text(response.to_string()));
+                    debug!("📤 [WS_SERVER] Sent stats to client {}", client_id);
                 }
             }
+            
+            Some("ping") => {
+                if let Some(client) = clients.get(client_id) {
+                    let response = json!({
+                        "type": "pong",
+                        "timestamp": chrono::Utc::now().to_rfc3339()
+                    });
+                    
+                    let _ = client.sender.send(Message::Text(response.to_string()));
+                    debug!("🏓 [WS_SERVER] Ponged client {}", client_id);
+                }
+            }
+            
+            Some("test_connection") => {
+                if let Some(client) = clients.get(client_id) {
+                    let response = json!({
+                        "type": "connection_test",
+                        "status": "ok",
+                        "client_id": client_id,
+                        "server_time": chrono::Utc::now().to_rfc3339(),
+                        "message": "WebSocket connection is working properly"
+                    });
+                    
+                    let _ = client.sender.send(Message::Text(response.to_string()));
+                    info!("🔌 [WS_SERVER] Connection test response sent to client {}", client_id);
+                }
+            }
+            
             _ => {
                 warn!("❓ [WS_SERVER] Unknown message type from client {}: {}", client_id, message);
+                
+                if let Some(client) = clients.get(client_id) {
+                    let error_response = json!({
+                        "type": "error",
+                        "message": format!("Unknown message type: {}", request.get("type").unwrap_or(&serde_json::Value::Null)),
+                        "supported_types": [
+                            "get_zones",
+                            "subscribe_zone",
+                            "subscribe_symbol", 
+                            "subscribe_all",
+                            "unsubscribe",
+                            "get_stats",
+                            "ping",
+                            "test_connection"
+                        ],
+                        "timestamp": chrono::Utc::now().to_rfc3339()
+                    });
+                    
+                    let _ = client.sender.send(Message::Text(error_response.to_string()));
+                }
             }
         }
         
         Ok(())
     }
     
-   async fn broadcast_zone_event(
+    async fn broadcast_zone_event(
         clients: &Arc<DashMap<String, ClientConnection>>,
         event: &ZoneEvent,
     ) {

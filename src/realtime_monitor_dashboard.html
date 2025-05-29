@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time Zone Monitor Dashboard</title>
+    <title>Real-time Zone Monitor Dashboard [DEBUG]</title>
     <style>
         * {
             margin: 0;
@@ -51,6 +51,33 @@
         .status.disconnected {
             background: linear-gradient(45deg, #f44336, #da190b);
             box-shadow: 0 4px 15px rgba(244, 67, 54, 0.3);
+        }
+
+        .debug-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .debug-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #ffa726;
+        }
+
+        .debug-content {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
         }
 
         .stats-grid {
@@ -310,13 +337,50 @@
         .loading {
             animation: pulse 2s infinite;
         }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+
+        .log-entry.error {
+            color: #ff6b6b;
+        }
+
+        .log-entry.warn {
+            color: #ffa726;
+        }
+
+        .log-entry.info {
+            color: #4ecdc4;
+        }
+
+        .log-entry.debug {
+            color: #9e9e9e;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 Real-time Zone Monitor</h1>
+            <h1>🎯 Real-time Zone Monitor [DEBUG MODE]</h1>
             <div id="status" class="status disconnected">Connecting...</div>
+        </div>
+
+        <!-- DEBUG SECTIONS -->
+        <div class="debug-section">
+            <div class="debug-title">🔍 Connection Debug</div>
+            <div id="connectionDebug" class="debug-content">Initializing...</div>
+        </div>
+
+        <div class="debug-section">
+            <div class="debug-title">📡 WebSocket Messages</div>
+            <div id="messageDebug" class="debug-content">No messages received yet...</div>
+        </div>
+
+        <div class="debug-section">
+            <div class="debug-title">🗂️ Raw Zone Data</div>
+            <div id="zoneDataDebug" class="debug-content">No zone data received yet...</div>
         </div>
 
         <div class="stats-grid">
@@ -349,7 +413,10 @@
                 <option value="1d">1 Day</option>
             </select>
             <button onclick="loadActiveZones()">🔄 Refresh Zones</button>
+            <button onclick="refreshZonesFromMonitor()">🔄 Refresh from Monitor</button>
             <button onclick="clearEvents()">🗑️ Clear Events</button>
+            <button onclick="clearDebugLogs()">🧹 Clear Debug</button>
+            <button onclick="testConnection()">🔌 Test Connection</button>
         </div>
 
         <div id="zonesContainer" class="zones-container">
@@ -371,6 +438,8 @@
         let events = [];
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
+        let debugMessages = [];
+        let connectionLog = [];
 
         // DOM elements
         const statusEl = document.getElementById('status');
@@ -383,85 +452,188 @@
         const symbolFilterEl = document.getElementById('symbolFilter');
         const timeframeFilterEl = document.getElementById('timeframeFilter');
 
+        // Debug elements
+        const connectionDebugEl = document.getElementById('connectionDebug');
+        const messageDebugEl = document.getElementById('messageDebug');
+        const zoneDataDebugEl = document.getElementById('zoneDataDebug');
+
+        function logDebug(level, message) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+            
+            if (level === 'connection') {
+                connectionLog.unshift(logEntry);
+                if (connectionLog.length > 10) connectionLog = connectionLog.slice(0, 10);
+                connectionDebugEl.innerHTML = connectionLog.map(log => 
+                    `<div class="log-entry info">${log}</div>`
+                ).join('');
+            } else {
+                debugMessages.unshift(logEntry);
+                if (debugMessages.length > 20) debugMessages = debugMessages.slice(0, 20);
+                messageDebugEl.innerHTML = debugMessages.map(log => 
+                    `<div class="log-entry ${level}">${log}</div>`
+                ).join('');
+            }
+            
+            console.log(logEntry);
+        }
+
+        function testConnection() {
+            logDebug('info', 'Testing WebSocket connection manually...');
+            if (ws) {
+                logDebug('info', `Current WebSocket state: ${ws.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+                if (ws.readyState === WebSocket.OPEN) {
+                    logDebug('info', 'Sending test message...');
+                    ws.send(JSON.stringify({ type: 'get_stats' }));
+                } else {
+                    logDebug('warn', 'WebSocket is not open, attempting reconnection...');
+                    connectWebSocket();
+                }
+            } else {
+                logDebug('error', 'WebSocket is null, creating new connection...');
+                connectWebSocket();
+            }
+        }
+
+        function clearDebugLogs() {
+            debugMessages = [];
+            connectionLog = [];
+            messageDebugEl.innerHTML = 'Debug logs cleared...';
+            connectionDebugEl.innerHTML = 'Connection logs cleared...';
+            zoneDataDebugEl.innerHTML = 'Zone data logs cleared...';
+        }
+
         function connectWebSocket() {
+            const wsUrl = 'ws://localhost:8082';
+            logDebug('connection', `Attempting to connect to ${wsUrl}`);
+            
             try {
-                ws = new WebSocket('ws://localhost:8082');
+                ws = new WebSocket(wsUrl);
 
                 ws.onopen = () => {
                     statusEl.textContent = '✅ Connected to Zone Monitor';
                     statusEl.className = 'status connected';
                     reconnectAttempts = 0;
                     
+                    logDebug('connection', 'WebSocket connection established successfully');
+                    logDebug('info', 'Subscribing to all events...');
+                    
                     // Subscribe to all events
                     ws.send(JSON.stringify({ type: 'subscribe_all' }));
                     
                     // Request initial zone data
+                    logDebug('info', 'Requesting initial zone data...');
                     ws.send(JSON.stringify({ type: 'get_zones' }));
+                    
+                    // Request stats
+                    logDebug('info', 'Requesting server stats...');
+                    ws.send(JSON.stringify({ type: 'get_stats' }));
                 };
 
                 ws.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    handleWebSocketMessage(data);
+                    logDebug('info', `Received message: ${event.data.substring(0, 200)}${event.data.length > 200 ? '...' : ''}`);
+                    
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleWebSocketMessage(data);
+                    } catch (e) {
+                        logDebug('error', `Failed to parse message: ${e.message}`);
+                    }
                 };
 
-                ws.onclose = () => {
+                ws.onclose = (event) => {
                     statusEl.textContent = '❌ Disconnected';
                     statusEl.className = 'status disconnected';
+                    
+                    logDebug('connection', `WebSocket closed. Code: ${event.code}, Reason: ${event.reason}`);
                     
                     // Attempt reconnection
                     if (reconnectAttempts < maxReconnectAttempts) {
                         reconnectAttempts++;
+                        const delay = Math.min(3000 * reconnectAttempts, 30000);
+                        logDebug('connection', `Reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts} in ${delay}ms...`);
                         setTimeout(() => {
-                            console.log(`Reconnection attempt ${reconnectAttempts}...`);
                             connectWebSocket();
-                        }, 3000);
+                        }, delay);
+                    } else {
+                        logDebug('error', 'Max reconnection attempts reached');
                     }
                 };
 
                 ws.onerror = (error) => {
-                    console.error('WebSocket error:', error);
+                    logDebug('error', `WebSocket error: ${error}`);
                     statusEl.textContent = '❌ Connection Error';
                     statusEl.className = 'status disconnected';
                 };
 
             } catch (error) {
-                console.error('Failed to create WebSocket:', error);
+                logDebug('error', `Failed to create WebSocket: ${error.message}`);
                 statusEl.textContent = '❌ Failed to Connect';
                 statusEl.className = 'status disconnected';
             }
         }
 
         function handleWebSocketMessage(data) {
+            logDebug('debug', `Processing message type: ${data.type}`);
+            
             switch (data.type) {
                 case 'connected':
-                    console.log('Connected with client ID:', data.client_id);
+                    logDebug('info', `Connected with client ID: ${data.client_id}`);
                     break;
                     
                 case 'zone_event':
+                    logDebug('info', `Zone event received: ${JSON.stringify(data.event)}`);
                     handleZoneEvent(data.event);
                     break;
                     
                 case 'zones_data':
-                    handleZonesData(data.zones);
+                    logDebug('info', `Zones data received: ${data.zones ? data.zones.length : 0} zones`);
+                    zoneDataDebugEl.innerHTML = `<div class="log-entry info">Received ${data.zones ? data.zones.length : 0} zones:</div>` +
+                        `<div class="log-entry debug">${JSON.stringify(data, null, 2)}</div>`;
+                    handleZonesData(data.zones || []);
                     break;
                     
                 case 'subscription_confirmed':
-                    console.log('Subscription confirmed:', data);
+                    logDebug('info', `Subscription confirmed: ${JSON.stringify(data)}`);
+                    break;
+                    
+                case 'refresh_complete':
+                    logDebug('info', `Zone refresh completed: ${data.zone_count} zones`);
+                    // Automatically request the refreshed zones
+                    setTimeout(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'get_zones' }));
+                        }
+                    }, 500);
+                    break;
+                    
+                case 'refresh_error':
+                    logDebug('error', `Zone refresh failed: ${data.error}`);
+                    break;
+                    
+                case 'connection_test':
+                    logDebug('info', `Connection test successful: ${data.message}`);
                     break;
                     
                 default:
-                    console.log('Unknown message:', data);
+                    logDebug('warn', `Unknown message type: ${data.type} - ${JSON.stringify(data)}`);
             }
         }
 
         function handleZonesData(zones) {
+            logDebug('debug', `Processing ${zones.length} zones`);
+            
             // Clear existing zones
             activeZones.clear();
             
             // Process zones from WebSocket
-            zones.forEach(zone => {
+            zones.forEach((zone, index) => {
+                logDebug('debug', `Zone ${index}: ${JSON.stringify(zone)}`);
+                
                 if (zone.zone_id) {
                     activeZones.set(zone.zone_id, zone);
+                } else {
+                    logDebug('warn', `Zone at index ${index} missing zone_id: ${JSON.stringify(zone)}`);
                 }
             });
             
@@ -470,7 +642,7 @@
             updateZonesDisplay();
             updateStats();
             
-            console.log(`Received ${activeZones.size} zones from WebSocket`);
+            logDebug('info', `Successfully processed ${activeZones.size} zones`);
         }
 
         function handleZoneEvent(event) {
@@ -496,7 +668,7 @@
             updateZonesDisplay();
             updateStats();
             
-            console.log('🎯 Zone Event:', event);
+            logDebug('info', `Zone Event processed: ${event.event_type} for ${event.symbol}`);
         }
 
         function highlightZone(zoneId) {
@@ -509,12 +681,26 @@
             }
         }
 
+        function refreshZonesFromMonitor() {
+            logDebug('info', 'Manual monitor refresh requested');
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                logDebug('info', 'Sending refresh_zones request to monitor');
+                ws.send(JSON.stringify({ type: 'refresh_zones' }));
+            } else {
+                logDebug('error', `WebSocket not connected (state: ${ws ? ws.readyState : 'null'}), cannot refresh`);
+            }
+        }
+
         async function loadActiveZones() {
+            logDebug('info', 'Manual zone refresh requested');
+            
             // Request zones from WebSocket instead of HTTP
             if (ws && ws.readyState === WebSocket.OPEN) {
+                logDebug('info', 'Sending get_zones request via WebSocket');
                 ws.send(JSON.stringify({ type: 'get_zones' }));
             } else {
-                console.log('WebSocket not connected, cannot load zones');
+                logDebug('error', `WebSocket not connected (state: ${ws ? ws.readyState : 'null'}), cannot load zones`);
                 zonesContainerEl.innerHTML = '<div class="loading" style="color: #ff6b6b;">WebSocket not connected</div>';
             }
         }
@@ -539,11 +725,15 @@
                 option.textContent = symbol;
                 symbolFilterEl.appendChild(option);
             });
+            
+            logDebug('debug', `Updated symbol filter with ${symbols.size} symbols`);
         }
 
         function updateZonesDisplay() {
             const symbolFilter = symbolFilterEl.value;
             const timeframeFilter = timeframeFilterEl.value;
+            
+            logDebug('debug', `Updating zones display. Filters: symbol=${symbolFilter}, timeframe=${timeframeFilter}`);
             
             // Filter zones
             const filteredZones = Array.from(activeZones.values()).filter(zone => {
@@ -552,8 +742,14 @@
                 return true;
             });
             
+            logDebug('debug', `Filtered to ${filteredZones.length} zones from ${activeZones.size} total`);
+            
             if (filteredZones.length === 0) {
-                zonesContainerEl.innerHTML = '<div class="loading">No zones match current filters</div>';
+                if (activeZones.size === 0) {
+                    zonesContainerEl.innerHTML = '<div class="loading">No zones received from server</div>';
+                } else {
+                    zonesContainerEl.innerHTML = '<div class="loading">No zones match current filters</div>';
+                }
                 return;
             }
             
@@ -616,6 +812,14 @@
                             <div class="zone-detail-label">Touches</div>
                             <div class="zone-detail-value">${zone.touch_count || 0}</div>
                         </div>
+                        <div class="zone-detail">
+                            <div class="zone-detail-label">Zone ID</div>
+                            <div class="zone-detail-value" style="font-size: 0.7rem;">${(zone.zone_id || 'N/A').substring(0, 8)}</div>
+                        </div>
+                        <div class="zone-detail">
+                            <div class="zone-detail-label">Active</div>
+                            <div class="zone-detail-value">${zone.is_active ? '✅' : '❌'}</div>
+                        </div>
                     </div>
                     
                     <div class="price-info">
@@ -632,6 +836,10 @@
                         <div style="font-size: 0.8rem; opacity: 0.7; text-align: center; margin-top: 5px;">
                             ${currentPrice < proximalLine ? '↓ Below Entry' : currentPrice > distalLine ? '↑ Above Zone' : '🎯 In Zone'}
                         </div>
+                    </div>
+                    
+                    <div style="margin-top: 10px; font-size: 0.7rem; opacity: 0.6; text-align: center;">
+                        Raw data: ${JSON.stringify(zone).substring(0, 100)}...
                     </div>
                 </div>
             `;
@@ -672,6 +880,7 @@
             events = [];
             updateEventsDisplay();
             updateStats();
+            logDebug('info', 'Events cleared');
         }
 
         // Event listeners
@@ -695,7 +904,24 @@
             updateZonesDisplay();
         }, 2000);
 
+        // Check WebSocket connection status every 5 seconds
+        setInterval(() => {
+            if (ws) {
+                const state = ws.readyState;
+                const stateText = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][state];
+                logDebug('debug', `WebSocket state check: ${state} (${stateText})`);
+                
+                if (state === WebSocket.OPEN) {
+                    // Send a ping to keep connection alive
+                    ws.send(JSON.stringify({ type: 'get_stats' }));
+                }
+            } else {
+                logDebug('warn', 'WebSocket is null during status check');
+            }
+        }, 5000);
+
         // Initialize
+        logDebug('connection', 'Initializing WebSocket dashboard...');
         connectWebSocket();
     </script>
 </body>

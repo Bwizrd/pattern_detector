@@ -1,0 +1,84 @@
+# Cache Zones Debug - Generated at 2025-05-29 21:34:45.700
+# Total zones: 2
+
+=== ZONE: 1e846538db8e12f7 ===
+Symbol: EURUSD_SB
+Timeframe: 1h
+Type: supply_zone
+High: 1.13926
+Low: 1.13617
+Active: true
+Touches: 2
+Strength: 80.0%
+Bars Active: Some(61)
+Start Time: 2025-05-27T06:00:00Z
+Start Index: Some(56)
+
+=== ZONE: 3241cb3c5073ba30 ===
+Symbol: EURUSD_SB
+Timeframe: 4h
+Type: demand_zone
+High: 1.12847
+Low: 1.12310
+Active: true
+Touches: 0
+Strength: 100.0%
+Bars Active: Some(2)
+Start Time: 2025-05-29T05:00:00Z
+Start Index: Some(25)
+
+=== JSON DATA ===
+{
+  "1e846538db8e12f7": {
+    "zone_id": "1e846538db8e12f7",
+    "symbol": "EURUSD_SB",
+    "timeframe": "1h",
+    "start_idx": 56,
+    "end_idx": null,
+    "start_time": "2025-05-27T06:00:00Z",
+    "end_time": null,
+    "zone_high": 1.13926,
+    "zone_low": 1.13617272,
+    "fifty_percent_line": 1.13771636,
+    "detection_method": "(i=56) 50% Candle → Bearish Big Bar (203%, 71% body, Confirmed), 0.02% ext",
+    "type": "supply_zone",
+    "extended": true,
+    "extension_percent": 0.02,
+    "is_active": true,
+    "bars_active": 61,
+    "touch_count": 2,
+    "strength_score": 80.0,
+    "last_data_candle": "2025-05-29T20:00:00Z",
+    "touch_points": [
+      {
+        "time": "2025-05-27T12:00:00Z",
+        "price": 1.13676
+      },
+      {
+        "time": "2025-05-29T14:00:00Z",
+        "price": 1.13693
+      }
+    ]
+  },
+  "3241cb3c5073ba30": {
+    "zone_id": "3241cb3c5073ba30",
+    "symbol": "EURUSD_SB",
+    "timeframe": "4h",
+    "start_idx": 25,
+    "end_idx": null,
+    "start_time": "2025-05-29T05:00:00Z",
+    "end_time": null,
+    "zone_high": 1.128465648,
+    "zone_low": 1.1231,
+    "fifty_percent_line": 1.1257828239999998,
+    "detection_method": "(i=25) 50% Candle → Bullish Big Bar (225%, 95% body, Confirmed), 0.02% ext",
+    "type": "demand_zone",
+    "extended": true,
+    "extension_percent": 0.02,
+    "is_active": true,
+    "bars_active": 2,
+    "touch_count": 0,
+    "strength_score": 100.0,
+    "last_data_candle": "2025-05-29T17:00:00Z"
+  }
+}
