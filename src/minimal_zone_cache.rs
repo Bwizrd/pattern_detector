@@ -36,23 +36,20 @@ impl MinimalZoneCache {
     pub async fn refresh_zones(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         info!("🔄 [CACHE] Starting zone refresh...");
 
-        let mut all_zones_for_cache = HashMap::new(); // Renamed to avoid confusion
+        let mut all_zones_for_cache = HashMap::new();
 
-        // --- HARDCODED DATES FOR 100% IDENTICAL RESPONSE TEST ---
-        let start_time_hardcoded = "2025-05-22T00:00:00Z";
-        let end_time_hardcoded = "2025-05-29T23:59:59Z";
+        // --- MATCH FRONTEND REQUEST DATES ---
+        let start_time_to_match_frontend = "2025-03-01T00:00:00Z";
+        let end_time_to_match_frontend = "2025-05-30T23:59:59Z";
+        
         info!(
-            "⚠️ [CACHE] USING HARDCODED DATE RANGE FOR TEST: {} to {}",
-            start_time_hardcoded, end_time_hardcoded
+            "📅 [CACHE] USING FRONTEND-MATCHING DATE RANGE: {} to {}",
+            start_time_to_match_frontend, end_time_to_match_frontend
         );
-
-        // --- Original date logic (commented out for this test) ---
-        // let start_time_default = "-7d";
-        // let end_time_default = "now()";
 
         for symbol_config in &self.monitored_symbols {
             for timeframe in &symbol_config.timeframes {
-                let current_symbol_from_config = symbol_config.symbol.clone(); // e.g., "EURUSD"
+                let current_symbol_from_config = symbol_config.symbol.clone();
                 let current_timeframe = timeframe.clone();
 
                 info!(
@@ -60,27 +57,20 @@ impl MinimalZoneCache {
                     current_symbol_from_config, current_timeframe
                 );
 
-                // Apply _SB suffix for fetching, consistent with bulk handler's internal logic
+                // Apply _SB suffix for fetching (consistent with bulk handler)
                 let core_symbol_for_fetch = if current_symbol_from_config.ends_with("_SB") {
                     current_symbol_from_config.clone()
                 } else {
                     format!("{}_SB", current_symbol_from_config)
                 };
 
-                info!(
-                    "📊 [CACHE] Fetching data for core_symbol: {} (from config: {})",
-                    core_symbol_for_fetch, current_symbol_from_config
-                );
-
                 let candles = match self
                     .data_fetcher
                     .fetch_candles(
-                        &core_symbol_for_fetch, // Use suffixed symbol for fetching
+                        &core_symbol_for_fetch,
                         &timeframe,
-                        start_time_hardcoded, // Using hardcoded start time
-                        end_time_hardcoded,   // Using hardcoded end time
-                                              // start_time_default,  // Original
-                                              // end_time_default,    // Original
+                        start_time_to_match_frontend, // NOW MATCHES FRONTEND
+                        end_time_to_match_frontend,   // NOW MATCHES FRONTEND
                     )
                     .await
                 {
@@ -109,53 +99,25 @@ impl MinimalZoneCache {
                     current_timeframe
                 );
 
-                // For ZoneDetectionRequest, the `symbol` field should be what you want in the EnrichedZone's `symbol` field.
-                // The bulk handler ultimately sets `EnrichedZone.symbol` to the `core_symbol` (e.g. "EURUSD_SB")
-                // if `ZoneDetectionRequest.symbol` was `core_symbol`.
-                // Let's ensure `EnrichedZone.symbol` becomes "EURUSD" (without _SB) if the bulk handler's response has it that way.
-                // The example response has "EURUSD". ZoneDetectionEngine uses the `request.symbol` for `result.symbol`.
-                // So, `detection_request.symbol` should be "EURUSD" (non-SB version)
-                // if we want `EnrichedZone.symbol` to be "EURUSD".
-                // However, your `ZoneDetectionEngine::enrich_zones_with_activity` has:
-                // `if z.symbol.is_none() { z.symbol = Some(symbol.to_string()); }`
-                // where `symbol` is passed from `self.extract_and_enrich_zones`'s `symbol` param,
-                // which comes from `ZoneDetectionEngine::detect_zones`'s `request.symbol`.
-                // If `MinimalZoneCache` passes `core_symbol_for_fetch` ("EURUSD_SB") to `detect_zones`, then `EnrichedZone.symbol` will be "EURUSD_SB".
-                // Let's align `EnrichedZone.symbol` to be the non-SB version for consistency with the desired output.
-                // The easiest is to pass the non-SB symbol to `ZoneDetectionRequest` and let the `EnrichedZone` pick it up.
-                // The example response shows "EURUSD" in EnrichedZone.symbol, so the request should reflect that.
-
                 let detection_request = ZoneDetectionRequest {
-                    symbol: current_symbol_from_config.clone(), // Use "EURUSD" (non-SB)
+                    symbol: current_symbol_from_config.clone(), // Use non-SB version for zone.symbol field
                     timeframe: current_timeframe.clone(),
-                    pattern: "fifty_percent_before_big_bar".to_string(), // Matches Postman
+                    pattern: "fifty_percent_before_big_bar".to_string(),
                     candles,
-                    max_touch_count: None, // Matches Postman implied behavior (no filter)
+                    max_touch_count: None,
                 };
 
                 match self.zone_engine.detect_zones(detection_request) {
-                    Ok(mut result) => {
-                        // `result` is ZoneDetectionResult
-                        // The `result.symbol` and `result.timeframe` will be `current_symbol_from_config` and `current_timeframe`.
-                        // The `EnrichedZone` objects within `result.supply_zones` and `result.demand_zones`
-                        // should also have their `symbol` and `timeframe` fields correctly set by the `ZoneDetectionEngine`.
-                        // We need to verify `EnrichedZone.symbol` is "EURUSD" not "EURUSD_SB".
-                        // If `ZoneDetectionEngine`'s `enrich_zones_with_activity` takes `symbol` as param (which is request.symbol)
-                        // and sets `enriched_zone.symbol = Some(symbol.to_string())`, then it should be correct.
-                        // Let's double check `EnrichedZone`'s symbol field. Your `EnrichedZone` has `symbol: Option<String>`.
-                        // In `ZoneDetectionEngine::enrich_zones_with_activity`:
-                        // `if z.symbol.is_none() { z.symbol = Some(symbol.to_string()); }`
-                        // The `symbol` param here is `request.symbol` from `detect_zones`.
-                        // So if `ZoneDetectionRequest.symbol` is "EURUSD", `EnrichedZone.symbol` will be "EURUSD". This is correct.
-
+                    Ok(result) => {
                         info!(
-                            "🔍 [CACHE] {}/{}: Found {} supply + {} demand zones by engine",
+                            "🔍 [CACHE] {}/{}: Found {} supply + {} demand zones",
                             result.symbol,
                             result.timeframe,
                             result.supply_zones.len(),
                             result.demand_zones.len()
                         );
 
+                        // Filter for active zones only (to match bulk handler behavior)
                         let active_supply_zones = result
                             .supply_zones
                             .into_iter()
@@ -175,6 +137,7 @@ impl MinimalZoneCache {
                             active_demand_zones.len()
                         );
 
+                        // Add active zones to cache
                         for zone in active_supply_zones {
                             if let Some(zone_id) = &zone.zone_id {
                                 all_zones_for_cache.insert(zone_id.clone(), zone);
@@ -199,10 +162,7 @@ impl MinimalZoneCache {
         let total_zones = all_zones_for_cache.len();
         self.zones = all_zones_for_cache;
 
-        // You might want to disable this file writing during the 100% test or make filename unique
-        // self.write_zones_to_file().await?;
-
-        info!("✅ [CACHE] Zone refresh complete with hardcoded dates. Total active zones in cache: {}", total_zones);
+        info!("✅ [CACHE] Zone refresh complete with frontend-matching dates. Total active zones: {}", total_zones);
         Ok(())
     }
 
@@ -265,21 +225,116 @@ impl MinimalZoneCache {
 }
 
 // test_minimal_cache function remains the same
-pub async fn test_minimal_cache() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    info!("🧪 [TEST] Testing minimal zone cache (hardcoded date test in refresh_zones)...");
+// Update the test_minimal_cache() function in minimal_zone_cache.rs:
 
+pub async fn get_minimal_cache() -> Result<MinimalZoneCache, Box<dyn std::error::Error + Send + Sync>> {
+    info!("🧪 [CACHE] Creating minimal zone cache with full symbol list...");
+
+    // THE SINGLE SOURCE OF TRUTH - all symbols and timeframes
     let symbols = vec![
-        // CacheSymbolConfig {
-        //     symbol: "EURUSD".to_string(), // This should match the symbol used in Postman request
-        //     timeframes: vec!["1h".to_string(), "4h".to_string()],
-        // },
+        CacheSymbolConfig {
+            symbol: "EURUSD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
         CacheSymbolConfig {
             symbol: "GBPUSD".to_string(),
-            timeframes: vec!["1h".to_string(), "4h".to_string()],
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
         },
         CacheSymbolConfig {
             symbol: "USDJPY".to_string(),
-            timeframes: vec!["1h".to_string(), "4h".to_string()],
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "USDCHF".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "AUDUSD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "USDCAD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "NZDUSD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "EURGBP".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "EURJPY".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "EURCHF".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "EURAUD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "EURCAD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "EURNZD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPJPY".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPCHF".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPAUD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPCAD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPNZD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "AUDJPY".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "AUDNZD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "AUDCAD".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "NZDJPY".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "CADJPY".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "CHFJPY".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "NAS100".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "US500".to_string(),
+            timeframes: vec!["5m".to_string(), "15m".to_string(), "30m".to_string(), "1h".to_string(), "4h".to_string(), "1d".to_string()],
         },
     ];
 
@@ -288,19 +343,9 @@ pub async fn test_minimal_cache() -> Result<(), Box<dyn std::error::Error + Send
 
     let (total, supply, demand) = cache.get_stats();
     info!(
-        "📊 [TEST] Cache stats: {} total ({} supply, {} demand)",
+        "📊 [CACHE] Created cache: {} total ({} supply, {} demand)",
         total, supply, demand
     );
 
-    let all_zones_from_cache = cache.get_all_zones();
-    info!(
-        "📋 [TEST] Retrieved {} zones from cache",
-        all_zones_from_cache.len()
-    );
-
-    if let Some(zone) = all_zones_from_cache.first() {
-        info!("🎯 [TEST] First cached zone example: ID: {:?}, Symbol: {:?}, TF: {:?}, StartTime: {:?}, High: {:?}, Low: {:?}",
-            zone.zone_id, zone.symbol, zone.timeframe, zone.start_time, zone.zone_high, zone.zone_low);
-    }
-    Ok(())
+    Ok(cache)
 }

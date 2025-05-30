@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 
 mod backtest;
 pub mod backtest_api;
+mod cache_endpoints;
 mod ctrader_integration;
 mod detect;
 mod errors;
@@ -31,17 +32,16 @@ pub mod trading;
 mod types;
 mod websocket_server;
 mod zone_detection;
-mod cache_endpoints;
 
 // --- Use necessary types ---
+use crate::cache_endpoints::{get_minimal_cache_zones_debug, test_cache_endpoint};
 use crate::ctrader_integration::connect_to_ctrader_websocket;
-use crate::minimal_zone_cache::{test_minimal_cache, CacheSymbolConfig, MinimalZoneCache};
+use crate::minimal_zone_cache::{get_minimal_cache, CacheSymbolConfig, MinimalZoneCache};
 use crate::price_feed::{PriceFeedBridge, PriceUpdate};
 use crate::simple_price_websocket::{broadcast_price_update, SimplePriceWebSocketServer};
 use crate::types::{
     BulkActiveZonesResponse, BulkResultData, BulkResultItem, ChartQuery, EnrichedZone,
 };
-use crate::cache_endpoints::{test_cache_endpoint, get_minimal_cache_zones_debug};
 // --- Global State ---
 use std::sync::LazyLock;
 static GLOBAL_PRICE_BROADCASTER: LazyLock<
@@ -144,9 +144,18 @@ async fn main() -> std::io::Result<()> {
 
     // Test minimal cache
     use log::{error, info};
-    info!("Testing minimal zone cache...");
-    if let Err(e) = test_minimal_cache().await {
-        error!("Cache test failed: {}", e);
+    info!("🚀 Testing minimal zone cache...");
+    match get_minimal_cache().await {
+        Ok(cache) => {
+            let (total, supply, demand) = cache.get_stats();
+            info!(
+                "✅ Cache test complete: {} total zones ({} supply, {} demand)",
+                total, supply, demand
+            );
+        }
+        Err(e) => {
+            error!("❌ Cache test failed: {}", e);
+        }
     }
 
     // Server configuration

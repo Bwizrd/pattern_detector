@@ -1,18 +1,20 @@
-// src/cache_endpoints.rs - Cache testing and debugging endpoints
+// src/cache_endpoints.rs - Fixed version
 use actix_web::{HttpResponse, Responder};
 use log;
 use std::collections::HashMap;
 
-use crate::minimal_zone_cache::{CacheSymbolConfig, MinimalZoneCache};
+use crate::minimal_zone_cache::{get_minimal_cache, CacheSymbolConfig, MinimalZoneCache};
 use crate::types::{BulkActiveZonesResponse, BulkResultData, BulkResultItem, ChartQuery, EnrichedZone};
 
 pub async fn test_cache_endpoint() -> impl Responder {
     log::info!("Test cache endpoint called");
 
-    let symbols_for_cache_config = vec![CacheSymbolConfig {
-        symbol: "EURUSD".to_string(),
-        timeframes: vec!["1h".to_string(), "4h".to_string()],
-    }];
+    let symbols_for_cache_config = vec![
+        CacheSymbolConfig {
+            symbol: "EURUSD".to_string(),
+            timeframes: vec!["1h".to_string(), "4h".to_string()],
+        },
+    ];
 
     let mut cache = match MinimalZoneCache::new(symbols_for_cache_config.clone()) {
         Ok(c) => c,
@@ -129,55 +131,27 @@ pub async fn test_cache_endpoint() -> impl Responder {
 pub async fn get_minimal_cache_zones_debug() -> impl Responder {
     log::info!("Debug minimal cache zones endpoint called");
 
-    let symbols_for_cache_config = vec![
-        CacheSymbolConfig {
-            symbol: "EURUSD".to_string(),
-            timeframes: vec!["1h".to_string(), "4h".to_string()],
-        },
-        CacheSymbolConfig {
-            symbol: "GBPUSD".to_string(),
-            timeframes: vec!["1h".to_string(), "4h".to_string()],
-        },
-        CacheSymbolConfig {
-            symbol: "USDJPY".to_string(),
-            timeframes: vec!["1h".to_string(), "4h".to_string()],
-        },
-    ];
+    match get_minimal_cache().await {
+        Ok(cache) => {
+            let (total_in_cache, supply_in_cache, demand_in_cache) = cache.get_stats();
+            let all_enriched_zones: Vec<EnrichedZone> = cache.get_all_zones();
 
-    let mut cache = match MinimalZoneCache::new(symbols_for_cache_config.clone()) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to create MinimalZoneCache: {}", e);
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to create MinimalZoneCache: {}", e)
-            }));
+            log::info!("Cache endpoint returning {} zones", all_enriched_zones.len());
+
+            HttpResponse::Ok().json(serde_json::json!({
+                "source": "MinimalZoneCache Debug Endpoint",
+                "total_zones_in_cache": total_in_cache,
+                "supply_zones_in_cache": supply_in_cache,
+                "demand_zones_in_cache": demand_in_cache,
+                "retrieved_zones": all_enriched_zones,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }))
         }
-    };
-
-    if let Err(e) = cache.refresh_zones().await {
-        log::error!("Failed to refresh zones in MinimalZoneCache: {}", e);
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": format!("Failed to refresh zones: {}", e)
-        }));
+        Err(e) => {
+            log::error!("Failed to get cache: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get cache: {}", e)
+            }))
+        }
     }
-
-    let (total_in_cache, supply_in_cache, demand_in_cache) = cache.get_stats();
-    log::info!(
-        "Cache refresh complete. Stats: Total {}, Supply {}, Demand {}",
-        total_in_cache,
-        supply_in_cache,
-        demand_in_cache
-    );
-
-    let all_enriched_zones: Vec<EnrichedZone> = cache.get_all_zones();
-
-    HttpResponse::Ok().json(serde_json::json!({
-        "source": "MinimalZoneCache Debug Endpoint",
-        "cache_config_used": symbols_for_cache_config,
-        "total_zones_in_cache": total_in_cache,
-        "supply_zones_in_cache": supply_in_cache,
-        "demand_zones_in_cache": demand_in_cache,
-        "retrieved_zones": all_enriched_zones,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-    }))
 }
