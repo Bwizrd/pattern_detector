@@ -46,6 +46,12 @@ use crate::price_feed::{PriceFeedBridge, PriceUpdate};
 use crate::realtime_monitor::{MonitorConfig, RealTimeZoneMonitor, SymbolTimeframeConfig};
 use crate::websocket_server::WebSocketServer;
 
+mod simple_price_websocket;
+use simple_price_websocket::{broadcast_price_update, SimplePriceWebSocketServer};
+use std::sync::LazyLock;
+static GLOBAL_PRICE_BROADCASTER: LazyLock<
+    std::sync::Mutex<Option<tokio::sync::broadcast::Sender<String>>>,
+> = LazyLock::new(|| std::sync::Mutex::new(None));
 // --- API & Background Tasking Globals ---
 static ZONE_GENERATION_QUEUED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -324,6 +330,25 @@ async fn main() -> std::io::Result<()> {
         );
     }
 
+    let enable_price_feed = env::var("ENABLE_CTRADER_PRICE_FEED")
+        .unwrap_or_else(|_| "true".to_string())
+        .trim()
+        .to_lowercase()
+        == "true";
+
+    if enable_price_feed {
+        // Create a dummy price bridge for the simple WebSocket
+        let (dummy_sender, dummy_receiver) = tokio::sync::mpsc::channel::<PriceUpdate>(1000);
+        let price_bridge = Arc::new(PriceFeedBridge::new(dummy_sender));
+
+        tokio::spawn(async move {
+            log::info!("💹 [MAIN] Starting cTrader price feed integration (simple mode)");
+            if let Err(e) = connect_to_ctrader_websocket(price_bridge).await {
+                log::error!("❌ [MAIN] cTrader price feed failed: {}", e);
+            }
+        });
+    }
+
     // ==================== NEW: REAL-TIME ZONE MONITOR SETUP ====================
 
     let enable_realtime_monitor_env =
@@ -472,6 +497,35 @@ async fn main() -> std::io::Result<()> {
 
     // ==================== END: REAL-TIME ZONE MONITOR SETUP ====================
 
+    // ==================== SIMPLE PRICE WEBSOCKET SERVER ====================
+    let enable_simple_price_ws = env::var("ENABLE_SIMPLE_PRICE_WS")
+        .unwrap_or_else(|_| "true".to_string())
+        .trim()
+        .to_lowercase()
+        == "true";
+
+    if enable_simple_price_ws {
+        let (ws_server, price_broadcaster) = SimplePriceWebSocketServer::new();
+        let ws_port = env::var("PRICE_WS_PORT")
+            .unwrap_or_else(|_| "8083".to_string())
+            .parse::<u16>()
+            .unwrap_or(8083);
+        let ws_addr = format!("127.0.0.1:{}", ws_port);
+
+        *GLOBAL_PRICE_BROADCASTER.lock().unwrap() = Some(price_broadcaster);
+
+        tokio::spawn(async move {
+            if let Err(e) = ws_server.start(ws_addr).await {
+                log::error!("❌ Simple price WebSocket failed: {}", e);
+            }
+        });
+
+        log::info!(
+            "📡 [MAIN] Simple price WebSocket started on port {}",
+            ws_port
+        );
+    }
+
     let enable_stale_checker = env::var("STALE_ZONE_CHECKER_ON")
         .map(|val| val.trim().to_lowercase() == "true")
         .unwrap_or(false);
@@ -488,7 +542,7 @@ async fn main() -> std::io::Result<()> {
             env::var("STALE_ZONE_CHECKER_ON").unwrap_or_else(|_| "not set or false".to_string())
         );
     }
-    use log::{info, error,};
+    use log::{error, info};
 
     info!("🚀 Testing minimal zone cache...");
     if let Err(e) = test_minimal_cache().await {
@@ -672,6 +726,10 @@ async fn main() -> std::io::Result<()> {
                 web::post().to(admin_handlers::handle_deactivate_stuck_zones_request),
             )
             .route("/test-cache", web::get().to(test_cache_endpoint))
+            .route(
+                "/debug/minimal-cache-zones",
+                web::get().to(get_minimal_cache_zones_debug),
+            )
     })
     .bind((host, port))?
     .run();
@@ -821,7 +879,25 @@ async fn process_ctrader_message(
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let data: serde_json::Value = serde_json::from_str(message)?;
-
+    log::info!("🔥 [PRICE_FEED] RAW MESSAGE: {}", message);
+    log::info!("🚀 [DEBUG] About to broadcast price update");
+    if let Ok(guard) = GLOBAL_PRICE_BROADCASTER.lock() {
+        if let Some(broadcaster) = guard.as_ref() {
+            log::info!(
+                "🚀 [DEBUG] Broadcasting to {} subscribers",
+                broadcaster.receiver_count()
+            );
+            broadcast_price_update(broadcaster, message);
+            log::info!("🚀 [DEBUG] Broadcast sent");
+        } else {
+            log::error!("🚀 [DEBUG] No broadcaster available!");
+        }
+    } else {
+        log::error!("🚀 [DEBUG] Failed to lock broadcaster!");
+    }
+    if let Some(broadcaster) = GLOBAL_PRICE_BROADCASTER.lock().unwrap().as_ref() {
+        broadcast_price_update(broadcaster, message);
+    }
     match data.get("type").and_then(|t| t.as_str()) {
         Some("BAR_UPDATE") => {
             if let Some(bar_data) = data.get("data") {
@@ -840,7 +916,7 @@ async fn process_ctrader_message(
                     .await?;
 
                 if is_new_bar {
-                    log::debug!(
+                    log::info!(
                         "📊 [PRICE_FEED] New bar: {} {} @ {:.5}",
                         symbol_id,
                         timeframe,
@@ -854,7 +930,7 @@ async fn process_ctrader_message(
                 data.get("symbolId").and_then(|s| s.as_u64()),
                 data.get("timeframe").and_then(|t| t.as_str()),
             ) {
-                log::debug!(
+                log::info!(
                     "✅ [PRICE_FEED] Subscription confirmed: {}/{}",
                     symbol_id,
                     timeframe
@@ -877,7 +953,9 @@ async fn process_ctrader_message(
 
     Ok(())
 }
-use crate::types::{BulkActiveZonesResponse, BulkResultItem, BulkResultData, ChartQuery, EnrichedZone};
+use crate::types::{
+    BulkActiveZonesResponse, BulkResultData, BulkResultItem, ChartQuery, EnrichedZone,
+};
 // Add this endpoint to test your cache
 async fn test_cache_endpoint() -> impl Responder {
     log::info!("[TEST_CACHE_ENDPOINT] Received request for /test-cache (100% identical response test mode)");
@@ -886,19 +964,25 @@ async fn test_cache_endpoint() -> impl Responder {
     // MUST MATCH THE EXACT POSTMAN BODY for the 100% identical test
     let symbols_for_cache_config = vec![
         CacheSymbolConfig {
-            symbol: "EURUSD".to_string(), 
+            symbol: "EURUSD".to_string(),
             timeframes: vec!["1h".to_string(), "4h".to_string()],
         },
         // If your Postman request includes more symbols/timeframes, add them here identically.
     ];
 
     // Log the config being used for the cache
-    log::debug!("[TEST_CACHE_ENDPOINT] Initializing cache with config: {:?}", symbols_for_cache_config);
+    log::debug!(
+        "[TEST_CACHE_ENDPOINT] Initializing cache with config: {:?}",
+        symbols_for_cache_config
+    );
 
     let mut cache = match MinimalZoneCache::new(symbols_for_cache_config.clone()) {
         Ok(c) => c,
         Err(e) => {
-            log::error!("[TEST_CACHE_ENDPOINT] Failed to create MinimalZoneCache: {}", e);
+            log::error!(
+                "[TEST_CACHE_ENDPOINT] Failed to create MinimalZoneCache: {}",
+                e
+            );
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": format!("Failed to create cache: {}", e)
             }));
@@ -907,64 +991,98 @@ async fn test_cache_endpoint() -> impl Responder {
 
     // MinimalZoneCache::refresh_zones() will now use the hardcoded dates internally.
     if let Err(e) = cache.refresh_zones().await {
-        log::error!("[TEST_CACHE_ENDPOINT] Failed to refresh zones in MinimalZoneCache: {}", e);
+        log::error!(
+            "[TEST_CACHE_ENDPOINT] Failed to refresh zones in MinimalZoneCache: {}",
+            e
+        );
         return HttpResponse::InternalServerError().json(serde_json::json!({
             "error": format!("Failed to refresh zones: {}", e)
         }));
     }
-    log::info!("[TEST_CACHE_ENDPOINT] Cache refresh complete. Total zones in cache: {}", cache.get_all_zones().len());
-
-
-    let all_enriched_zones_from_cache: Vec<EnrichedZone> = cache.get_all_zones();
-    log::debug!("[TEST_CACHE_ENDPOINT] Retrieved {} zones from cache. First few: {:?}",
-        all_enriched_zones_from_cache.len(),
-        all_enriched_zones_from_cache.iter().take(2).collect::<Vec<_>>()
+    log::info!(
+        "[TEST_CACHE_ENDPOINT] Cache refresh complete. Total zones in cache: {}",
+        cache.get_all_zones().len()
     );
 
+    let all_enriched_zones_from_cache: Vec<EnrichedZone> = cache.get_all_zones();
+    log::debug!(
+        "[TEST_CACHE_ENDPOINT] Retrieved {} zones from cache. First few: {:?}",
+        all_enriched_zones_from_cache.len(),
+        all_enriched_zones_from_cache
+            .iter()
+            .take(2)
+            .collect::<Vec<_>>()
+    );
 
     // Group zones by symbol and then by timeframe
-    // The symbol in EnrichedZone should now be "EURUSD" (not "EURUSD_SB") 
+    // The symbol in EnrichedZone should now be "EURUSD" (not "EURUSD_SB")
     // because we set ZoneDetectionRequest.symbol to the non-SB version.
-    let mut grouped_by_symbol_tf: HashMap<String, HashMap<String, (Vec<EnrichedZone>, Vec<EnrichedZone>)>> = HashMap::new();
+    let mut grouped_by_symbol_tf: HashMap<
+        String,
+        HashMap<String, (Vec<EnrichedZone>, Vec<EnrichedZone>)>,
+    > = HashMap::new();
 
     for zone in all_enriched_zones_from_cache {
         let symbol_key = zone.symbol.clone().unwrap_or_else(|| {
-            log::warn!("[TEST_CACHE_ENDPOINT] Zone found with no symbol: {:?}", zone.zone_id);
+            log::warn!(
+                "[TEST_CACHE_ENDPOINT] Zone found with no symbol: {:?}",
+                zone.zone_id
+            );
             "UNKNOWN_SYMBOL".to_string()
         });
         let timeframe_key = zone.timeframe.clone().unwrap_or_else(|| {
-            log::warn!("[TEST_CACHE_ENDPOINT] Zone found with no timeframe: {:?}", zone.zone_id);
+            log::warn!(
+                "[TEST_CACHE_ENDPOINT] Zone found with no timeframe: {:?}",
+                zone.zone_id
+            );
             "UNKNOWN_TIMEFRAME".to_string()
         });
 
         // Log the zone being grouped
-        log::trace!("[TEST_CACHE_ENDPOINT] Grouping zone: ID {:?}, Symbol '{}', TF '{}', Type {:?}", 
-            zone.zone_id, symbol_key, timeframe_key, zone.zone_type);
+        log::trace!(
+            "[TEST_CACHE_ENDPOINT] Grouping zone: ID {:?}, Symbol '{}', TF '{}', Type {:?}",
+            zone.zone_id,
+            symbol_key,
+            timeframe_key,
+            zone.zone_type
+        );
 
         let symbol_entry = grouped_by_symbol_tf.entry(symbol_key).or_default();
-        let timeframe_entry = symbol_entry.entry(timeframe_key).or_insert_with(|| (Vec::new(), Vec::new()));
+        let timeframe_entry = symbol_entry
+            .entry(timeframe_key)
+            .or_insert_with(|| (Vec::new(), Vec::new()));
 
         if zone.zone_type.as_deref().unwrap_or("").contains("supply") {
             timeframe_entry.0.push(zone);
         } else if zone.zone_type.as_deref().unwrap_or("").contains("demand") {
             timeframe_entry.1.push(zone);
         } else {
-            log::warn!("[TEST_CACHE_ENDPOINT] Zone {:?} has unknown type: {:?}", zone.zone_id, zone.zone_type);
+            log::warn!(
+                "[TEST_CACHE_ENDPOINT] Zone {:?} has unknown type: {:?}",
+                zone.zone_id,
+                zone.zone_type
+            );
         }
     }
-    log::debug!("[TEST_CACHE_ENDPOINT] Grouped zones map: {:?}", grouped_by_symbol_tf.keys());
-
+    log::debug!(
+        "[TEST_CACHE_ENDPOINT] Grouped zones map: {:?}",
+        grouped_by_symbol_tf.keys()
+    );
 
     // Construct BulkResultItems, ensuring the order matches symbols_for_cache_config
     let mut bulk_results: Vec<BulkResultItem> = Vec::new();
 
-    for config_item in &symbols_for_cache_config { // Iterate based on input config to try and match order
+    for config_item in &symbols_for_cache_config {
+        // Iterate based on input config to try and match order
         let symbol_for_item = &config_item.symbol; // This is "EURUSD"
 
         // Check if this symbol was actually processed and has entries in the grouped map
         if let Some(timeframe_map_for_symbol) = grouped_by_symbol_tf.get(symbol_for_item) {
-            for timeframe_for_item in &config_item.timeframes { // Iterate based on input config
-                if let Some((supply_zones, demand_zones)) = timeframe_map_for_symbol.get(timeframe_for_item) {
+            for timeframe_for_item in &config_item.timeframes {
+                // Iterate based on input config
+                if let Some((supply_zones, demand_zones)) =
+                    timeframe_map_for_symbol.get(timeframe_for_item)
+                {
                     log::debug!("[TEST_CACHE_ENDPOINT] For {}/{}: Found {} supply, {} demand zones in grouped map.",
                         symbol_for_item, timeframe_for_item, supply_zones.len(), demand_zones.len());
                     bulk_results.push(BulkResultItem {
@@ -984,7 +1102,7 @@ async fn test_cache_endpoint() -> impl Responder {
                     bulk_results.push(BulkResultItem {
                         symbol: symbol_for_item.clone(),
                         timeframe: timeframe_for_item.clone(),
-                        status: "Success".to_string(), 
+                        status: "Success".to_string(),
                         data: Some(BulkResultData {
                             supply_zones: Vec::new(),
                             demand_zones: Vec::new(),
@@ -1011,16 +1129,18 @@ async fn test_cache_endpoint() -> impl Responder {
             }
         }
     }
-    log::debug!("[TEST_CACHE_ENDPOINT] Constructed {} bulk_results items.", bulk_results.len());
-
+    log::debug!(
+        "[TEST_CACHE_ENDPOINT] Constructed {} bulk_results items.",
+        bulk_results.len()
+    );
 
     // Construct the ChartQuery for the query_params field.
     // MUST MATCH THE EXACT POSTMAN QUERY PARAMETERS for the 100% identical test
     let query_params_for_response = ChartQuery {
         start_time: "2025-05-22T00:00:00Z".to_string(),
         end_time: "2025-05-29T23:59:59Z".to_string(),
-        symbol: "DUMMY".to_string(),   // As in your Postman example's query params
-        timeframe: "DUMMY".to_string(),// As in your Postman example's query params
+        symbol: "DUMMY".to_string(), // As in your Postman example's query params
+        timeframe: "DUMMY".to_string(), // As in your Postman example's query params
         pattern: "fifty_percent_before_big_bar".to_string(), // As in your Postman
         enable_trading: None,
         lot_size: None,
@@ -1029,8 +1149,10 @@ async fn test_cache_endpoint() -> impl Responder {
         enable_trailing_stop: None,
         max_touch_count: None, // Postman query has no max_touch_count
     };
-    log::debug!("[TEST_CACHE_ENDPOINT] Using query_params_for_response: {:?}", query_params_for_response);
-
+    log::debug!(
+        "[TEST_CACHE_ENDPOINT] Using query_params_for_response: {:?}",
+        query_params_for_response
+    );
 
     let response_payload = BulkActiveZonesResponse {
         results: bulk_results,
@@ -1040,4 +1162,84 @@ async fn test_cache_endpoint() -> impl Responder {
 
     log::info!("[TEST_CACHE_ENDPOINT] Sending response for /test-cache.");
     HttpResponse::Ok().json(response_payload)
+}
+
+async fn get_minimal_cache_zones_debug() -> impl Responder {
+    log::info!("[DEBUG_MINIMAL_CACHE_ENDPOINT] Request received for /debug/minimal-cache-zones");
+
+    // Define the symbols and timeframes for the cache to load for this debug view.
+    // You can make this match what RealTimeZoneMonitor would use or keep it simple.
+    let symbols_for_cache_config = vec![
+        CacheSymbolConfig {
+            symbol: "EURUSD".to_string(),
+            timeframes: vec!["1h".to_string(), "4h".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPUSD".to_string(),
+            timeframes: vec!["1h".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "GBPUSD".to_string(),
+            timeframes: vec!["1h".to_string(), "4h".to_string()],
+        },
+        CacheSymbolConfig {
+            symbol: "USDJPY".to_string(),
+            timeframes: vec!["1h".to_string(), "4h".to_string()],
+        },
+        // Add other symbol/timeframe configs if needed for the test
+    ];
+    log::debug!(
+        "[DEBUG_MINIMAL_CACHE_ENDPOINT] Cache config for debug: {:?}",
+        symbols_for_cache_config
+    );
+
+    let mut cache = match MinimalZoneCache::new(symbols_for_cache_config.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!(
+                "[DEBUG_MINIMAL_CACHE_ENDPOINT] Failed to create MinimalZoneCache: {}",
+                e
+            );
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to create MinimalZoneCache: {}", e)
+            }));
+        }
+    };
+
+    // MinimalZoneCache::refresh_zones() will use the hardcoded dates ("2025-05-22..." to "2025-05-29...")
+    // as per our previous changes to minimal_zone_cache.rs for 100% test.
+    // Or, if you reverted minimal_zone_cache.rs to use "-7d" to "now()", it will use that.
+    // For this debug endpoint, it's fine either way, as long as we know what to expect.
+    // Let's assume it's still using the hardcoded dates for now from the 100% test.
+    if let Err(e) = cache.refresh_zones().await {
+        log::error!(
+            "[DEBUG_MINIMAL_CACHE_ENDPOINT] Failed to refresh zones in MinimalZoneCache: {}",
+            e
+        );
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to refresh zones: {}", e)
+        }));
+    }
+
+    let (total_in_cache, supply_in_cache, demand_in_cache) = cache.get_stats();
+    log::info!("[DEBUG_MINIMAL_CACHE_ENDPOINT] Cache refresh complete. Stats: Total {}, Supply {}, Demand {}", 
+        total_in_cache, supply_in_cache, demand_in_cache);
+
+    let all_enriched_zones: Vec<EnrichedZone> = cache.get_all_zones();
+
+    log::info!(
+        "[DEBUG_MINIMAL_CACHE_ENDPOINT] Returning {} zones from MinimalZoneCache.",
+        all_enriched_zones.len()
+    );
+
+    // For simplicity, return a structure that's easy for a basic HTML page to consume
+    HttpResponse::Ok().json(serde_json::json!({
+        "source": "MinimalZoneCache Debug Endpoint",
+        "cache_config_used": symbols_for_cache_config,
+        "total_zones_in_cache": total_in_cache,
+        "supply_zones_in_cache": supply_in_cache,
+        "demand_zones_in_cache": demand_in_cache,
+        "retrieved_zones": all_enriched_zones, // This is Vec<EnrichedZone>
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    }))
 }

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Zones with Live Price Feed</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            margin: 20px; 
+            background: #000; 
+            color: #00ff00; 
+        }
+        h1 { color: #fff; }
+        .status { 
+            padding: 10px; 
+            background: #222; 
+            margin: 10px 0; 
+            border: 1px solid #333;
+        }
+        .status.success { background: #002200; border-color: #00ff00; }
+        .status.error { background: #220000; border-color: #ff0000; }
+        
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        .stat-box {
+            background: #111;
+            border: 1px solid #333;
+            padding: 10px;
+            min-width: 120px;
+        }
+        .stat-value { color: #ffff00; font-size: 18px; font-weight: bold; }
+        .stat-label { color: #888; font-size: 12px; }
+        
+        .zones {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .zone-box {
+            background: #111;
+            border: 1px solid #333;
+            padding: 15px;
+            font-size: 12px;
+            position: relative;
+        }
+        .zone-box.supply { border-left: 4px solid #ff4444; }
+        .zone-box.demand { border-left: 4px solid #44ff44; }
+        .zone-box.very-close { 
+            border-color: #ffff00; 
+            background: #221100; 
+            animation: pulse 1s infinite;
+        }
+        .zone-box.close { 
+            border-color: #ff8800; 
+            background: #221100; 
+        }
+        
+        @keyframes pulse {
+            0% { background: #221100; }
+            50% { background: #332200; }
+            100% { background: #221100; }
+        }
+        
+        .zone-header { 
+            color: #fff; 
+            font-weight: bold; 
+            font-size: 14px; 
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .zone-header.supply { color: #ff6666; }
+        .zone-header.demand { color: #66ff66; }
+        
+        .live-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff00;
+            animation: blink 2s infinite;
+        }
+        .live-indicator.stale {
+            background: #666;
+            animation: none;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        
+        .zone-info { margin: 4px 0; }
+        .zone-label { color: #888; }
+        .zone-value { color: #fff; }
+        .zone-price { color: #00ff00; }
+        .zone-distance { 
+            color: #ffff00; 
+            font-weight: bold; 
+            font-size: 14px;
+        }
+        .zone-distance.very-close { color: #ff0000; font-size: 16px; }
+        .zone-distance.close { color: #ff8800; }
+        
+        .zone-id {
+            color: #00ffff;
+            cursor: pointer;
+            text-decoration: underline;
+            font-family: monospace;
+            font-size: 10px;
+            word-break: break-all;
+        }
+        .zone-id:hover {
+            background: #333;
+            color: #fff;
+        }
+        .zone-id.copied {
+            background: #004400;
+            color: #00ff00;
+        }
+        
+        .current-price {
+            color: #00ff00;
+            font-weight: bold;
+        }
+        .price-updated {
+            background: #004400;
+            animation: priceFlash 0.5s ease-out;
+        }
+        
+        @keyframes priceFlash {
+            0% { background: #004400; }
+            100% { background: transparent; }
+        }
+        
+        .no-data { color: #666; font-style: italic; }
+        
+        button {
+            background: #333;
+            color: #fff;
+            border: 1px solid #666;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        button:hover { background: #555; }
+        button:disabled { background: #222; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>🎯 Zones with Live Price Feed</h1>
+    
+    <div class="status" id="priceStatus">Connecting to price feed...</div>
+    <div class="status" id="zoneStatus">Loading zones...</div>
+    
+    <div class="stats">
+        <div class="stat-box">
+            <div class="stat-value" id="zoneCount">0</div>
+            <div class="stat-label">Total Zones</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value" id="priceUpdates">0</div>
+            <div class="stat-label">Price Updates</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value" id="activeSymbols">0</div>
+            <div class="stat-label">Live Symbols</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value" id="closeZones">0</div>
+            <div class="stat-label">Close Zones (&lt;10 pips)</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value" id="veryCloseZones">0</div>
+            <div class="stat-label">Very Close (&lt;5 pips)</div>
+        </div>
+    </div>
+    
+    <button onclick="loadZones()">Refresh Zones</button>
+    
+    <div class="zones" id="zones"></div>
+
+    <script>
+        let ws = null;
+        let zones = [];
+        let prices = {};
+        let priceUpdateCount = 0;
+        
+        // Pip values for different currency pairs
+        const pipValues = {
+            'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001, 'NZDUSD': 0.0001,
+            'USDCAD': 0.0001, 'USDCHF': 0.0001, 'EURGBP': 0.0001, 'EURAUD': 0.0001,
+            'EURNZD': 0.0001, 'EURJPY': 0.01, 'GBPJPY': 0.01, 'AUDJPY': 0.01,
+            'NZDJPY': 0.01, 'USDJPY': 0.01, 'CADJPY': 0.01, 'CHFJPY': 0.01,
+            'AUDCAD': 0.0001, 'AUDCHF': 0.0001, 'AUDNZD': 0.0001, 'CADCHF': 0.0001,
+            'EURCHF': 0.0001, 'EURCAD': 0.0001, 'GBPAUD': 0.0001, 'GBPCAD': 0.0001,
+            'GBPCHF': 0.0001, 'GBPNZD': 0.0001, 'NZDCAD': 0.0001, 'NZDCHF': 0.0001
+        };
+        
+        function getPips(symbol, priceDistance) {
+            const pipValue = pipValues[symbol] || 0.0001;
+            return priceDistance / pipValue;
+        }
+        
+        function copyZoneId(zoneId, element) {
+            navigator.clipboard.writeText(zoneId).then(() => {
+                // Visual feedback
+                element.textContent = 'COPIED!';
+                element.className = 'zone-id copied';
+                
+                // Restore original text after 2 seconds
+                setTimeout(() => {
+                    element.textContent = zoneId;
+                    element.className = 'zone-id';
+                }, 2000);
+                
+                console.log('Zone ID copied to clipboard:', zoneId);
+            }).catch(err => {
+                console.error('Failed to copy zone ID:', err);
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = zoneId;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                
+                element.textContent = 'COPIED!';
+                element.className = 'zone-id copied';
+                setTimeout(() => {
+                    element.textContent = zoneId;
+                    element.className = 'zone-id';
+                }, 2000);
+            });
+        }
+        
+        function updatePrice(symbol, price, timeframe) {
+            const cleanSymbol = symbol.replace('_SB', '');
+            const key = `${cleanSymbol}_${timeframe}`;
+            prices[key] = { symbol: cleanSymbol, price, timeframe, lastUpdate: Date.now() };
+            
+            priceUpdateCount++;
+            updateStats();
+            updateZoneDistances(cleanSymbol, timeframe);
+        }
+        
+        function updateZoneDistances(updatedSymbol = null, updatedTimeframe = null) {
+            let closeCount = 0;
+            let veryCloseCount = 0;
+            
+            zones.forEach(zone => {
+                // Only update if this zone matches the updated symbol/timeframe, or update all
+                if (updatedSymbol && updatedTimeframe) {
+                    if (zone.symbol !== updatedSymbol || zone.timeframe !== updatedTimeframe) {
+                        return;
+                    }
+                }
+                
+                const zoneBox = document.getElementById(`zone-${zone.zone_id}`);
+                if (!zoneBox) return;
+                
+                const priceKey = `${zone.symbol}_${zone.timeframe}`;
+                const currentPriceData = prices[priceKey];
+                
+                if (currentPriceData) {
+                    const currentPrice = currentPriceData.price;
+                    const isSupply = (zone.zone_type || '').toLowerCase().includes('supply');
+                    const proximalPrice = isSupply ? parseFloat(zone.zone_low) : parseFloat(zone.zone_high);
+                    
+                    if (!isNaN(proximalPrice)) {
+                        const priceDistance = Math.abs(currentPrice - proximalPrice);
+                        const pips = getPips(zone.symbol, priceDistance);
+                        
+                        // Update distance display
+                        const distanceEl = zoneBox.querySelector('.zone-distance');
+                        if (distanceEl) {
+                            distanceEl.textContent = `${pips.toFixed(1)} pips`;
+                            
+                            // Update styling based on distance
+                            if (pips < 5) {
+                                distanceEl.className = 'zone-distance very-close';
+                                zoneBox.className = `zone-box ${isSupply ? 'supply' : 'demand'} very-close`;
+                                veryCloseCount++;
+                            } else if (pips < 10) {
+                                distanceEl.className = 'zone-distance close';
+                                zoneBox.className = `zone-box ${isSupply ? 'supply' : 'demand'} close`;
+                                closeCount++;
+                            } else {
+                                distanceEl.className = 'zone-distance';
+                                zoneBox.className = `zone-box ${isSupply ? 'supply' : 'demand'}`;
+                            }
+                        }
+                        
+                        // Update current price display with flash effect
+                        const currentPriceEl = zoneBox.querySelector('.current-price');
+                        if (currentPriceEl) {
+                            currentPriceEl.textContent = currentPrice.toFixed(5);
+                            currentPriceEl.className = 'current-price price-updated';
+                            setTimeout(() => {
+                                currentPriceEl.className = 'current-price';
+                            }, 500);
+                        }
+                        
+                        // Update live indicator
+                        const liveIndicator = zoneBox.querySelector('.live-indicator');
+                        if (liveIndicator) {
+                            liveIndicator.className = 'live-indicator';
+                        }
+                    }
+                } else {
+                    // No price data available - mark as stale
+                    const liveIndicator = zoneBox.querySelector('.live-indicator');
+                    if (liveIndicator) {
+                        liveIndicator.className = 'live-indicator stale';
+                    }
+                }
+            });
+            
+            // Update close zone counts if doing a full update
+            if (!updatedSymbol) {
+                document.getElementById('closeZones').textContent = closeCount;
+                document.getElementById('veryCloseZones').textContent = veryCloseCount;
+            }
+        }
+        
+        function createZoneBox(zone) {
+            const isSupply = (zone.zone_type || '').toLowerCase().includes('supply');
+            const proximal = isSupply ? parseFloat(zone.zone_low) : parseFloat(zone.zone_high);
+            const distal = isSupply ? parseFloat(zone.zone_high) : parseFloat(zone.zone_low);
+            
+            return `
+                <div class="zone-box ${isSupply ? 'supply' : 'demand'}" id="zone-${zone.zone_id}">
+                    <div class="zone-header ${isSupply ? 'supply' : 'demand'}">
+                        <span>${zone.symbol}/${zone.timeframe} - ${isSupply ? 'SUPPLY' : 'DEMAND'}</span>
+                        <div class="live-indicator stale"></div>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">ID:</span> 
+                        <span class="zone-id" onclick="copyZoneId('${zone.zone_id}', this)" title="Click to copy full ID">${zone.zone_id || 'N/A'}</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Active:</span> 
+                        <span class="zone-value">${zone.is_active ? 'Yes' : 'No'}</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Range:</span> 
+                        <span class="zone-price">${parseFloat(zone.zone_low).toFixed(5)} - ${parseFloat(zone.zone_high).toFixed(5)}</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Proximal:</span> 
+                        <span class="zone-price">${proximal.toFixed(5)}</span>
+                        <span class="zone-label"> | Distal:</span> 
+                        <span class="zone-price">${distal.toFixed(5)}</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Touches:</span> 
+                        <span class="zone-value">${zone.touch_count || 0}</span>
+                        <span class="zone-label"> | Strength:</span> 
+                        <span class="zone-value">${(zone.strength_score || 0).toFixed(1)}%</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Live Price:</span> 
+                        <span class="current-price no-data">Waiting...</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Distance to Proximal:</span> 
+                        <span class="zone-distance no-data">Waiting...</span>
+                    </div>
+                    <div class="zone-info">
+                        <span class="zone-label">Start:</span> 
+                        <span class="zone-value">${zone.start_time ? new Date(zone.start_time).toLocaleDateString() : 'N/A'}</span>
+                    </div>
+                </div>
+            `;
+        }
+        
+        async function loadZones() {
+            try {
+                document.getElementById('zoneStatus').textContent = 'Loading zones from cache...';
+                document.getElementById('zoneStatus').className = 'status';
+                
+                const response = await fetch('http://localhost:8080/debug/minimal-cache-zones');
+                const data = await response.json();
+                
+                if (data.retrieved_zones && Array.isArray(data.retrieved_zones)) {
+                    zones = data.retrieved_zones;
+                    
+                    document.getElementById('zoneStatus').textContent = `✅ Loaded ${zones.length} zones successfully`;
+                    document.getElementById('zoneStatus').className = 'status success';
+                    
+                    // Create zone boxes
+                    const zonesDiv = document.getElementById('zones');
+                    zonesDiv.innerHTML = zones.map(zone => createZoneBox(zone)).join('');
+                    
+                    updateStats();
+                    updateZoneDistances(); // Update all distances with current prices
+                    
+                } else {
+                    throw new Error('Invalid zone data format');
+                }
+            } catch (error) {
+                document.getElementById('zoneStatus').textContent = `❌ Failed to load zones: ${error.message}`;
+                document.getElementById('zoneStatus').className = 'status error';
+                console.error('Zone loading error:', error);
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('zoneCount').textContent = zones.length;
+            document.getElementById('priceUpdates').textContent = priceUpdateCount;
+            document.getElementById('activeSymbols').textContent = Object.keys(prices).length;
+        }
+        
+        function connectToPriceFeed() {
+            ws = new WebSocket('ws://127.0.0.1:8083');
+            
+            ws.onopen = () => {
+                document.getElementById('priceStatus').textContent = '✅ Connected to live price feed';
+                document.getElementById('priceStatus').className = 'status success';
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'raw_price_update' && data.data) {
+                        const priceData = data.data;
+                        
+                        if (priceData.type === 'BAR_UPDATE' && priceData.data) {
+                            const bar = priceData.data;
+                            updatePrice(bar.symbol, bar.close, bar.timeframe);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Price feed parse error:', e);
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('priceStatus').textContent = '❌ Price feed disconnected';
+                document.getElementById('priceStatus').className = 'status error';
+            };
+            
+            ws.onerror = (error) => {
+                document.getElementById('priceStatus').textContent = '❌ Price feed connection error';
+                document.getElementById('priceStatus').className = 'status error';
+            };
+        }
+        
+        // Initialize on page load
+        window.onload = () => {
+            loadZones();
+            connectToPriceFeed();
+        };
+    </script>
+</body>
+</html>

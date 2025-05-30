@@ -170,7 +170,7 @@ impl WebSocketServer {
                             debug!("🔒 [WS_SERVER] Monitor lock acquired");
                             
                             // Get zones from monitor
-                            let zones = monitor_guard.get_all_zones().await;
+                            let zones = monitor_guard.get_all_zones_for_ws().await; // Call the correct method
                             let zone_count = zones.len();
                             
                             drop(monitor_guard); // Release lock early

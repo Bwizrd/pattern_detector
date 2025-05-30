@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rust Zone Monitor - Live Prices & Zone Cache</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            margin: 20px; 
+            background: #000; 
+            color: #00ff00; 
+        }
+        h1 { color: #fff; }
+        .section { margin: 20px 0; }
+        .section h2 { color: #fff; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        
+        .rust-prices { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 10px; 
+            margin: 20px 0;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        .rust-price-box { 
+            background: #111; 
+            border: 1px solid #333; 
+            padding: 10px; 
+            font-size: 12px;
+        }
+        .rust-price-box.updated { 
+            background: #001100; 
+            border-color: #00ff00; 
+        }
+        .symbol { color: #fff; font-weight: bold; }
+        .price { color: #00ff00; font-size: 14px; }
+        .event-type { color: #ffff00; font-size: 11px; }
+        .time { color: #888; font-size: 10px; }
+        
+        .zones {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .zone-box {
+            background: #111;
+            border: 1px solid #333;
+            padding: 15px;
+            font-size: 12px;
+        }
+        .zone-box.supply { border-left: 4px solid #ff4444; }
+        .zone-box.demand { border-left: 4px solid #44ff44; }
+        .zone-box.close { border-color: #ffff44; background: #221100; }
+        
+        .zone-header { 
+            color: #fff; 
+            font-weight: bold; 
+            font-size: 14px; 
+            margin-bottom: 8px;
+        }
+        .zone-header.supply { color: #ff6666; }
+        .zone-header.demand { color: #66ff66; }
+        
+        .zone-info { margin: 4px 0; }
+        .zone-label { color: #888; }
+        .zone-value { color: #fff; }
+        .zone-price { color: #00ff00; }
+        .zone-distance { 
+            color: #ffff00; 
+            font-weight: bold; 
+            font-size: 13px;
+        }
+        .zone-distance.close { color: #ff0000; animation: blink 1s infinite; }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        
+        .status { 
+            padding: 10px; 
+            background: #222; 
+            margin: 10px 0; 
+            border: 1px solid #333;
+        }
+        .loading { color: #ff0000; }
+        .success { color: #00ff00; }
+        .error { color: #ff0000; }
+        
+        .log {
+            background: #111;
+            border: 1px solid #333;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 11px;
+        }
+        .log-entry { margin: 2px 0; }
+        .log-zone { color: #ffff00; }
+        .log-price { color: #00ff00; }
+        .log-error { color: #ff0000; }
+        
+        button { 
+            background: #333; 
+            color: #fff; 
+            border: 1px solid #666; 
+            padding: 8px 16px; 
+            margin: 5px; 
+            cursor: pointer; 
+        }
+        button:hover { background: #555; }
+        button:disabled { background: #666; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>Rust Zone Monitor - Live System State</h1>
+    
+    <div class="status" id="rustWsStatus">Disconnected from Rust WebSocket</div>
+    
+    <button onclick="connectToRust()" id="connectBtn">Connect to Rust</button>
+    <button onclick="subscribeAll()" id="subscribeBtn" disabled>Subscribe All</button>
+    <button onclick="loadZones()" id="loadZonesBtn" disabled>Load Zones</button>
+    <button onclick="clearLog()">Clear Log</button>
+    
+    <div class="section">
+        <h2>Rust Price Feed (<span id="priceCount">0</span> active)</h2>
+        <div class="rust-prices" id="rustPrices"></div>
+    </div>
+    
+    <div class="section">
+        <h2>Zone Cache (<span id="zoneCount">0</span> zones)</h2>
+        <div class="zones" id="zones"></div>
+    </div>
+    
+    <div class="section">
+        <h2>Rust System Log</h2>
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let rustWs = null;
+        const rustPrices = {};
+        const zones = [];
+        let priceUpdateCount = 0;
+        
+        const rustPricesDiv = document.getElementById('rustPrices');
+        const zonesDiv = document.getElementById('zones');
+        const logDiv = document.getElementById('log');
+        const rustWsStatusDiv = document.getElementById('rustWsStatus');
+        const priceCountSpan = document.getElementById('priceCount');
+        const zoneCountSpan = document.getElementById('zoneCount');
+        
+        // Pip values for different currency pairs
+        const pipValues = {
+            'EURUSD': 0.0001, 'GBPUSD': 0.0001, 'AUDUSD': 0.0001, 'NZDUSD': 0.0001,
+            'USDCAD': 0.0001, 'USDCHF': 0.0001, 'EURGBP': 0.0001, 'EURAUD': 0.0001,
+            'EURNZD': 0.0001, 'EURJPY': 0.01, 'GBPJPY': 0.01, 'AUDJPY': 0.01,
+            'NZDJPY': 0.01, 'USDJPY': 0.01, 'CADJPY': 0.01, 'CHFJPY': 0.01,
+            'AUDCAD': 0.0001, 'AUDCHF': 0.0001, 'AUDNZD': 0.0001, 'CADCHF': 0.0001,
+            'EURCHF': 0.0001, 'EURCAD': 0.0001, 'GBPAUD': 0.0001, 'GBPCAD': 0.0001,
+            'GBPCHF': 0.0001, 'GBPNZD': 0.0001, 'NZDCAD': 0.0001, 'NZDCHF': 0.0001
+        };
+        
+        function getPips(symbol, priceDistance) {
+            const pipValue = pipValues[symbol] || 0.0001;
+            return priceDistance / pipValue;
+        }
+        
+        function addLog(message, type = 'info') {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.insertBefore(logEntry, logDiv.firstChild);
+            
+            // Keep only last 50 entries
+            while (logDiv.children.length > 50) {
+                logDiv.removeChild(logDiv.lastChild);
+            }
+        }
+        
+        function updateRustPrice(symbol, price, timeframe, eventType) {
+            const cleanSymbol = symbol.replace('_SB', '');
+            const key = `${cleanSymbol}_${timeframe}`;
+            rustPrices[key] = { 
+                symbol: cleanSymbol, 
+                price, 
+                timeframe, 
+                eventType,
+                lastUpdate: Date.now() 
+            };
+            
+            // Update price display
+            let box = document.getElementById(`rust-${key}`);
+            if (!box) {
+                box = document.createElement('div');
+                box.id = `rust-${key}`;
+                box.className = 'rust-price-box';
+                rustPricesDiv.appendChild(box);
+            }
+            
+            box.className = 'rust-price-box updated';
+            box.innerHTML = `
+                <div class="symbol">${cleanSymbol}</div>
+                <div class="price">${price.toFixed(5)}</div>
+                <div class="event-type">${eventType}</div>
+                <div class="time">${timeframe} | ${new Date().toLocaleTimeString()}</div>
+            `;
+            
+            setTimeout(() => {
+                box.className = 'rust-price-box';
+            }, 1500);
+            
+            priceUpdateCount++;
+            priceCountSpan.textContent = Object.keys(rustPrices).length;
+            
+            // Update zone distances
+            updateZoneDistances();
+        }
+        
+        function updateZoneDistances() {
+            zones.forEach(zone => {
+                const zoneBox = document.getElementById(`zone-${zone.zone_id}`);
+                if (!zoneBox) return;
+                
+                const symbol = zone.symbol;
+                const timeframe = zone.timeframe;
+                const priceKey = `${symbol}_${timeframe}`;
+                const currentPriceData = rustPrices[priceKey];
+                
+                if (currentPriceData) {
+                    const currentPrice = currentPriceData.price;
+                    const isSupply = (zone.zone_type || '').toLowerCase().includes('supply');
+                    const proximalPrice = isSupply ? parseFloat(zone.zone_low) : parseFloat(zone.zone_high);
+                    
+                    if (!isNaN(proximalPrice)) {
+                        const priceDistance = Math.abs(currentPrice - proximalPrice);
+                        const pips = getPips(symbol, priceDistance);
+                        
+                        const distanceEl = zoneBox.querySelector('.zone-distance');
+                        if (distanceEl) {
+                            distanceEl.textContent = `${pips.toFixed(1)} pips`;
+                            
+                            // Highlight if very close (< 10 pips)
+                            if (pips < 10) {
+                                distanceEl.className = 'zone-distance close';
+                                zoneBox.className = `zone-box ${isSupply ? 'supply' : 'demand'} close`;
+                                
+                                // Log close approach
+                                addLog(`🚨 CLOSE: ${symbol}/${timeframe} ${isSupply ? 'SUPPLY' : 'DEMAND'} zone - ${pips.toFixed(1)} pips away!`, 'zone');
+                            } else {
+                                distanceEl.className = 'zone-distance';
+                                zoneBox.className = `zone-box ${isSupply ? 'supply' : 'demand'}`;
+                            }
+                        }
+                        
+                        const currentPriceEl = zoneBox.querySelector('.current-price');
+                        if (currentPriceEl) {
+                            currentPriceEl.textContent = currentPrice.toFixed(5);
+                        }
+                        
+                        const eventTypeEl = zoneBox.querySelector('.event-type');
+                        if (eventTypeEl) {
+                            eventTypeEl.textContent = currentPriceData.eventType || 'N/A';
+                        }
+                    }
+                }
+            });
+        }
+        
+        function createZoneBox(zone) {
+            const isSupply = (zone.zone_type || '').toLowerCase().includes('supply');
+            const proximal = isSupply ? parseFloat(zone.zone_low) : parseFloat(zone.zone_high);
+            const distal = isSupply ? parseFloat(zone.zone_high) : parseFloat(zone.zone_low);
+            
+            const zoneBox = document.createElement('div');
+            zoneBox.id = `zone-${zone.zone_id}`;
+            zoneBox.className = `zone-box ${isSupply ? 'supply' : 'demand'}`;
+            
+            zoneBox.innerHTML = `
+                <div class="zone-header ${isSupply ? 'supply' : 'demand'}">
+                    ${zone.symbol}/${zone.timeframe} - ${isSupply ? 'SUPPLY' : 'DEMAND'}
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">ID:</span> 
+                    <span class="zone-value">${(zone.zone_id || '').substring(0, 8)}...</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Active:</span> 
+                    <span class="zone-value">${zone.is_active ? 'Yes' : 'No'}</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Range:</span> 
+                    <span class="zone-price">${parseFloat(zone.zone_low).toFixed(5)} - ${parseFloat(zone.zone_high).toFixed(5)}</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Proximal:</span> 
+                    <span class="zone-price">${proximal.toFixed(5)}</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Distal:</span> 
+                    <span class="zone-price">${distal.toFixed(5)}</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Touches:</span> 
+                    <span class="zone-value">${zone.touch_count || 0}</span>
+                    <span class="zone-label"> | Strength:</span> 
+                    <span class="zone-value">${(zone.strength_score || 0).toFixed(1)}%</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Rust Price:</span> 
+                    <span class="zone-price current-price">Waiting...</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Event Type:</span> 
+                    <span class="zone-value event-type">N/A</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Distance:</span> 
+                    <span class="zone-distance">Waiting...</span>
+                </div>
+                <div class="zone-info">
+                    <span class="zone-label">Start:</span> 
+                    <span class="zone-value">${zone.start_time ? new Date(zone.start_time).toLocaleDateString() : 'N/A'}</span>
+                </div>
+            `;
+            
+            return zoneBox;
+        }
+        
+        function connectToRust() {
+            if (rustWs && rustWs.readyState === WebSocket.OPEN) {
+                addLog('Already connected to Rust WebSocket', 'error');
+                return;
+            }
+            
+            rustWsStatusDiv.textContent = 'Connecting to Rust WebSocket...';
+            rustWsStatusDiv.className = 'status loading';
+            addLog('Connecting to Rust WebSocket on ws://localhost:8082...', 'info');
+            
+            rustWs = new WebSocket('ws://localhost:8082');
+            
+            rustWs.onopen = () => {
+                rustWsStatusDiv.textContent = 'Connected to Rust Zone Monitor';
+                rustWsStatusDiv.className = 'status success';
+                addLog('✅ Connected to Rust WebSocket successfully', 'info');
+                
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('subscribeBtn').disabled = false;
+                document.getElementById('loadZonesBtn').disabled = false;
+            };
+            
+            rustWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    switch(data.type) {
+                        case 'connected':
+                            addLog(`🔗 Rust assigned client ID: ${data.client_id}`, 'info');
+                            break;
+                            
+                        case 'subscription_confirmed':
+                            addLog(`✅ Rust subscription confirmed: ${data.subscription || data.symbol || 'all events'}`, 'info');
+                            break;
+                            
+                        case 'zone_event':
+                            const event = data.event;
+                            addLog(`🎯 RUST ZONE EVENT: ${event.event_type} for ${event.symbol}/${event.timeframe} @ ${event.price.toFixed(5)}`, 'zone');
+                            
+                            // Update price from Rust zone event
+                            updateRustPrice(event.symbol, event.price, event.timeframe, event.event_type);
+                            break;
+                            
+                        case 'zones_data':
+                            const zoneCount = data.zones ? data.zones.length : 0;
+                            addLog(`📋 Rust returned ${zoneCount} zones`, 'info');
+                            
+                            if (data.zones && Array.isArray(data.zones)) {
+                                zones.length = 0;
+                                zones.push(...data.zones);
+                                displayZones();
+                            }
+                            break;
+                            
+                        case 'error':
+                            addLog(`❌ Rust error: ${data.message || data.error}`, 'error');
+                            break;
+                            
+                        default:
+                            addLog(`📨 Rust message: ${data.type}`, 'info');
+                    }
+                } catch (e) {
+                    addLog(`❌ Failed to parse Rust message: ${e.message}`, 'error');
+                }
+            };
+            
+            rustWs.onclose = (event) => {
+                rustWsStatusDiv.textContent = 'Disconnected from Rust';
+                rustWsStatusDiv.className = 'status error';
+                addLog(`❌ Rust connection closed. Code: ${event.code}`, 'error');
+                
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('subscribeBtn').disabled = true;
+                document.getElementById('loadZonesBtn').disabled = true;
+                rustWs = null;
+            };
+            
+            rustWs.onerror = (error) => {
+                rustWsStatusDiv.textContent = 'Rust connection error';
+                rustWsStatusDiv.className = 'status error';
+                addLog(`❌ Rust WebSocket error`, 'error');
+            };
+        }
+        
+        function subscribeAll() {
+            if (rustWs && rustWs.readyState === WebSocket.OPEN) {
+                const msg = { type: 'subscribe_all' };
+                rustWs.send(JSON.stringify(msg));
+                addLog('📡 Subscribed to all Rust zone events', 'info');
+            }
+        }
+        
+        function loadZones() {
+            if (rustWs && rustWs.readyState === WebSocket.OPEN) {
+                const msg = { type: 'get_zones' };
+                rustWs.send(JSON.stringify(msg));
+                addLog('📋 Requesting zones from Rust zone monitor...', 'info');
+            }
+        }
+        
+        function displayZones() {
+            zonesDiv.innerHTML = '';
+            zones.forEach(zone => {
+                const zoneBox = createZoneBox(zone);
+                zonesDiv.appendChild(zoneBox);
+            });
+            zoneCountSpan.textContent = zones.length;
+            updateZoneDistances();
+        }
+        
+        function clearLog() {
+            logDiv.innerHTML = '';
+        }
+        
+        // Auto-connect on page load
+        window.onload = () => {
+            addLog('🚀 Rust Zone Monitor loaded. Click "Connect to Rust" to start monitoring.', 'info');
+        };
+    </script>
+</body>
+</html>

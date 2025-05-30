@@ -1,60 +1,186 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Zone Monitor WebSocket Test</title>
+    <title>Simple Price WebSocket Test</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            margin: 20px; 
+            background: #000; 
+            color: #00ff00; 
+        }
+        h1 { color: #fff; }
+        .status { 
+            padding: 10px; 
+            background: #222; 
+            margin: 10px 0; 
+            border: 1px solid #333;
+        }
+        .prices { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); 
+            gap: 10px; 
+            margin: 20px 0;
+        }
+        .price-box { 
+            background: #111; 
+            border: 1px solid #333; 
+            padding: 15px; 
+            font-size: 12px;
+        }
+        .price-box.updated { 
+            background: #002200; 
+            border-color: #00ff00; 
+            animation: flash 0.5s ease-out;
+        }
+        @keyframes flash {
+            0% { background: #004400; }
+            100% { background: #002200; }
+        }
+        .symbol { color: #fff; font-weight: bold; font-size: 14px; }
+        .price { color: #00ff00; font-size: 16px; margin: 5px 0; }
+        .details { color: #888; font-size: 11px; }
+        .log { 
+            background: #111; 
+            border: 1px solid #333; 
+            padding: 10px; 
+            max-height: 300px; 
+            overflow-y: auto; 
+            font-size: 11px;
+            margin-top: 20px;
+        }
+        .log-entry { margin: 2px 0; }
+        .count { color: #ffff00; font-weight: bold; }
+    </style>
 </head>
 <body>
-    <h1>Zone Monitor WebSocket Test</h1>
-    <div id="status">Connecting...</div>
-    <div id="messages"></div>
+    <h1>Simple Price WebSocket Test</h1>
+    
+    <div class="status" id="status">Connecting to ws://localhost:8083...</div>
+    
+    <div class="status">
+        Messages Received: <span class="count" id="messageCount">0</span> | 
+        Price Updates: <span class="count" id="priceCount">0</span> | 
+        Active Symbols: <span class="count" id="symbolCount">0</span>
+    </div>
+    
+    <div class="prices" id="prices"></div>
+    
+    <div class="log" id="log">
+        <strong>Raw Message Log:</strong>
+        <div id="logEntries"></div>
+    </div>
 
     <script>
-        const statusDiv = document.getElementById('status');
-        const messagesDiv = document.getElementById('messages');
+        let ws = null;
+        let messageCount = 0;
+        let priceCount = 0;
+        const prices = {};
         
-        function addMessage(message) {
-            const div = document.createElement('div');
-            div.textContent = new Date().toLocaleTimeString() + ': ' + JSON.stringify(message, null, 2);
-            messagesDiv.appendChild(div);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-
-        const ws = new WebSocket('ws://localhost:8082');
-
-        ws.onopen = () => {
-            statusDiv.textContent = '✅ Connected to zone monitor';
-            addMessage('Connected');
+        const statusEl = document.getElementById('status');
+        const pricesEl = document.getElementById('prices');
+        const logEntriesEl = document.getElementById('logEntries');
+        
+        function addLog(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEntriesEl.insertBefore(entry, logEntriesEl.firstChild);
             
-            // Subscribe to all events
-            ws.send(JSON.stringify({
-                type: 'subscribe_all'
-            }));
-            
-            // Also subscribe to specific symbol
-            ws.send(JSON.stringify({
-                type: 'subscribe_symbol',
-                symbol: 'EURUSD_SB'
-            }));
-        };
-
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            addMessage(data);
-            
-            if (data.type === 'zone_event') {
-                console.log('🎯 ZONE EVENT:', data.event);
-                statusDiv.textContent = `🎯 Zone Event: ${data.event.event_type} for ${data.event.symbol}`;
+            // Keep only last 50 entries
+            while (logEntriesEl.children.length > 50) {
+                logEntriesEl.removeChild(logEntriesEl.lastChild);
             }
-        };
-
-        ws.onclose = () => {
-            statusDiv.textContent = '❌ Disconnected';
-            addMessage('Disconnected');
-        };
-
-        ws.onerror = (error) => {
-            statusDiv.textContent = '❌ Connection Error';
-            addMessage('Error: ' + error);
+        }
+        
+        function updateStats() {
+            document.getElementById('messageCount').textContent = messageCount;
+            document.getElementById('priceCount').textContent = priceCount;
+            document.getElementById('symbolCount').textContent = Object.keys(prices).length;
+        }
+        
+        function updatePrice(symbol, price, timeframe, isNewBar) {
+            const key = `${symbol}_${timeframe}`;
+            prices[key] = { symbol, price, timeframe, isNewBar, lastUpdate: Date.now() };
+            
+            // Create or update price box
+            let box = document.getElementById(key);
+            if (!box) {
+                box = document.createElement('div');
+                box.id = key;
+                box.className = 'price-box';
+                pricesEl.appendChild(box);
+            }
+            
+            box.className = 'price-box updated';
+            box.innerHTML = `
+                <div class="symbol">${symbol.replace('_SB', '')}</div>
+                <div class="price">${price.toFixed(5)}</div>
+                <div class="details">
+                    ${timeframe} | ${isNewBar ? 'NEW BAR' : 'Update'}<br>
+                    ${new Date().toLocaleTimeString()}
+                </div>
+            `;
+            
+            setTimeout(() => {
+                box.className = 'price-box';
+            }, 1000);
+            
+            priceCount++;
+            updateStats();
+        }
+        
+        function connect() {
+            ws = new WebSocket('ws://127.0.0.1:8083');
+            
+            ws.onopen = () => {
+                statusEl.textContent = '✅ Connected to Simple Price WebSocket';
+                statusEl.style.background = '#004400';
+                addLog('Connected to simple price WebSocket');
+            };
+            
+            ws.onmessage = (event) => {
+                messageCount++;
+                addLog(`Received: ${event.data.substring(0, 100)}${event.data.length > 100 ? '...' : ''}`);
+                
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'connected') {
+                        addLog(`Server says: ${data.message} (Client ID: ${data.client_id})`);
+                    } 
+                    else if (data.type === 'raw_price_update' && data.data) {
+                        const priceData = data.data;
+                        
+                        if (priceData.type === 'BAR_UPDATE' && priceData.data) {
+                            const bar = priceData.data;
+                            updatePrice(bar.symbol, bar.close, bar.timeframe, bar.isNewBar);
+                            addLog(`Price: ${bar.symbol} ${bar.timeframe} @ ${bar.close.toFixed(5)} ${bar.isNewBar ? '(NEW)' : ''}`);
+                        }
+                    }
+                } catch (e) {
+                    addLog(`Parse error: ${e.message}`);
+                }
+                
+                updateStats();
+            };
+            
+            ws.onclose = (event) => {
+                statusEl.textContent = `❌ Disconnected (Code: ${event.code})`;
+                statusEl.style.background = '#440000';
+                addLog(`Disconnected. Code: ${event.code}`);
+            };
+            
+            ws.onerror = (error) => {
+                statusEl.textContent = '❌ Connection Error';
+                statusEl.style.background = '#440000';
+                addLog(`Connection error: ${error}`);
+            };
+        }
+        
+        // Auto-connect on page load
+        window.onload = () => {
+            connect();
         };
     </script>
 </body>
