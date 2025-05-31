@@ -1,10 +1,81 @@
-// src/cache_endpoints.rs - Fixed version
-use actix_web::{HttpResponse, Responder};
+// src/cache_endpoints.rs - Updated to use shared real-time cache
+use actix_web::{web, HttpResponse, Responder};
 use log;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::minimal_zone_cache::{get_minimal_cache, CacheSymbolConfig, MinimalZoneCache};
 use crate::types::{BulkActiveZonesResponse, BulkResultData, BulkResultItem, ChartQuery, EnrichedZone};
+
+// Updated to accept the shared cache as a parameter
+pub async fn get_minimal_cache_zones_debug_with_shared_cache(
+    shared_cache: web::Data<Arc<Mutex<MinimalZoneCache>>>
+) -> impl Responder {
+    log::info!("📡 [CACHE_ENDPOINT] Debug minimal cache zones endpoint called (using shared real-time cache)");
+
+    // Use the shared cache that's being updated in real-time
+    match tokio::time::timeout(std::time::Duration::from_secs(5), shared_cache.lock()).await {
+        Ok(cache_guard) => {
+            let (total_in_cache, supply_in_cache, demand_in_cache) = cache_guard.get_stats();
+            let all_enriched_zones: Vec<EnrichedZone> = cache_guard.get_all_zones();
+            let (current_start, current_end) = MinimalZoneCache::get_current_date_range();
+
+            log::info!("📡 [CACHE_ENDPOINT] Returning {} zones from shared real-time cache", all_enriched_zones.len());
+
+            HttpResponse::Ok().json(serde_json::json!({
+                "source": "Shared Real-time MinimalZoneCache",
+                "total_zones_in_cache": total_in_cache,
+                "supply_zones_in_cache": supply_in_cache,
+                "demand_zones_in_cache": demand_in_cache,
+                "retrieved_zones": all_enriched_zones,
+                "cache_date_range": {
+                    "start": current_start,
+                    "end": current_end
+                },
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "note": "This data is updated every 60 seconds by the real-time cache updater"
+            }))
+        }
+        Err(_) => {
+            log::error!("⏰ [CACHE_ENDPOINT] Timeout acquiring cache lock");
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Cache temporarily unavailable (timeout)",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }))
+        }
+    }
+}
+
+// Fallback endpoint that creates a new cache (for comparison/debugging)
+pub async fn get_minimal_cache_zones_debug() -> impl Responder {
+    log::info!("📡 [CACHE_ENDPOINT] Debug minimal cache zones endpoint called (creating new cache instance)");
+
+    match get_minimal_cache().await {
+        Ok(cache) => {
+            let (total_in_cache, supply_in_cache, demand_in_cache) = cache.get_stats();
+            let all_enriched_zones: Vec<EnrichedZone> = cache.get_all_zones();
+
+            log::info!("📡 [CACHE_ENDPOINT] Returning {} zones from new cache instance", all_enriched_zones.len());
+
+            HttpResponse::Ok().json(serde_json::json!({
+                "source": "New MinimalZoneCache Instance (NOT real-time)",
+                "total_zones_in_cache": total_in_cache,
+                "supply_zones_in_cache": supply_in_cache,
+                "demand_zones_in_cache": demand_in_cache,
+                "retrieved_zones": all_enriched_zones,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "note": "This creates a fresh cache and does NOT use the real-time updater"
+            }))
+        }
+        Err(e) => {
+            log::error!("❌ [CACHE_ENDPOINT] Failed to get cache: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get cache: {}", e)
+            }))
+        }
+    }
+}
 
 pub async fn test_cache_endpoint() -> impl Responder {
     log::info!("Test cache endpoint called");
@@ -126,32 +197,4 @@ pub async fn test_cache_endpoint() -> impl Responder {
     };
 
     HttpResponse::Ok().json(response_payload)
-}
-
-pub async fn get_minimal_cache_zones_debug() -> impl Responder {
-    log::info!("Debug minimal cache zones endpoint called");
-
-    match get_minimal_cache().await {
-        Ok(cache) => {
-            let (total_in_cache, supply_in_cache, demand_in_cache) = cache.get_stats();
-            let all_enriched_zones: Vec<EnrichedZone> = cache.get_all_zones();
-
-            log::info!("Cache endpoint returning {} zones", all_enriched_zones.len());
-
-            HttpResponse::Ok().json(serde_json::json!({
-                "source": "MinimalZoneCache Debug Endpoint",
-                "total_zones_in_cache": total_in_cache,
-                "supply_zones_in_cache": supply_in_cache,
-                "demand_zones_in_cache": demand_in_cache,
-                "retrieved_zones": all_enriched_zones,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            }))
-        }
-        Err(e) => {
-            log::error!("Failed to get cache: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to get cache: {}", e)
-            }))
-        }
-    }
 }

@@ -1,12 +1,12 @@
-// src/minimal_zone_cache.rs
+// src/minimal_zone_cache.rs - Updated with dynamic date calculation
 use log::{debug, error, info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
+use chrono::{DateTime, Utc, Duration};
+use std::time::Instant; 
 // Ensure these are correctly imported
 use crate::types::EnrichedZone;
 use crate::zone_detection::{InfluxDataFetcher, ZoneDetectionEngine, ZoneDetectionRequest};
-// CandleData might be needed if you pass it around, but ZoneDetectionRequest takes it
-// use crate::detect::CandleData;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CacheSymbolConfig {
@@ -33,26 +33,48 @@ impl MinimalZoneCache {
         })
     }
 
-    pub async fn refresh_zones(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("🔄 [CACHE] Starting zone refresh...");
+    /// Calculate the same 90-day lookback period that the frontend component uses
+    fn calculate_frontend_matching_dates() -> (String, String) {
+        let now = Utc::now();
+        let ninety_days_ago = now - Duration::days(90);
+        
+        // Format to match frontend: YYYY-MM-DDTHH:MM:SSZ
+        let start_time = format!("{}T00:00:00Z", ninety_days_ago.format("%Y-%m-%d"));
+        let end_time = format!("{}T23:59:59Z", now.format("%Y-%m-%d"));
+        
+        (start_time, end_time)
+    }
+
+     pub async fn refresh_zones(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let total_start_time = Instant::now();
+        info!("🔄 [CACHE] Starting zone refresh with dynamic date calculation...");
 
         let mut all_zones_for_cache = HashMap::new();
 
-        // --- MATCH FRONTEND REQUEST DATES ---
-        let start_time_to_match_frontend = "2025-03-01T00:00:00Z";
-        let end_time_to_match_frontend = "2025-05-30T23:59:59Z";
+        // --- CALCULATE DYNAMIC DATES TO MATCH FRONTEND ---
+        let date_calc_start = Instant::now();
+        let (start_time_dynamic, end_time_dynamic) = Self::calculate_frontend_matching_dates();
+        let date_calc_duration = date_calc_start.elapsed();
         
         info!(
-            "📅 [CACHE] USING FRONTEND-MATCHING DATE RANGE: {} to {}",
-            start_time_to_match_frontend, end_time_to_match_frontend
+            "📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): {} to {} (calculated in {:.3}ms)",
+            start_time_dynamic, end_time_dynamic, date_calc_duration.as_secs_f64() * 1000.0
         );
+
+        let mut total_candles_fetched = 0;
+        let mut total_zones_detected = 0;
+        let mut successful_symbol_tf_combinations = 0;
+        let mut failed_symbol_tf_combinations = 0;
+        let mut total_fetch_time = std::time::Duration::ZERO;
+        let mut total_detection_time = std::time::Duration::ZERO;
 
         for symbol_config in &self.monitored_symbols {
             for timeframe in &symbol_config.timeframes {
+                let symbol_tf_start = Instant::now();
                 let current_symbol_from_config = symbol_config.symbol.clone();
                 let current_timeframe = timeframe.clone();
 
-                info!(
+                debug!(
                     "📊 [CACHE] Processing {}/{}",
                     current_symbol_from_config, current_timeframe
                 );
@@ -64,27 +86,42 @@ impl MinimalZoneCache {
                     format!("{}_SB", current_symbol_from_config)
                 };
 
+                let fetch_start = Instant::now();
                 let candles = match self
                     .data_fetcher
                     .fetch_candles(
                         &core_symbol_for_fetch,
                         &timeframe,
-                        start_time_to_match_frontend, // NOW MATCHES FRONTEND
-                        end_time_to_match_frontend,   // NOW MATCHES FRONTEND
+                        &start_time_dynamic,
+                        &end_time_dynamic,
                     )
                     .await
                 {
-                    Ok(c) => c,
+                    Ok(c) => {
+                        let fetch_duration = fetch_start.elapsed();
+                        total_fetch_time += fetch_duration;
+                        debug!(
+                            "🕯️ [CACHE] Fetched {} candles for {}/{} in {:.3}ms",
+                            c.len(),
+                            core_symbol_for_fetch,
+                            current_timeframe,
+                            fetch_duration.as_secs_f64() * 1000.0
+                        );
+                        c
+                    }
                     Err(e) => {
+                        failed_symbol_tf_combinations += 1;
                         warn!(
-                            "⚠️ [CACHE] fetch_candles failed for {}/{}: {}",
-                            core_symbol_for_fetch, current_timeframe, e
+                            "⚠️ [CACHE] fetch_candles failed for {}/{}: {} (took {:.3}ms)",
+                            core_symbol_for_fetch, current_timeframe, e,
+                            fetch_start.elapsed().as_secs_f64() * 1000.0
                         );
                         continue;
                     }
                 };
 
                 if candles.is_empty() {
+                    failed_symbol_tf_combinations += 1;
                     warn!(
                         "⚠️ [CACHE] No candles for {}/{}",
                         core_symbol_for_fetch, current_timeframe
@@ -92,15 +129,11 @@ impl MinimalZoneCache {
                     continue;
                 }
 
-                info!(
-                    "🕯️ [CACHE] Got {} candles for {}/{}",
-                    candles.len(),
-                    core_symbol_for_fetch,
-                    current_timeframe
-                );
+                total_candles_fetched += candles.len();
 
+                let detection_start = Instant::now();
                 let detection_request = ZoneDetectionRequest {
-                    symbol: current_symbol_from_config.clone(), // Use non-SB version for zone.symbol field
+                    symbol: current_symbol_from_config.clone(),
                     timeframe: current_timeframe.clone(),
                     pattern: "fifty_percent_before_big_bar".to_string(),
                     candles,
@@ -109,15 +142,23 @@ impl MinimalZoneCache {
 
                 match self.zone_engine.detect_zones(detection_request) {
                     Ok(result) => {
-                        info!(
-                            "🔍 [CACHE] {}/{}: Found {} supply + {} demand zones",
+                        let detection_duration = detection_start.elapsed();
+                        total_detection_time += detection_duration;
+                        
+                        let total_zones_found = result.supply_zones.len() + result.demand_zones.len();
+                        total_zones_detected += total_zones_found;
+
+                        debug!(
+                            "🔍 [CACHE] {}/{}: Found {} zones ({} supply + {} demand) in {:.3}ms",
                             result.symbol,
                             result.timeframe,
+                            total_zones_found,
                             result.supply_zones.len(),
-                            result.demand_zones.len()
+                            result.demand_zones.len(),
+                            detection_duration.as_secs_f64() * 1000.0
                         );
 
-                        // Filter for active zones only (to match bulk handler behavior)
+                        // Filter for active zones only
                         let active_supply_zones = result
                             .supply_zones
                             .into_iter()
@@ -129,7 +170,7 @@ impl MinimalZoneCache {
                             .filter(|zone| zone.is_active)
                             .collect::<Vec<_>>();
 
-                        info!(
+                        debug!(
                             "✅ [CACHE] {}/{}: Active zones: {} supply, {} demand",
                             result.symbol,
                             result.timeframe,
@@ -148,26 +189,80 @@ impl MinimalZoneCache {
                                 all_zones_for_cache.insert(zone_id.clone(), zone);
                             }
                         }
+
+                        successful_symbol_tf_combinations += 1;
                     }
                     Err(e) => {
+                        failed_symbol_tf_combinations += 1;
                         warn!(
-                            "⚠️ [CACHE] Zone detection failed for {}/{}: {}",
-                            current_symbol_from_config, current_timeframe, e
+                            "⚠️ [CACHE] Zone detection failed for {}/{}: {} (took {:.3}ms)",
+                            current_symbol_from_config, current_timeframe, e,
+                            detection_start.elapsed().as_secs_f64() * 1000.0
                         );
                     }
                 }
+
+                let symbol_tf_duration = symbol_tf_start.elapsed();
+                debug!(
+                    "⏱️ [CACHE] {}/{} total processing time: {:.3}ms",
+                    current_symbol_from_config, current_timeframe,
+                    symbol_tf_duration.as_secs_f64() * 1000.0
+                );
             }
         }
 
         let total_zones = all_zones_for_cache.len();
         self.zones = all_zones_for_cache;
 
-        info!("✅ [CACHE] Zone refresh complete with frontend-matching dates. Total active zones: {}", total_zones);
+        let total_duration = total_start_time.elapsed();
+
+        // COMPREHENSIVE PERFORMANCE SUMMARY
+        info!("🏁 [CACHE] === PERFORMANCE SUMMARY ===");
+        info!("📊 [CACHE] Total Duration: {:.2}s ({:.0}ms)", total_duration.as_secs_f64(), total_duration.as_secs_f64() * 1000.0);
+        info!("📊 [CACHE] Date Range: {} to {}", start_time_dynamic, end_time_dynamic);
+        info!("📊 [CACHE] Symbol/Timeframe Combinations:");
+        info!("📊 [CACHE]   ✅ Successful: {}", successful_symbol_tf_combinations);
+        info!("📊 [CACHE]   ❌ Failed: {}", failed_symbol_tf_combinations);
+        info!("📊 [CACHE]   📈 Total: {}", successful_symbol_tf_combinations + failed_symbol_tf_combinations);
+        info!("📊 [CACHE] Data Processing:");
+        info!("📊 [CACHE]   🕯️  Total Candles Fetched: {}", total_candles_fetched);
+        info!("📊 [CACHE]   🔍 Total Zones Detected: {}", total_zones_detected);
+        info!("📊 [CACHE]   ✅ Active Zones in Cache: {}", total_zones);
+        info!("📊 [CACHE] Timing Breakdown:");
+        info!("📊 [CACHE]   📥 Total Fetch Time: {:.2}s ({:.1}%)", total_fetch_time.as_secs_f64(), (total_fetch_time.as_secs_f64() / total_duration.as_secs_f64()) * 100.0);
+        info!("📊 [CACHE]   🔍 Total Detection Time: {:.2}s ({:.1}%)", total_detection_time.as_secs_f64(), (total_detection_time.as_secs_f64() / total_duration.as_secs_f64()) * 100.0);
+        info!("📊 [CACHE]   ⚙️  Other Processing: {:.2}s ({:.1}%)", (total_duration - total_fetch_time - total_detection_time).as_secs_f64(), ((total_duration - total_fetch_time - total_detection_time).as_secs_f64() / total_duration.as_secs_f64()) * 100.0);
+        info!("📊 [CACHE] Performance Metrics:");
+        if successful_symbol_tf_combinations > 0 {
+            info!("📊 [CACHE]   ⚡ Avg per Symbol/TF: {:.0}ms", (total_duration.as_secs_f64() * 1000.0) / successful_symbol_tf_combinations as f64);
+            info!("📊 [CACHE]   📥 Avg Fetch per S/TF: {:.0}ms", (total_fetch_time.as_secs_f64() * 1000.0) / successful_symbol_tf_combinations as f64);
+            info!("📊 [CACHE]   🔍 Avg Detection per S/TF: {:.0}ms", (total_detection_time.as_secs_f64() * 1000.0) / successful_symbol_tf_combinations as f64);
+        }
+        if total_candles_fetched > 0 {
+            info!("📊 [CACHE]   🕯️  Candles per Second: {:.0}", total_candles_fetched as f64 / total_duration.as_secs_f64());
+        }
+        if total_zones_detected > 0 {
+            info!("📊 [CACHE]   🔍 Zones per Second: {:.1}", total_zones_detected as f64 / total_duration.as_secs_f64());
+            info!("📊 [CACHE]   📈 Active Zone Ratio: {:.1}%", (total_zones as f64 / total_zones_detected as f64) * 100.0);
+        }
+        info!("📊 [CACHE] === END SUMMARY ===");
+        
+        // Optionally write debug file with timing info
+        if let Err(e) = self.write_zones_to_file(&start_time_dynamic, &end_time_dynamic, &total_duration).await {
+            warn!("⚠️ [CACHE] Failed to write debug file: {}", e);
+        }
+        
         Ok(())
     }
 
-    // Add this helper if you want to keep writing to file, otherwise comment out call above
-    async fn write_zones_to_file(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+
+    // Updated to include date range in debug output
+    async fn write_zones_to_file(
+        &self, 
+        start_time: &str, 
+        end_time: &str,
+        processing_duration: &std::time::Duration
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use std::fs::OpenOptions;
         use std::io::Write;
 
@@ -175,14 +270,16 @@ impl MinimalZoneCache {
             .create(true)
             .write(true)
             .truncate(true)
-            .open("cache_zones_debug_hardcoded_test.json")?; // Different filename for this test
+            .open("cache_zones_debug_dynamic.json")?;
 
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
         writeln!(
             file,
-            "# Cache Zones Debug (HARCODED TEST) - Generated at {}",
+            "# Cache Zones Debug (DYNAMIC DATES) - Generated at {}",
             timestamp
         )?;
+        writeln!(file, "# Date range used: {} to {}", start_time, end_time)?;
+        writeln!(file, "# Processing time: {:.2}s", processing_duration.as_secs_f64())?;
         writeln!(file, "# Total zones: {}", self.zones.len())?;
         writeln!(file, "")?;
 
@@ -190,8 +287,8 @@ impl MinimalZoneCache {
         writeln!(file, "{}", zones_json)?;
 
         info!(
-            "📝 [CACHE] Wrote {} zones to cache_zones_debug_hardcoded_test.json",
-            self.zones.len()
+            "📝 [CACHE] Wrote {} zones to cache_zones_debug_dynamic.json (range: {} to {}, processed in {:.2}s)",
+            self.zones.len(), start_time, end_time, processing_duration.as_secs_f64()
         );
         Ok(())
     }
@@ -222,13 +319,16 @@ impl MinimalZoneCache {
 
         (self.zones.len(), supply_count, demand_count)
     }
+
+    /// Get the current date range being used by the cache
+    pub fn get_current_date_range() -> (String, String) {
+        Self::calculate_frontend_matching_dates()
+    }
 }
 
-// test_minimal_cache function remains the same
-// Update the test_minimal_cache() function in minimal_zone_cache.rs:
-
+// Update the test_minimal_cache() function to also use dynamic dates
 pub async fn get_minimal_cache() -> Result<MinimalZoneCache, Box<dyn std::error::Error + Send + Sync>> {
-    info!("🧪 [CACHE] Creating minimal zone cache with full symbol list...");
+    info!("🧪 [CACHE] Creating minimal zone cache with dynamic dates (matching frontend 90-day calculation)...");
 
     // THE SINGLE SOURCE OF TRUTH - all symbols and timeframes
     let symbols = vec![
@@ -342,9 +442,11 @@ pub async fn get_minimal_cache() -> Result<MinimalZoneCache, Box<dyn std::error:
     cache.refresh_zones().await?;
 
     let (total, supply, demand) = cache.get_stats();
+    let (current_start, current_end) = MinimalZoneCache::get_current_date_range();
+    
     info!(
-        "📊 [CACHE] Created cache: {} total ({} supply, {} demand)",
-        total, supply, demand
+        "📊 [CACHE] Created cache with dynamic dates ({} to {}): {} total ({} supply, {} demand)",
+        current_start, current_end, total, supply, demand
     );
 
     Ok(cache)

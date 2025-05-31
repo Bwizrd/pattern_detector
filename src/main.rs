@@ -1,16 +1,14 @@
-// src/main.rs - Reorganized with candidates for extraction at bottom
+// src/main.rs - Clean imports and integration
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
 use log;
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // --- Module Declarations ---
-
 mod backtest;
 pub mod backtest_api;
 mod cache_endpoints;
@@ -25,6 +23,7 @@ mod multi_backtest_handler;
 mod optimize_handler;
 mod patterns;
 mod price_feed;
+mod realtime_cache_updater; // ← ADD THIS
 mod realtime_monitor;
 mod simple_price_websocket;
 pub mod trades;
@@ -34,14 +33,12 @@ mod websocket_server;
 mod zone_detection;
 
 // --- Use necessary types ---
-use crate::cache_endpoints::{get_minimal_cache_zones_debug, test_cache_endpoint};
+use crate::cache_endpoints::{get_minimal_cache_zones_debug_with_shared_cache, test_cache_endpoint};
 use crate::ctrader_integration::connect_to_ctrader_websocket;
-use crate::minimal_zone_cache::{get_minimal_cache, CacheSymbolConfig, MinimalZoneCache};
-use crate::price_feed::{PriceFeedBridge, PriceUpdate};
-use crate::simple_price_websocket::{broadcast_price_update, SimplePriceWebSocketServer};
-use crate::types::{
-    BulkActiveZonesResponse, BulkResultData, BulkResultItem, ChartQuery, EnrichedZone,
-};
+use crate::minimal_zone_cache::{get_minimal_cache, MinimalZoneCache};
+use crate::realtime_cache_updater::RealtimeCacheUpdater; // ← ADD THIS
+use crate::simple_price_websocket::SimplePriceWebSocketServer;
+
 // --- Global State ---
 use std::sync::LazyLock;
 static GLOBAL_PRICE_BROADCASTER: LazyLock<
@@ -76,6 +73,56 @@ async fn echo(query: web::Query<QueryParams>) -> impl Responder {
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("OK, Rust server is running on port 8080")
+}
+
+// --- Cache Setup Function ---
+async fn setup_cache_system() -> Result<Arc<Mutex<MinimalZoneCache>>, Box<dyn std::error::Error + Send + Sync>> {
+    use log::{error, info};
+    info!("🚀 [MAIN] Setting up zone cache system...");
+    
+    let cache = match get_minimal_cache().await {
+        Ok(cache) => {
+            let (total, supply, demand) = cache.get_stats();
+            info!(
+                "✅ [MAIN] Initial cache load complete: {} total zones ({} supply, {} demand)",
+                total, supply, demand
+            );
+            Arc::new(Mutex::new(cache))
+        }
+        Err(e) => {
+            error!("❌ [MAIN] Initial cache load failed: {}", e);
+            return Err(e);
+        }
+    };
+
+    // Start real-time updates if enabled
+    let enable_realtime_cache = env::var("ENABLE_REALTIME_CACHE")
+        .unwrap_or_else(|_| "true".to_string())
+        .trim()
+        .to_lowercase() == "true";
+
+    if enable_realtime_cache {
+        let cache_update_interval = env::var("CACHE_UPDATE_INTERVAL_SECONDS")
+            .unwrap_or_else(|_| "60".to_string())
+            .parse::<u64>()
+            .unwrap_or(60);
+
+        info!("🔄 [MAIN] Starting real-time cache updater (interval: {}s)", cache_update_interval);
+
+        let cache_updater = RealtimeCacheUpdater::new(Arc::clone(&cache))
+            .with_interval(cache_update_interval);
+        
+        if let Err(e) = cache_updater.start().await {
+            error!("❌ [MAIN] Failed to start real-time cache updater: {}", e);
+            info!("⚠️ [MAIN] Continuing with static cache only");
+        } else {
+            info!("✅ [MAIN] Real-time cache updater started successfully");
+        }
+    } else {
+        info!("⏸️ [MAIN] Real-time cache updates disabled via ENABLE_REALTIME_CACHE");
+    }
+
+    Ok(cache)
 }
 
 // --- Main Application ---
@@ -123,7 +170,6 @@ async fn main() -> std::io::Result<()> {
         == "true";
 
     if enable_price_feed {
-        // Clone the broadcaster outside the spawn to avoid Send issues
         let broadcaster_clone = {
             let guard = GLOBAL_PRICE_BROADCASTER.lock().unwrap();
             guard.as_ref().cloned()
@@ -142,21 +188,17 @@ async fn main() -> std::io::Result<()> {
         });
     }
 
-    // Test minimal cache
-    use log::{error, info};
-    info!("🚀 Testing minimal zone cache...");
-    match get_minimal_cache().await {
+    // Setup cache system
+    let shared_cache = match setup_cache_system().await {
         Ok(cache) => {
-            let (total, supply, demand) = cache.get_stats();
-            info!(
-                "✅ Cache test complete: {} total zones ({} supply, {} demand)",
-                total, supply, demand
-            );
+            log::info!("✅ [MAIN] Cache system initialized successfully");
+            cache
         }
         Err(e) => {
-            error!("❌ Cache test failed: {}", e);
+            log::error!("❌ [MAIN] Failed to setup cache system: {}", e);
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
         }
-    }
+    };
 
     // Server configuration
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -184,6 +226,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .wrap(cors)
             .app_data(web::Data::new(Arc::clone(&http_client_for_app_factory)))
+            .app_data(web::Data::new(Arc::clone(&shared_cache)))
             // Core endpoints
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
@@ -228,7 +271,7 @@ async fn main() -> std::io::Result<()> {
             .route("/test-cache", web::get().to(test_cache_endpoint))
             .route(
                 "/debug/minimal-cache-zones",
-                web::get().to(get_minimal_cache_zones_debug),
+                web::get().to(get_minimal_cache_zones_debug_with_shared_cache),
             )
     })
     .bind((host, port))?
