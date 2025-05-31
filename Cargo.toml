@@ -32,6 +32,8 @@ futures-util = { version = "0.3", features = ["sink"] }
 url = "2"
 uuid = { version = "1.6", features = ["v4"] }
 dashmap = "5.5"
+ctrlc = "3.4"
+crossterm = "0.27"  # Alternative to raw ANSI codes
 
 [[bin]]
 name = "pattern_detector"  # This should match your main binary name

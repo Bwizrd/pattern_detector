@@ -1,12 +1,13 @@
 // src/main.rs - Clean imports and integration
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
-use log::{debug, error, info, warn};
+use log::{error, info};
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::collections::HashMap;
 
 // --- Module Declarations ---
 mod backtest;
@@ -33,8 +34,6 @@ mod types;
 mod websocket_server;
 mod zone_detection;
 mod terminal_dashboard;
-// ← ADD NEW MODULE
-
 
 // --- Use necessary types ---
 use crate::cache_endpoints::{
@@ -83,6 +82,47 @@ async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("OK, Rust server is running on port 8080")
 }
 
+// ADD PRICES HANDLER
+async fn get_current_prices_handler(
+    zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
+) -> impl Responder {
+    log::info!("Current prices endpoint called");
+    
+    if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
+        log::info!("Zone monitor available, getting prices");
+        let prices = monitor.get_current_prices_by_symbol().await;
+        log::info!("Retrieved {} prices", prices.len());
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "prices": prices,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "count": prices.len()
+        }))
+    } else {
+        log::warn!("Zone monitor not available");
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "error": "Zone monitor not available",
+            "prices": {},
+            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+        }))
+    }
+}
+
+// TEST PRICES HANDLER
+async fn test_prices_handler() -> impl Responder {
+    let mut test_prices = HashMap::new();
+    test_prices.insert("EURUSD".to_string(), 1.1234);
+    test_prices.insert("GBPUSD".to_string(), 1.2567);
+    test_prices.insert("USDJPY".to_string(), 143.45);
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "prices": test_prices,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "count": test_prices.len(),
+        "note": "Test prices - replace with real monitor data"
+    }))
+}
+
 // --- Cache Setup Function ---
 async fn setup_cache_system() -> Result<
     (
@@ -91,7 +131,6 @@ async fn setup_cache_system() -> Result<
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    use log::{error, info};
     info!("🚀 [MAIN] Setting up zone cache system...");
 
     let cache = match get_minimal_cache().await {
@@ -258,8 +297,7 @@ async fn main() -> std::io::Result<()> {
         });
     }
 
-    
-
+    // Start terminal dashboard if enabled
     if let Some(ref monitor) = zone_monitor {
         let enable_terminal_dashboard = env::var("ENABLE_TERMINAL_DASHBOARD")
             .unwrap_or_else(|_| "false".to_string())
@@ -288,6 +326,9 @@ async fn main() -> std::io::Result<()> {
     print_server_info(&host, port);
 
     let http_client_for_app_factory = Arc::clone(&shared_http_client);
+    
+    // Clone zone_monitor for the HTTP server
+    let zone_monitor_for_app = zone_monitor.clone();
 
     // Start the HTTP server
     let server_handle = HttpServer::new(move || {
@@ -306,6 +347,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(Arc::clone(&http_client_for_app_factory)))
             .app_data(web::Data::new(Arc::clone(&shared_cache)))
+            .app_data(web::Data::new(zone_monitor_for_app.clone())) // FIXED: now properly available
             // Core endpoints
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
@@ -352,6 +394,9 @@ async fn main() -> std::io::Result<()> {
                 "/debug/minimal-cache-zones",
                 web::get().to(get_minimal_cache_zones_debug_with_shared_cache),
             )
+            // PRICE ENDPOINTS
+            .route("/current-prices", web::get().to(get_current_prices_handler))
+            .route("/test-prices", web::get().to(test_prices_handler))
     })
     .bind((host, port))?
     .run();
@@ -386,5 +431,7 @@ fn print_server_info(host: &str, port: u16) {
     println!("  GET  /latest-formed-zones");
     println!("  GET  /test-cache");
     println!("  GET  /debug/minimal-cache-zones");
+    println!("  GET  /current-prices");
+    println!("  GET  /test-prices");
     println!("--------------------------------------------------");
 }
