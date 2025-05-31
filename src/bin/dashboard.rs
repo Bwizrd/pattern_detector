@@ -1,4 +1,4 @@
-// src/bin/dashboard.rs - Back to simple working version
+// src/bin/dashboard.rs - Complete standalone terminal dashboard
 use std::collections::HashMap;
 use std::env;
 use tokio::time::{interval, Duration};
@@ -8,17 +8,17 @@ use serde_json::Value;
 use crossterm::{
     execute,
     terminal::{Clear, ClearType, SetTitle},
-    cursor::{Hide, Show},
+    cursor::{Hide, MoveTo, Show},
     style::{Color, Print, ResetColor, SetForegroundColor},
 };
-use std::io::{self, Write};
+use std::io;
 
 #[derive(Debug, Clone)]
 pub struct ZoneDistanceInfo {
     pub zone_id: String,
     pub symbol: String,
     pub timeframe: String,
-    pub zone_type: String,
+    pub zone_type: String, // "supply" or "demand"
     pub current_price: f64,
     pub proximal_line: f64,
     pub distal_line: f64,
@@ -95,6 +95,7 @@ impl StandaloneDashboard {
         execute!(stdout_handle, Hide, Clear(ClearType::All), SetTitle("Zone Dashboard"))?;
         
         // Show startup message
+        execute!(stdout_handle, MoveTo(0, 0))?;
         println!("🎯 Real-time Zone Dashboard - Standalone Mode");
         println!("Connected to: {}", self.api_base_url);
         println!("Press Ctrl+C to exit\n");
@@ -107,7 +108,7 @@ impl StandaloneDashboard {
         // Setup Ctrl+C handler
         let _ = ctrlc::set_handler(move || {
             let mut stdout_handle = io::stdout();
-            let _ = execute!(stdout_handle, Show, Clear(ClearType::All));
+            let _ = execute!(stdout_handle, Show, Clear(ClearType::All), MoveTo(0, 0));
             println!("👋 Dashboard stopped.");
             std::process::exit(0);
         });
@@ -118,7 +119,7 @@ impl StandaloneDashboard {
             match self.update_dashboard().await {
                 Ok(_) => {},
                 Err(e) => {
-                    execute!(stdout_handle, Clear(ClearType::All))?;
+                    execute!(stdout_handle, Clear(ClearType::All), MoveTo(0, 0))?;
                     println!("❌ Dashboard Error: {}", e);
                     println!("Retrying in {} seconds...", self.update_interval.as_secs());
                     println!("\nIs the main application running on {}?", self.api_base_url);
@@ -127,11 +128,41 @@ impl StandaloneDashboard {
         }
     }
 
+     async fn get_current_prices(&self) -> Result<HashMap<String, f64>, Box<dyn std::error::Error>> {
+        let url = format!("{}/current-prices", self.api_base_url);
+        
+        let response = self.client
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Ok(HashMap::new()); // Return empty if API fails
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        
+        if let Some(prices_obj) = json.get("prices") {
+            if let Some(prices_map) = prices_obj.as_object() {
+                let mut result = HashMap::new();
+                for (symbol, price_value) in prices_map {
+                    if let Some(price) = price_value.as_f64() {
+                        result.insert(symbol.clone(), price);
+                    }
+                }
+                return Ok(result);
+            }
+        }
+        
+        Ok(HashMap::new())
+    }
+
     async fn update_dashboard(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut stdout_handle = io::stdout();
         
         // Clear screen and reset cursor
-        execute!(stdout_handle, Clear(ClearType::All))?;
+        execute!(stdout_handle, Clear(ClearType::All), MoveTo(0, 0))?;
         
         let now = Utc::now();
         
@@ -152,7 +183,7 @@ impl StandaloneDashboard {
             return Ok(());
         }
 
-        // Get current prices
+        // Get current prices (placeholder for now)
         let current_prices = self.get_current_prices().await.unwrap_or_default();
 
         // Extract zone distance info
@@ -251,13 +282,21 @@ impl StandaloneDashboard {
             return Err(format!("API returned status: {}", response.status()).into());
         }
 
+        // Get raw response to debug the format
         let response_text = response.text().await?;
+        
+        // Try to parse as JSON to see the structure
         let json_value: Value = serde_json::from_str(&response_text)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
+        // Handle different response formats
         match json_value {
-            Value::Array(zones) => Ok(zones),
+            Value::Array(zones) => {
+                // Direct array of zones
+                Ok(zones)
+            }
             Value::Object(obj) => {
+                // Look for zones in common field names
                 if let Some(zones_array) = obj.get("retrieved_zones") {
                     if let Value::Array(zones) = zones_array {
                         Ok(zones.clone())
@@ -277,6 +316,7 @@ impl StandaloneDashboard {
                         Err("'data' field is not an array".into())
                     }
                 } else {
+                    // If it's an object but not the expected format, show the structure
                     let keys: Vec<_> = obj.keys().collect();
                     Err(format!("Unexpected object structure. Available keys: {:?}", keys).into())
                 }
@@ -285,36 +325,6 @@ impl StandaloneDashboard {
                 Err(format!("Unexpected response type").into())
             }
         }
-    }
-
-    async fn get_current_prices(&self) -> Result<HashMap<String, f64>, Box<dyn std::error::Error>> {
-        let url = format!("{}/current-prices", self.api_base_url);
-        
-        let response = self.client
-            .get(&url)
-            .timeout(Duration::from_secs(2))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Ok(HashMap::new());
-        }
-
-        let json: serde_json::Value = response.json().await?;
-        
-        if let Some(prices_obj) = json.get("prices") {
-            if let Some(prices_map) = prices_obj.as_object() {
-                let mut result = HashMap::new();
-                for (symbol, price_value) in prices_map {
-                    if let Some(price) = price_value.as_f64() {
-                        result.insert(symbol.clone(), price);
-                    }
-                }
-                return Ok(result);
-            }
-        }
-        
-        Ok(HashMap::new())
     }
 
     async fn extract_zone_distance_info(
@@ -337,6 +347,7 @@ impl StandaloneDashboard {
             .unwrap_or("UNKNOWN")
             .to_string();
             
+        // Map 'type' field to zone_type (your API uses 'type' instead of 'zone_type')
         let zone_type = zone_json.get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
@@ -358,9 +369,11 @@ impl StandaloneDashboard {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
 
+        // Try to get current price from multiple sources
         let current_price = current_prices.get(&symbol)
             .copied()
             .or_else(|| {
+                // Fallback: use zone midpoint as dummy price for visualization
                 if zone_high > 0.0 && zone_low > 0.0 {
                     Some((zone_high + zone_low) / 2.0)
                 } else {
@@ -406,6 +419,7 @@ impl StandaloneDashboard {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Simple logging setup for standalone mode
     env_logger::init();
 
     let dashboard = StandaloneDashboard::new();
