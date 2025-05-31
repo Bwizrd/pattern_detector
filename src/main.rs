@@ -1,7 +1,7 @@
 // src/main.rs - Clean imports and integration
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
-use log::{info, warn, error, debug};
+use log::{debug, error, info, warn};
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use std::env;
@@ -32,6 +32,9 @@ pub mod trading;
 mod types;
 mod websocket_server;
 mod zone_detection;
+mod terminal_dashboard;
+// ← ADD NEW MODULE
+
 
 // --- Use necessary types ---
 use crate::cache_endpoints::{
@@ -42,6 +45,7 @@ use crate::minimal_zone_cache::{get_minimal_cache, MinimalZoneCache};
 use crate::realtime_cache_updater::RealtimeCacheUpdater;
 use crate::realtime_zone_monitor::NewRealTimeZoneMonitor; // ← ADD NEW IMPORT
 use crate::simple_price_websocket::SimplePriceWebSocketServer;
+use crate::terminal_dashboard::TerminalDashboard;
 
 // --- Global State ---
 use std::sync::LazyLock;
@@ -213,6 +217,18 @@ async fn main() -> std::io::Result<()> {
         log::info!("Simple price WebSocket started on port {}", ws_port);
     }
 
+    // Setup cache system with zone monitor
+    let (shared_cache, zone_monitor) = match setup_cache_system().await {
+        Ok(cache) => {
+            log::info!("✅ [MAIN] Cache system initialized successfully");
+            cache
+        }
+        Err(e) => {
+            log::error!("❌ [MAIN] Failed to setup cache system: {}", e);
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+        }
+    };
+
     // Start price feed if enabled
     let enable_price_feed = env::var("ENABLE_CTRADER_PRICE_FEED")
         .unwrap_or_else(|_| "true".to_string())
@@ -226,62 +242,41 @@ async fn main() -> std::io::Result<()> {
             guard.as_ref().cloned()
         };
 
+        let zone_monitor_clone = zone_monitor.clone(); // Clone the zone monitor
+
         tokio::spawn(async move {
-            log::info!("Starting cTrader price feed integration");
+            log::info!("🚀 [MAIN] Starting cTrader price feed integration with zone monitor");
 
             if let Some(broadcaster) = broadcaster_clone {
-                if let Err(e) = connect_to_ctrader_websocket(&broadcaster).await {
-                    log::error!("cTrader price feed failed: {}", e);
+                if let Err(e) = connect_to_ctrader_websocket(&broadcaster, zone_monitor_clone).await
+                {
+                    log::error!("❌ [MAIN] cTrader price feed failed: {}", e);
                 }
             } else {
-                log::error!("Price broadcaster not initialized");
+                log::error!("❌ [MAIN] Price broadcaster not initialized");
             }
         });
     }
 
-    // Setup cache system with zone monitor
-    let (shared_cache, zone_monitor) = match setup_cache_system().await {
-        Ok(cache) => {
-            log::info!("✅ [MAIN] Cache system initialized successfully");
-            cache
-        }
-        Err(e) => {
-            log::error!("❌ [MAIN] Failed to setup cache system: {}", e);
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
-        }
-    };
+    
 
     if let Some(ref monitor) = zone_monitor {
-        info!("🧪 [MAIN] Starting price update test task for zone monitor");
+        let enable_terminal_dashboard = env::var("ENABLE_TERMINAL_DASHBOARD")
+            .unwrap_or_else(|_| "false".to_string())
+            .trim()
+            .to_lowercase()
+            == "true";
 
-        let monitor_clone = Arc::clone(monitor);
-        tokio::spawn(async move {
-            // Simulate price updates every 5 seconds for testing
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-            let mut price = 1.0850; // Starting price for EURUSD
-            let symbols = vec!["EURUSD", "GBPUSD", "USDJPY"];
-            let timeframes = vec!["1h", "4h"];
+        if enable_terminal_dashboard {
+            info!("🎯 [MAIN] Starting terminal dashboard");
 
-            loop {
-                interval.tick().await;
-
-                // Simulate price movement
-                price += (rand::random::<f64>() - 0.5) * 0.0010; // Random movement ±0.5 pips
-
-                for symbol in &symbols {
-                    for timeframe in &timeframes {
-                        if let Err(e) = monitor_clone.update_price(symbol, price, timeframe).await {
-                            warn!(
-                                "🧪 [PRICE_TEST] Failed to update price for {}/{}: {}",
-                                symbol, timeframe, e
-                            );
-                        }
-                    }
-                }
-
-                debug!("🧪 [PRICE_TEST] Updated price to {:.5}", price);
-            }
-        });
+            let dashboard = TerminalDashboard::new(Arc::clone(monitor));
+            tokio::spawn(async move {
+                dashboard.start().await;
+            });
+        } else {
+            info!("📊 [MAIN] Terminal dashboard disabled. Set ENABLE_TERMINAL_DASHBOARD=true to enable");
+        }
     }
 
     // Server configuration
