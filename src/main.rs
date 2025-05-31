@@ -1,7 +1,7 @@
 // src/main.rs - Clean imports and integration
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
-use log;
+use log::{info, warn, error, debug};
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use std::env;
@@ -23,8 +23,9 @@ mod multi_backtest_handler;
 mod optimize_handler;
 mod patterns;
 mod price_feed;
-mod realtime_cache_updater; // ← ADD THIS
-mod realtime_monitor;
+mod realtime_cache_updater;
+mod realtime_monitor; // Keep existing for websocket_server.rs compatibility
+mod realtime_zone_monitor; // ← ADD NEW MODULE
 mod simple_price_websocket;
 pub mod trades;
 pub mod trading;
@@ -33,10 +34,13 @@ mod websocket_server;
 mod zone_detection;
 
 // --- Use necessary types ---
-use crate::cache_endpoints::{get_minimal_cache_zones_debug_with_shared_cache, test_cache_endpoint};
+use crate::cache_endpoints::{
+    get_minimal_cache_zones_debug_with_shared_cache, test_cache_endpoint,
+};
 use crate::ctrader_integration::connect_to_ctrader_websocket;
 use crate::minimal_zone_cache::{get_minimal_cache, MinimalZoneCache};
-use crate::realtime_cache_updater::RealtimeCacheUpdater; // ← ADD THIS
+use crate::realtime_cache_updater::RealtimeCacheUpdater;
+use crate::realtime_zone_monitor::NewRealTimeZoneMonitor; // ← ADD NEW IMPORT
 use crate::simple_price_websocket::SimplePriceWebSocketServer;
 
 // --- Global State ---
@@ -76,10 +80,16 @@ async fn health_check() -> impl Responder {
 }
 
 // --- Cache Setup Function ---
-async fn setup_cache_system() -> Result<Arc<Mutex<MinimalZoneCache>>, Box<dyn std::error::Error + Send + Sync>> {
+async fn setup_cache_system() -> Result<
+    (
+        Arc<Mutex<MinimalZoneCache>>,
+        Option<Arc<NewRealTimeZoneMonitor>>,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     use log::{error, info};
     info!("🚀 [MAIN] Setting up zone cache system...");
-    
+
     let cache = match get_minimal_cache().await {
         Ok(cache) => {
             let (total, supply, demand) = cache.get_stats();
@@ -95,11 +105,43 @@ async fn setup_cache_system() -> Result<Arc<Mutex<MinimalZoneCache>>, Box<dyn st
         }
     };
 
-    // Start real-time updates if enabled
+    // Set up real-time zone monitor if enabled
+    let enable_realtime_monitor = env::var("ENABLE_REALTIME_MONITOR")
+        .unwrap_or_else(|_| "true".to_string())
+        .trim()
+        .to_lowercase()
+        == "true";
+
+    let zone_monitor = if enable_realtime_monitor {
+        let event_capacity = env::var("ZONE_EVENT_CAPACITY")
+            .unwrap_or_else(|_| "1000".to_string())
+            .parse::<usize>()
+            .unwrap_or(1000);
+
+        let (monitor, _event_receiver) =
+            NewRealTimeZoneMonitor::new(Arc::clone(&cache), event_capacity);
+
+        let monitor = Arc::new(monitor);
+
+        // Initial sync with cache
+        if let Err(e) = monitor.sync_with_cache().await {
+            error!("❌ [MAIN] Initial zone monitor sync failed: {}", e);
+        } else {
+            info!("✅ [MAIN] Real-time zone monitor initialized and synced");
+        }
+
+        Some(monitor)
+    } else {
+        info!("⏸️ [MAIN] Real-time zone monitor disabled via ENABLE_REALTIME_MONITOR");
+        None
+    };
+
+    // Start real-time cache updates
     let enable_realtime_cache = env::var("ENABLE_REALTIME_CACHE")
         .unwrap_or_else(|_| "true".to_string())
         .trim()
-        .to_lowercase() == "true";
+        .to_lowercase()
+        == "true";
 
     if enable_realtime_cache {
         let cache_update_interval = env::var("CACHE_UPDATE_INTERVAL_SECONDS")
@@ -107,11 +149,20 @@ async fn setup_cache_system() -> Result<Arc<Mutex<MinimalZoneCache>>, Box<dyn st
             .parse::<u64>()
             .unwrap_or(60);
 
-        info!("🔄 [MAIN] Starting real-time cache updater (interval: {}s)", cache_update_interval);
+        info!(
+            "🔄 [MAIN] Starting real-time cache updater (interval: {}s)",
+            cache_update_interval
+        );
 
-        let cache_updater = RealtimeCacheUpdater::new(Arc::clone(&cache))
-            .with_interval(cache_update_interval);
-        
+        let mut cache_updater =
+            RealtimeCacheUpdater::new(Arc::clone(&cache)).with_interval(cache_update_interval);
+
+        // Add zone monitor to cache updater if available
+        if let Some(ref monitor) = zone_monitor {
+            cache_updater = cache_updater.with_zone_monitor(Arc::clone(monitor));
+            info!("🔗 [MAIN] Cache updater linked with zone monitor");
+        }
+
         if let Err(e) = cache_updater.start().await {
             error!("❌ [MAIN] Failed to start real-time cache updater: {}", e);
             info!("⚠️ [MAIN] Continuing with static cache only");
@@ -122,7 +173,7 @@ async fn setup_cache_system() -> Result<Arc<Mutex<MinimalZoneCache>>, Box<dyn st
         info!("⏸️ [MAIN] Real-time cache updates disabled via ENABLE_REALTIME_CACHE");
     }
 
-    Ok(cache)
+    Ok((cache, zone_monitor))
 }
 
 // --- Main Application ---
@@ -188,8 +239,8 @@ async fn main() -> std::io::Result<()> {
         });
     }
 
-    // Setup cache system
-    let shared_cache = match setup_cache_system().await {
+    // Setup cache system with zone monitor
+    let (shared_cache, zone_monitor) = match setup_cache_system().await {
         Ok(cache) => {
             log::info!("✅ [MAIN] Cache system initialized successfully");
             cache
@@ -199,6 +250,39 @@ async fn main() -> std::io::Result<()> {
             return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
         }
     };
+
+    if let Some(ref monitor) = zone_monitor {
+        info!("🧪 [MAIN] Starting price update test task for zone monitor");
+
+        let monitor_clone = Arc::clone(monitor);
+        tokio::spawn(async move {
+            // Simulate price updates every 5 seconds for testing
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            let mut price = 1.0850; // Starting price for EURUSD
+            let symbols = vec!["EURUSD", "GBPUSD", "USDJPY"];
+            let timeframes = vec!["1h", "4h"];
+
+            loop {
+                interval.tick().await;
+
+                // Simulate price movement
+                price += (rand::random::<f64>() - 0.5) * 0.0010; // Random movement ±0.5 pips
+
+                for symbol in &symbols {
+                    for timeframe in &timeframes {
+                        if let Err(e) = monitor_clone.update_price(symbol, price, timeframe).await {
+                            warn!(
+                                "🧪 [PRICE_TEST] Failed to update price for {}/{}: {}",
+                                symbol, timeframe, e
+                            );
+                        }
+                    }
+                }
+
+                debug!("🧪 [PRICE_TEST] Updated price to {:.5}", price);
+            }
+        });
+    }
 
     // Server configuration
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
