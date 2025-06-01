@@ -14,11 +14,26 @@ pub struct CacheSymbolConfig {
     pub timeframes: Vec<String>,
 }
 
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TradeNotification {
+    pub timestamp: DateTime<Utc>,
+    pub symbol: String,
+    pub timeframe: String,
+    pub action: String, // BUY or SELL
+    pub price: f64,
+    pub zone_type: String,
+    pub strength: f64,
+    pub zone_id: String,
+}
 pub struct MinimalZoneCache {
     zones: HashMap<String, EnrichedZone>,
     monitored_symbols: Vec<CacheSymbolConfig>,
     zone_engine: ZoneDetectionEngine,
     data_fetcher: InfluxDataFetcher,
+    trade_notifications: Vec<TradeNotification>,
+    previous_zone_triggers: HashMap<String, bool>, // zone_id -> was_triggered
+    current_prices: HashMap<String, f64>, // symbol -> price
 }
 
 impl MinimalZoneCache {
@@ -30,6 +45,10 @@ impl MinimalZoneCache {
             monitored_symbols,
             zone_engine: ZoneDetectionEngine::new(),
             data_fetcher: InfluxDataFetcher::new()?,
+             // NEW: Initialize the new fields
+            trade_notifications: Vec::new(),
+            previous_zone_triggers: HashMap::new(),
+            current_prices: HashMap::new(),
         })
     }
 
@@ -323,6 +342,103 @@ impl MinimalZoneCache {
     /// Get the current date range being used by the cache
     pub fn get_current_date_range() -> (String, String) {
         Self::calculate_frontend_matching_dates()
+    }
+    pub fn update_price_and_check_triggers(
+        &mut self, 
+        symbol: &str, 
+        price: f64
+    ) -> Vec<TradeNotification> {
+        // Update current price
+        self.current_prices.insert(symbol.to_string(), price);
+        
+        let mut new_notifications = Vec::new();
+        
+        // Check all zones for this symbol
+        for (zone_id, zone) in &self.zones {
+            // Only check zones for this symbol
+            if zone.symbol.as_deref() != Some(symbol) {
+                continue;
+            }
+            
+            // Only check active zones
+            if !zone.is_active {
+                continue;
+            }
+            
+            // Check if this zone is now triggered (proximal line touched)
+            let is_triggered = self.check_zone_trigger(zone, price);
+            let was_previously_triggered = self.previous_zone_triggers
+                .get(zone_id)
+                .copied()
+                .unwrap_or(false);
+            
+            // New trigger detected!
+            if is_triggered && !was_previously_triggered {
+                info!("🎯 [CACHE] Zone trigger detected: {} at price {:.5}", zone_id, price);
+                
+                let notification = TradeNotification {
+                    timestamp: Utc::now(),
+                    symbol: symbol.to_string(),
+                    timeframe: zone.timeframe.clone().unwrap_or_default(),
+                    action: if zone.zone_type.as_deref().unwrap_or("").contains("supply") { 
+                        "SELL".to_string() 
+                    } else { 
+                        "BUY".to_string() 
+                    },
+                    price,
+                    zone_type: zone.zone_type.clone().unwrap_or_default(),
+                    strength: zone.strength_score.unwrap_or(0.0),
+                    zone_id: zone_id.clone(),
+                };
+                
+                new_notifications.push(notification.clone());
+                self.trade_notifications.insert(0, notification);
+                
+                // Keep only last 50 notifications
+                if self.trade_notifications.len() > 50 {
+                    self.trade_notifications.truncate(50);
+                }
+            }
+            
+            // Update trigger state
+            self.previous_zone_triggers.insert(zone_id.clone(), is_triggered);
+        }
+        
+        new_notifications
+    }
+    
+    // 6. Add this helper method to detect proximal line touches
+    fn check_zone_trigger(&self, zone: &EnrichedZone, current_price: f64) -> bool {
+        let zone_high = zone.zone_high.unwrap_or(0.0);
+        let zone_low = zone.zone_low.unwrap_or(0.0);
+        let is_supply = zone.zone_type.as_deref().unwrap_or("").contains("supply");
+        
+        // Define proximity threshold - when we consider price "at" the proximal line
+        let zone_height = zone_high - zone_low;
+        let pip_threshold: f64 = 0.0002; // 2 pips for most pairs
+        let percent_threshold: f64 = zone_height * 0.02; // 2% of zone height
+        let proximity_threshold = pip_threshold.min(percent_threshold);
+        
+        if is_supply {
+            // Supply zone: trigger when price touches proximal line (zone_low)
+            (current_price - zone_low).abs() <= proximity_threshold
+        } else {
+            // Demand zone: trigger when price touches proximal line (zone_high)  
+            (current_price - zone_high).abs() <= proximity_threshold
+        }
+    }
+    
+    // 7. Add getter methods for the dashboard
+    pub fn get_trade_notifications(&self) -> &Vec<TradeNotification> {
+        &self.trade_notifications
+    }
+    
+    pub fn clear_trade_notifications(&mut self) {
+        self.trade_notifications.clear();
+    }
+    
+    pub fn get_current_prices(&self) -> &HashMap<String, f64> {
+        &self.current_prices
     }
 }
 

@@ -112,7 +112,7 @@ async fn process_ctrader_message(
 
                 // Update zone monitor with price
                 if let Some(monitor) = zone_monitor {
-                    if let Err(e) = monitor.update_price(clean_symbol, close, timeframe).await {
+                    if let Err(e) = monitor.update_price_with_cache_notifications(clean_symbol, close, timeframe).await {
                         log::debug!("⚠️ [CTRADER] Zone monitor update failed for {}/{}: {}", clean_symbol, timeframe, e);
                     }
                 }

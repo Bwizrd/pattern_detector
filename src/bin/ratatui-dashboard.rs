@@ -39,6 +39,17 @@ pub struct ZoneDistanceInfo {
     pub strength_score: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct TradeNotification {
+    pub timestamp: DateTime<Utc>,
+    pub symbol: String,
+    pub timeframe: String,
+    pub action: String, // BUY or SELL
+    pub price: f64,
+    pub zone_type: String,
+    pub strength: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ZoneStatus {
     Approaching,
@@ -85,9 +96,13 @@ pub struct App {
     api_base_url: String,
     pip_values: HashMap<String, f64>,
     zones: Vec<ZoneDistanceInfo>,
+    trade_notifications: Vec<TradeNotification>,
     last_update: Instant,
     error_message: Option<String>,
     update_count: u64,
+    timeframe_filters: HashMap<String, bool>,
+    previous_triggers: std::collections::HashSet<String>,
+    show_breached: bool,
 }
 
 impl App {
@@ -128,14 +143,61 @@ impl App {
         let api_base_url = env::var("API_BASE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
+        let mut timeframe_filters = HashMap::new();
+        timeframe_filters.insert("5m".to_string(), false);  // Disabled by default
+        timeframe_filters.insert("15m".to_string(), false); // Disabled by default
+        timeframe_filters.insert("30m".to_string(), true);
+        timeframe_filters.insert("1h".to_string(), true);
+        timeframe_filters.insert("4h".to_string(), true);
+        timeframe_filters.insert("1d".to_string(), true);
+
         Self {
             client: Client::new(),
             api_base_url,
             pip_values,
             zones: Vec::new(),
+            trade_notifications: Vec::new(),
             last_update: Instant::now(),
             error_message: None,
             update_count: 0,
+            timeframe_filters,
+            previous_triggers: std::collections::HashSet::new(),
+            show_breached: true,
+        }
+    }
+
+    fn toggle_timeframe(&mut self, timeframe: &str) {
+        if let Some(enabled) = self.timeframe_filters.get_mut(timeframe) {
+            *enabled = !*enabled;
+        }
+    }
+
+    fn toggle_breached(&mut self) {
+        self.show_breached = !self.show_breached;
+    }
+
+    fn is_timeframe_enabled(&self, timeframe: &str) -> bool {
+        self.timeframe_filters.get(timeframe).copied().unwrap_or(true)
+    }
+
+    fn add_trade_notification(&mut self, zone: &ZoneDistanceInfo) {
+        let action = if zone.zone_type.contains("supply") { "SELL" } else { "BUY" };
+        
+        let notification = TradeNotification {
+            timestamp: Utc::now(),
+            symbol: zone.symbol.clone(),
+            timeframe: zone.timeframe.clone(),
+            action: action.to_string(),
+            price: zone.current_price,
+            zone_type: zone.zone_type.clone(),
+            strength: zone.strength_score,
+        };
+
+        self.trade_notifications.insert(0, notification);
+        
+        // Keep only last 50 notifications
+        if self.trade_notifications.len() > 50 {
+            self.trade_notifications.truncate(50);
         }
     }
 
@@ -144,6 +206,24 @@ impl App {
         
         match self.fetch_zones().await {
             Ok(zones) => {
+                // Check for new triggers and add notifications
+                let current_triggers: std::collections::HashSet<String> = zones
+                    .iter()
+                    .filter(|z| z.zone_status == ZoneStatus::AtProximal)
+                    .map(|z| format!("{}_{}", z.symbol, z.timeframe))
+                    .collect();
+
+                // Find new triggers (not in previous_triggers)
+                for zone in &zones {
+                    if zone.zone_status == ZoneStatus::AtProximal {
+                        let zone_key = format!("{}_{}", zone.symbol, zone.timeframe);
+                        if !self.previous_triggers.contains(&zone_key) {
+                            self.add_trade_notification(zone);
+                        }
+                    }
+                }
+
+                self.previous_triggers = current_triggers;
                 self.zones = zones;
                 self.last_update = Instant::now();
                 self.update_count += 1;
@@ -162,7 +242,14 @@ impl App {
         
         for zone_json in &zones_json {
             if let Ok(zone_info) = self.extract_zone_distance_info(zone_json, &current_prices).await {
-                zone_distances.push(zone_info);
+                // Filter by timeframe
+                if self.is_timeframe_enabled(&zone_info.timeframe) {
+                    // Filter out breached zones if disabled
+                    if zone_info.zone_status == ZoneStatus::Breached && !self.show_breached {
+                        continue;
+                    }
+                    zone_distances.push(zone_info);
+                }
             }
         }
 
@@ -170,10 +257,20 @@ impl App {
         
         zone_distances.sort_by(|a, b| {
             match (&a.zone_status, &b.zone_status) {
+                // Triggers always come first
                 (ZoneStatus::AtProximal, ZoneStatus::AtProximal) => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
                 (ZoneStatus::AtProximal, _) => std::cmp::Ordering::Less,
                 (_, ZoneStatus::AtProximal) => std::cmp::Ordering::Greater,
-                _ => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
+                // Inside zones come next (negative signed distance)
+                (ZoneStatus::InsideZone, ZoneStatus::InsideZone) => a.signed_distance_pips.partial_cmp(&b.signed_distance_pips).unwrap_or(std::cmp::Ordering::Equal),
+                (ZoneStatus::InsideZone, _) => std::cmp::Ordering::Less,
+                (_, ZoneStatus::InsideZone) => std::cmp::Ordering::Greater,
+                // Breached zones: sort by smallest breach distance first (most recently breached)
+                (ZoneStatus::Breached, ZoneStatus::Breached) => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
+                (ZoneStatus::Breached, _) => std::cmp::Ordering::Greater, // Breached zones go to bottom
+                (_, ZoneStatus::Breached) => std::cmp::Ordering::Less,
+                // Then sort by signed distance (negative first, then positive by proximity)
+                _ => a.signed_distance_pips.partial_cmp(&b.signed_distance_pips).unwrap_or(std::cmp::Ordering::Equal),
             }
         });
 
@@ -256,7 +353,9 @@ impl App {
         let proximity_threshold = 2.0 * pip_value;
         
         if is_supply {
-            if current_price >= distal_line {
+            // Supply zone: proximal=zone_low (bottom), distal=zone_high (top)
+            // Price above distal_line = breached
+            if current_price >= distal_line + proximity_threshold {
                 ZoneStatus::Breached
             } else if (current_price - distal_line).abs() <= proximity_threshold {
                 ZoneStatus::AtDistal
@@ -268,7 +367,9 @@ impl App {
                 ZoneStatus::Approaching
             }
         } else {
-            if current_price <= distal_line {
+            // Demand zone: proximal=zone_high (top), distal=zone_low (bottom)  
+            // Price below distal_line = breached
+            if current_price <= distal_line - proximity_threshold {
                 ZoneStatus::Breached
             } else if (current_price - distal_line).abs() <= proximity_threshold {
                 ZoneStatus::AtDistal
@@ -393,21 +494,58 @@ impl App {
         
         (total, triggers, inside, close, watch)
     }
+
+    fn get_timeframe_status(&self) -> String {
+        let enabled_timeframes: Vec<&str> = self.timeframe_filters
+            .iter()
+            .filter_map(|(tf, &enabled)| if enabled { Some(tf.as_str()) } else { None })
+            .collect();
+        
+        if enabled_timeframes.is_empty() {
+            "None".to_string()
+        } else {
+            enabled_timeframes.join(", ")
+        }
+    }
+
+    fn get_breached_status(&self) -> &str {
+        if self.show_breached { "ON" } else { "OFF" }
+    }
 }
 
 fn ui(f: &mut Frame, app: &App) {
     let size = f.size();
     
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
+    // Split into main area (80%) and right panel (20%)
+    let main_chunks = Layout::default()
+        .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(3),
+            Constraint::Percentage(80),
+            Constraint::Percentage(20),
         ])
         .split(size);
 
+    // Left side layout
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(5),
+            Constraint::Min(1),
+            Constraint::Length(3),
+        ])
+        .split(main_chunks[0]);
+
+    // Right side layout
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+        ])
+        .split(main_chunks[1]);
+
+    // Header
     let header_block = Block::default()
         .borders(Borders::ALL)
         .title("🎯 Zone Trading Dashboard")
@@ -429,16 +567,17 @@ fn ui(f: &mut Frame, app: &App) {
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::White));
 
-    f.render_widget(header, chunks[0]);
+    f.render_widget(header, left_chunks[0]);
 
+    // Stats and timeframe controls
     let (total, triggers, inside, close, watch) = app.get_stats();
     
     let stats_block = Block::default()
         .borders(Borders::ALL)
-        .title("📊 Live Stats")
+        .title("📊 Stats & Timeframes")
         .border_style(Style::default().fg(Color::Green));
 
-    let stats_text = if triggers > 0 {
+    let stats_line = if triggers > 0 {
         Line::from(vec![
             Span::styled("Total: ", Style::default().fg(Color::White)),
             Span::styled(format!("{} ", total), Style::default().fg(Color::White)),
@@ -464,12 +603,33 @@ fn ui(f: &mut Frame, app: &App) {
         ])
     };
 
+    let timeframes_line = Line::from(vec![
+        Span::styled("Timeframes: ", Style::default().fg(Color::Cyan)),
+        Span::styled(format!("{} ", app.get_timeframe_status()), Style::default().fg(Color::White)),
+        Span::styled("| Breached: ", Style::default().fg(Color::Cyan)),
+        Span::styled(app.get_breached_status(), if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
+    ]);
+
+    let controls_line = Line::from(vec![
+        Span::styled("Toggle: ", Style::default().fg(Color::Gray)),
+        Span::styled("[1]5m ", if app.is_timeframe_enabled("5m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[2]15m ", if app.is_timeframe_enabled("15m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[3]30m ", if app.is_timeframe_enabled("30m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[4]1h ", if app.is_timeframe_enabled("1h") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[5]4h ", if app.is_timeframe_enabled("4h") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[6]1d ", if app.is_timeframe_enabled("1d") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[b]breached", if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
+    ]);
+
+    let stats_text = Text::from(vec![stats_line, timeframes_line, controls_line]);
+
     let stats = Paragraph::new(stats_text)
         .block(stats_block)
-        .alignment(Alignment::Center);
+        .alignment(Alignment::Left);
 
-    f.render_widget(stats, chunks[1]);
+    f.render_widget(stats, left_chunks[1]);
 
+    // Main table
     if let Some(error) = &app.error_message {
         let error_block = Block::default()
             .borders(Borders::ALL)
@@ -481,14 +641,14 @@ fn ui(f: &mut Frame, app: &App) {
             .style(Style::default().fg(Color::Red))
             .wrap(Wrap { trim: true });
 
-        f.render_widget(error_widget, chunks[2]);
+        f.render_widget(error_widget, left_chunks[2]);
     } else {
         let table_block = Block::default()
             .borders(Borders::ALL)
             .title("🎯 Active Zones")
             .border_style(Style::default().fg(Color::Blue));
 
-        let header_cells = ["Symbol/TF", "Type", "Signed Dist", "Status", "Price", "Proximal", "Distal", "Strength"]
+        let header_cells = ["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal", "Distal", "Str"]
             .iter()
             .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
 
@@ -517,32 +677,87 @@ fn ui(f: &mut Frame, app: &App) {
             .header(header)
             .block(table_block)
             .widths(&[
-                Constraint::Length(12),
-                Constraint::Length(6),
                 Constraint::Length(10),
-                Constraint::Length(12),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Length(8),
+                Constraint::Length(5),
+                Constraint::Length(7),
+                Constraint::Length(11),
+                Constraint::Length(9),
+                Constraint::Length(9),
+                Constraint::Length(9),
+                Constraint::Length(4),
             ]);
 
-        f.render_widget(table, chunks[2]);
+        f.render_widget(table, left_chunks[2]);
     }
 
+    // Help
     let help_block = Block::default()
         .borders(Borders::ALL)
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "Press 'q' to quit | 'r' to refresh | Arrow keys to navigate | Updates every 1 second";
+    let help_text = "Press 'q' to quit | 'r' to refresh | '1-6' toggle timeframes | 'b' toggle breached | 'c' clear notifications";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center);
 
-    f.render_widget(help, chunks[3]);
+    f.render_widget(help, left_chunks[3]);
 
+    // Right panel - Notification header
+    let notif_header_block = Block::default()
+        .borders(Borders::ALL)
+        .title("📢 Trade Notifications")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let notif_count = app.trade_notifications.len();
+    let notif_header_text = format!("Total: {} notifications", notif_count);
+
+    let notif_header = Paragraph::new(notif_header_text)
+        .block(notif_header_block)
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::White));
+
+    f.render_widget(notif_header, right_chunks[0]);
+
+    // Right panel - Notifications list
+    let notif_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    if app.trade_notifications.is_empty() {
+        let empty_text = Paragraph::new("No trade notifications yet.\n\nTriggers will appear here when zones are touched.")
+            .block(notif_block)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(empty_text, right_chunks[1]);
+    } else {
+        let notif_lines: Vec<Line> = app.trade_notifications.iter().take(25).map(|notif| {
+            let time_str = notif.timestamp.format("%H:%M:%S").to_string();
+            let action_color = if notif.action == "BUY" { Color::Green } else { Color::Red };
+            
+            Line::from(vec![
+                Span::styled(format!("{} ", time_str), Style::default().fg(Color::Gray)),
+                Span::styled(format!("{} ", notif.action), Style::default().fg(action_color).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}/", notif.symbol), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{}", notif.timeframe), Style::default().fg(Color::Yellow)),
+            ])
+        }).collect();
+
+        let notif_text = Text::from(notif_lines);
+
+        let notifications = Paragraph::new(notif_text)
+            .block(notif_block)
+            .style(Style::default().fg(Color::White))
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(notifications, right_chunks[1]);
+    }
+
+    // Trade alert popup (overlay)
     if triggers > 0 {
         let alert_area = Rect {
             x: size.width / 4,
@@ -599,6 +814,30 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app:
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Char('r') => {
                         app.update_data().await;
+                    }
+                    KeyCode::Char('c') => {
+                        app.trade_notifications.clear();
+                    }
+                    KeyCode::Char('1') => {
+                        app.toggle_timeframe("5m");
+                    }
+                    KeyCode::Char('2') => {
+                        app.toggle_timeframe("15m");
+                    }
+                    KeyCode::Char('3') => {
+                        app.toggle_timeframe("30m");
+                    }
+                    KeyCode::Char('4') => {
+                        app.toggle_timeframe("1h");
+                    }
+                    KeyCode::Char('5') => {
+                        app.toggle_timeframe("4h");
+                    }
+                    KeyCode::Char('6') => {
+                        app.toggle_timeframe("1d");
+                    }
+                    KeyCode::Char('b') => {
+                        app.toggle_breached();
                     }
                     _ => {}
                 }

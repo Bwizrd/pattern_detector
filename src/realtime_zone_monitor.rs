@@ -11,6 +11,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::minimal_zone_cache::MinimalZoneCache;
 use crate::types::EnrichedZone;
 
+use crate::minimal_zone_cache::TradeNotification;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewZoneEvent {
     pub zone_id: String,
@@ -489,5 +491,69 @@ impl NewRealTimeZoneMonitor {
             .into_iter()
             .map(|(symbol, (_time, price))| (symbol, price))
             .collect()
+    }
+    pub async fn update_price_with_cache_notifications(
+        &self,
+        symbol: &str,
+        price: f64,
+        timeframe: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Do your existing price update logic first
+        self.update_price(symbol, price, timeframe).await?;
+
+        // NEW: Also check for cache notifications
+        let cache_notifications = {
+            let mut cache_guard = self.zone_cache.lock().await;
+            cache_guard.update_price_and_check_triggers(symbol, price)
+        };
+
+        // If we got new notifications, log them and optionally send events
+        for notification in cache_notifications {
+            info!(
+                "🚨 [ZONE_MONITOR] Cache detected zone trigger: {} {} {}/{} @ {:.5}",
+                notification.action,
+                notification.symbol,
+                notification.timeframe,
+                notification.zone_id,
+                notification.price
+            );
+
+            // Optionally: Convert to your existing NewZoneEvent format and broadcast
+            let zone_event = NewZoneEvent {
+                zone_id: notification.zone_id.clone(),
+                symbol: notification.symbol.clone(),
+                timeframe: notification.timeframe.clone(),
+                event_type: NewZoneEventType::Touch,
+                price: notification.price,
+                timestamp: notification.timestamp,
+                zone_type: if notification.action == "SELL" {
+                    "supply".to_string()
+                } else {
+                    "demand".to_string()
+                },
+                confirmed: true, // Cache confirmed
+            };
+
+            if let Err(e) = self.event_sender.send(zone_event) {
+                warn!(
+                    "⚠️ [ZONE_MONITOR] Failed to send cache notification event: {}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    // 4. Add this helper method to get notifications from cache
+    pub async fn get_trade_notifications_from_cache(&self) -> Vec<TradeNotification> {
+        let cache_guard = self.zone_cache.lock().await;
+        cache_guard.get_trade_notifications().clone()
+    }
+
+    // 5. Add this method to clear notifications
+    pub async fn clear_cache_notifications(&self) {
+        let mut cache_guard = self.zone_cache.lock().await;
+        cache_guard.clear_trade_notifications();
     }
 }

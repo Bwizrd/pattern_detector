@@ -123,6 +123,57 @@ async fn test_prices_handler() -> impl Responder {
     }))
 }
 
+// NEW: TRADE NOTIFICATIONS HANDLERS
+async fn get_trade_notifications_handler(
+    zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
+) -> impl Responder {
+    log::info!("Trade notifications endpoint called");
+    
+    if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
+        let notifications = monitor.get_trade_notifications_from_cache().await;
+        log::info!("Retrieved {} trade notifications", notifications.len());
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "count": notifications.len(),
+            "notifications": notifications,
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        log::warn!("Zone monitor not available for trade notifications");
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Zone monitor not available",
+            "notifications": [],
+            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+        }))
+    }
+}
+
+async fn clear_trade_notifications_handler(
+    zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
+) -> impl Responder {
+    log::info!("Clear trade notifications endpoint called");
+    
+    if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
+        monitor.clear_cache_notifications().await;
+        log::info!("Trade notifications cleared");
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Trade notifications cleared",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        log::warn!("Zone monitor not available for clearing notifications");
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Zone monitor not available",
+            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+        }))
+    }
+}
+
 // --- Cache Setup Function ---
 async fn setup_cache_system() -> Result<
     (
@@ -397,6 +448,9 @@ async fn main() -> std::io::Result<()> {
             // PRICE ENDPOINTS
             .route("/current-prices", web::get().to(get_current_prices_handler))
             .route("/test-prices", web::get().to(test_prices_handler))
+            // NEW: TRADE NOTIFICATION ENDPOINTS
+            .route("/trade-notifications", web::get().to(get_trade_notifications_handler))
+            .route("/trade-notifications/clear", web::post().to(clear_trade_notifications_handler))
     })
     .bind((host, port))?
     .run();
@@ -433,5 +487,7 @@ fn print_server_info(host: &str, port: u16) {
     println!("  GET  /debug/minimal-cache-zones");
     println!("  GET  /current-prices");
     println!("  GET  /test-prices");
+    println!("  GET  /trade-notifications");
+    println!("  POST /trade-notifications/clear");
     println!("--------------------------------------------------");
 }
