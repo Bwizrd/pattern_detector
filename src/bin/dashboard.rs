@@ -1,4 +1,4 @@
-// src/bin/dashboard.rs - Complete standalone terminal dashboard
+// src/bin/dashboard.rs - Enhanced terminal dashboard with trade trigger detection
 use std::collections::HashMap;
 use std::env;
 use tokio::time::{interval, Duration};
@@ -18,14 +18,25 @@ pub struct ZoneDistanceInfo {
     pub zone_id: String,
     pub symbol: String,
     pub timeframe: String,
-    pub zone_type: String, // "supply" or "demand"
+    pub zone_type: String,
     pub current_price: f64,
     pub proximal_line: f64,
     pub distal_line: f64,
+    pub signed_distance_pips: f64,
     pub distance_pips: f64,
+    pub zone_status: ZoneStatus,
     pub last_update: DateTime<Utc>,
     pub touch_count: i32,
     pub strength_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub enum ZoneStatus {
+    Approaching,
+    AtProximal,
+    InsideZone,
+    AtDistal,
+    Breached,
 }
 
 pub struct StandaloneDashboard {
@@ -39,7 +50,6 @@ impl StandaloneDashboard {
     pub fn new() -> Self {
         let mut pip_values = HashMap::new();
         
-        // Define pip values for major currency pairs
         pip_values.insert("EURUSD".to_string(), 0.0001);
         pip_values.insert("GBPUSD".to_string(), 0.0001);
         pip_values.insert("AUDUSD".to_string(), 0.0001);
@@ -68,8 +78,6 @@ impl StandaloneDashboard {
         pip_values.insert("GBPNZD".to_string(), 0.0001);
         pip_values.insert("NZDCAD".to_string(), 0.0001);
         pip_values.insert("NZDCHF".to_string(), 0.0001);
-        
-        // Indices (larger pip values)
         pip_values.insert("NAS100".to_string(), 1.0);
         pip_values.insert("US500".to_string(), 0.1);
 
@@ -90,11 +98,9 @@ impl StandaloneDashboard {
     }
 
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // Setup terminal with crossterm
         let mut stdout_handle = io::stdout();
         execute!(stdout_handle, Hide, Clear(ClearType::All), SetTitle("Zone Dashboard"))?;
         
-        // Show startup message
         execute!(stdout_handle, MoveTo(0, 0))?;
         println!("🎯 Real-time Zone Dashboard - Standalone Mode");
         println!("Connected to: {}", self.api_base_url);
@@ -105,7 +111,6 @@ impl StandaloneDashboard {
 
         let mut ticker = interval(self.update_interval);
         
-        // Setup Ctrl+C handler
         let _ = ctrlc::set_handler(move || {
             let mut stdout_handle = io::stdout();
             let _ = execute!(stdout_handle, Show, Clear(ClearType::All), MoveTo(0, 0));
@@ -128,7 +133,7 @@ impl StandaloneDashboard {
         }
     }
 
-     async fn get_current_prices(&self) -> Result<HashMap<String, f64>, Box<dyn std::error::Error>> {
+    async fn get_current_prices(&self) -> Result<HashMap<String, f64>, Box<dyn std::error::Error>> {
         let url = format!("{}/current-prices", self.api_base_url);
         
         let response = self.client
@@ -138,7 +143,7 @@ impl StandaloneDashboard {
             .await?;
 
         if !response.status().is_success() {
-            return Ok(HashMap::new()); // Return empty if API fails
+            return Ok(HashMap::new());
         }
 
         let json: serde_json::Value = response.json().await?;
@@ -158,15 +163,49 @@ impl StandaloneDashboard {
         Ok(HashMap::new())
     }
 
+    fn calculate_zone_status(
+        &self,
+        current_price: f64,
+        proximal_line: f64,
+        distal_line: f64,
+        is_supply: bool,
+        pip_value: f64,
+    ) -> ZoneStatus {
+        let proximity_threshold = 2.0 * pip_value;
+        
+        if is_supply {
+            if current_price >= distal_line {
+                ZoneStatus::Breached
+            } else if (current_price - distal_line).abs() <= proximity_threshold {
+                ZoneStatus::AtDistal
+            } else if current_price > proximal_line && current_price < distal_line {
+                ZoneStatus::InsideZone
+            } else if (current_price - proximal_line).abs() <= proximity_threshold {
+                ZoneStatus::AtProximal
+            } else {
+                ZoneStatus::Approaching
+            }
+        } else {
+            if current_price <= distal_line {
+                ZoneStatus::Breached
+            } else if (current_price - distal_line).abs() <= proximity_threshold {
+                ZoneStatus::AtDistal
+            } else if current_price < proximal_line && current_price > distal_line {
+                ZoneStatus::InsideZone
+            } else if (current_price - proximal_line).abs() <= proximity_threshold {
+                ZoneStatus::AtProximal
+            } else {
+                ZoneStatus::Approaching
+            }
+        }
+    }
+
     async fn update_dashboard(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut stdout_handle = io::stdout();
         
-        // Clear screen and reset cursor
         execute!(stdout_handle, Clear(ClearType::All), MoveTo(0, 0))?;
         
         let now = Utc::now();
-        
-        // Get zones from API
         let zones_json = self.get_zones_from_api().await?;
         
         if zones_json.is_empty() {
@@ -183,10 +222,7 @@ impl StandaloneDashboard {
             return Ok(());
         }
 
-        // Get current prices (placeholder for now)
         let current_prices = self.get_current_prices().await.unwrap_or_default();
-
-        // Extract zone distance info
         let mut zone_distances: Vec<ZoneDistanceInfo> = Vec::new();
         let zones_count = zones_json.len();
         
@@ -196,26 +232,33 @@ impl StandaloneDashboard {
             }
         }
 
-        // Filter and sort
         zone_distances.retain(|z| z.current_price > 0.0 && z.distance_pips >= 0.0 && z.distance_pips < 10000.0);
-        zone_distances.sort_by(|a, b| a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal));
+        
+        zone_distances.sort_by(|a, b| {
+            match (&a.zone_status, &b.zone_status) {
+                (ZoneStatus::AtProximal, ZoneStatus::AtProximal) => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
+                (ZoneStatus::AtProximal, _) => std::cmp::Ordering::Less,
+                (_, ZoneStatus::AtProximal) => std::cmp::Ordering::Greater,
+                _ => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
+            }
+        });
 
-        // Display header
         execute!(stdout_handle,
             SetForegroundColor(Color::Cyan),
-            Print("💡 Legend: DIST=Distance in pips, TCHES=Touch count, STRTH=Strength score\n"),
-            Print("🔴 <5 pips (URGENT) | 🟡 <10 pips (CLOSE) | 🟢 <25 pips (WATCH)\n"),
+            Print("💡 Legend: SDIST=Signed Distance (negative=inside zone), STATUS=Zone status\n"),
+            Print("🚨 AT_PROXIMAL = TRADE TRIGGER | 🔴 <5 pips | 🟡 <10 pips | 🟢 <25 pips\n"),
             SetForegroundColor(Color::White),
             Print(format!("🎯 Real-time Zone Dashboard - {} | 🔗 Connected to {}\n", 
                          now.format("%H:%M:%S"), self.api_base_url)),
             Print("══════════════════════════════════════════════════════════════\n"),
-            Print(format!("{:<15} {:<8} {:<6} {:<11} {:<11} {:<11} {:<6} {:<6}\n", 
-                         "SYMBOL/TF", "TYPE", "DIST", "PRICE", "PROXIMAL", "DISTAL", "TCHES", "STRTH")),
+            Print(format!("{:<15} {:<8} {:<8} {:<12} {:<11} {:<11} {:<11} {:<6}\n", 
+                         "SYMBOL/TF", "TYPE", "SDIST", "STATUS", "PRICE", "PROXIMAL", "DISTAL", "STRTH")),
             Print("──────────────────────────────────────────────────────────────\n"),
             ResetColor
         )?;
 
         let display_count = zone_distances.len().min(20);
+        let mut trade_triggers = Vec::new();
         
         if display_count == 0 {
             execute!(stdout_handle,
@@ -229,14 +272,25 @@ impl StandaloneDashboard {
             )?;
         } else {
             for zone in zone_distances.iter().take(display_count) {
-                let color = if zone.distance_pips < 5.0 {
-                    Color::Red
-                } else if zone.distance_pips < 10.0 {
-                    Color::Yellow
-                } else if zone.distance_pips < 25.0 {
-                    Color::Green
-                } else {
-                    Color::White
+                let (color, status_emoji) = match zone.zone_status {
+                    ZoneStatus::AtProximal => {
+                        trade_triggers.push(zone);
+                        (Color::Magenta, "🚨TRIGGER")
+                    },
+                    ZoneStatus::InsideZone => (Color::Red, "INSIDE"),
+                    ZoneStatus::AtDistal => (Color::Blue, "AT_DISTAL"),
+                    ZoneStatus::Breached => (Color::DarkGrey, "BREACHED"),
+                    ZoneStatus::Approaching => {
+                        if zone.distance_pips < 5.0 {
+                            (Color::Red, "URGENT")
+                        } else if zone.distance_pips < 10.0 {
+                            (Color::Yellow, "CLOSE")
+                        } else if zone.distance_pips < 25.0 {
+                            (Color::Green, "WATCH")
+                        } else {
+                            (Color::White, "FAR")
+                        }
+                    }
                 };
                 
                 let symbol_tf = format!("{}/{}", zone.symbol, zone.timeframe);
@@ -244,16 +298,17 @@ impl StandaloneDashboard {
                 
                 execute!(stdout_handle,
                     SetForegroundColor(color),
-                    Print(format!("{:<15} {:<8} {:<6.1} {:<11.5} {:<11.5} {:<11.5} {:<6} {:<6.0}\n",
-                                 symbol_tf, zone_type_short, zone.distance_pips,
+                    Print(format!("{:<15} {:<8} {:<8.1} {:<12} {:<11.5} {:<11.5} {:<11.5} {:<6.0}\n",
+                                 symbol_tf, zone_type_short, zone.signed_distance_pips, status_emoji,
                                  zone.current_price, zone.proximal_line, zone.distal_line,
-                                 zone.touch_count, zone.strength_score)),
+                                 zone.strength_score)),
                     ResetColor
                 )?;
             }
         }
 
-        // Summary stats
+        let triggers_count = trade_triggers.len();
+        let inside_zone = zone_distances.iter().filter(|z| matches!(z.zone_status, ZoneStatus::InsideZone)).count();
         let very_close = zone_distances.iter().filter(|z| z.distance_pips < 5.0).count();
         let close = zone_distances.iter().filter(|z| z.distance_pips < 10.0).count();
         let medium = zone_distances.iter().filter(|z| z.distance_pips < 25.0).count();
@@ -261,10 +316,48 @@ impl StandaloneDashboard {
         execute!(stdout_handle,
             Print("──────────────────────────────────────────────────────────────\n"),
             SetForegroundColor(Color::Cyan),
-            Print(format!("📊 Total: {} | 🔴 <5 pips: {} | 🟡 <10 pips: {} | 🟢 <25 pips: {} | ⏱️  Updated: {}\n", 
-                         zone_distances.len(), very_close, close, medium, now.format("%H:%M:%S"))),
+            Print(format!("📊 Total: {} | ", zone_distances.len())),
+        )?;
+        
+        if triggers_count > 0 {
+            execute!(stdout_handle,
+                SetForegroundColor(Color::Magenta),
+                Print(format!("🚨 TRADE TRIGGERS: {} | ", triggers_count)),
+            )?;
+        }
+        
+        execute!(stdout_handle,
+            SetForegroundColor(Color::Red),
+            Print(format!("📍 Inside: {} | ", inside_zone)),
+            SetForegroundColor(Color::Yellow),
+            Print(format!("🔴 <5 pips: {} | ", very_close)),
+            SetForegroundColor(Color::Green),
+            Print(format!("🟡 <10 pips: {} | ", close)),
+            Print(format!("🟢 <25 pips: {} | ", medium)),
+            SetForegroundColor(Color::Cyan),
+            Print(format!("⏱️  Updated: {}\n", now.format("%H:%M:%S"))),
             ResetColor
         )?;
+
+        if !trade_triggers.is_empty() {
+            execute!(stdout_handle,
+                Print("\n"),
+                SetForegroundColor(Color::Magenta),
+                Print("🚨 TRADE TRIGGER ALERT! 🚨\n"),
+                ResetColor
+            )?;
+            
+            for trigger in trade_triggers {
+                let action = if trigger.zone_type.contains("supply") { "SELL" } else { "BUY" };
+                execute!(stdout_handle,
+                    SetForegroundColor(Color::Magenta),
+                    Print(format!("   {} {}/{} @ {:.5} (proximal: {:.5})\n", 
+                                 action, trigger.symbol, trigger.timeframe, 
+                                 trigger.current_price, trigger.proximal_line)),
+                    ResetColor
+                )?;
+            }
+        }
 
         Ok(())
     }
@@ -282,21 +375,15 @@ impl StandaloneDashboard {
             return Err(format!("API returned status: {}", response.status()).into());
         }
 
-        // Get raw response to debug the format
         let response_text = response.text().await?;
-        
-        // Try to parse as JSON to see the structure
         let json_value: Value = serde_json::from_str(&response_text)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-        // Handle different response formats
         match json_value {
             Value::Array(zones) => {
-                // Direct array of zones
                 Ok(zones)
             }
             Value::Object(obj) => {
-                // Look for zones in common field names
                 if let Some(zones_array) = obj.get("retrieved_zones") {
                     if let Value::Array(zones) = zones_array {
                         Ok(zones.clone())
@@ -316,7 +403,6 @@ impl StandaloneDashboard {
                         Err("'data' field is not an array".into())
                     }
                 } else {
-                    // If it's an object but not the expected format, show the structure
                     let keys: Vec<_> = obj.keys().collect();
                     Err(format!("Unexpected object structure. Available keys: {:?}", keys).into())
                 }
@@ -347,7 +433,6 @@ impl StandaloneDashboard {
             .unwrap_or("UNKNOWN")
             .to_string();
             
-        // Map 'type' field to zone_type (your API uses 'type' instead of 'zone_type')
         let zone_type = zone_json.get("type")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
@@ -369,11 +454,9 @@ impl StandaloneDashboard {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
 
-        // Try to get current price from multiple sources
         let current_price = current_prices.get(&symbol)
             .copied()
             .or_else(|| {
-                // Fallback: use zone midpoint as dummy price for visualization
                 if zone_high > 0.0 && zone_low > 0.0 {
                     Some((zone_high + zone_low) / 2.0)
                 } else {
@@ -393,9 +476,23 @@ impl StandaloneDashboard {
             (zone_high, zone_low)
         };
 
-        let price_distance = (current_price - proximal_line).abs();
         let pip_value = self.pip_values.get(&symbol).cloned().unwrap_or(0.0001);
-        let distance_pips = price_distance / pip_value;
+        
+        let signed_distance_pips = if is_supply {
+            (proximal_line - current_price) / pip_value
+        } else {
+            (current_price - proximal_line) / pip_value
+        };
+        
+        let distance_pips = signed_distance_pips.abs();
+        
+        let zone_status = self.calculate_zone_status(
+            current_price, 
+            proximal_line, 
+            distal_line, 
+            is_supply, 
+            pip_value
+        );
 
         if distance_pips.is_nan() || distance_pips.is_infinite() {
             return Err("Invalid distance calculation".into());
@@ -409,7 +506,9 @@ impl StandaloneDashboard {
             current_price,
             proximal_line,
             distal_line,
+            signed_distance_pips,
             distance_pips,
+            zone_status,
             last_update: Utc::now(),
             touch_count,
             strength_score,
@@ -419,7 +518,6 @@ impl StandaloneDashboard {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Simple logging setup for standalone mode
     env_logger::init();
 
     let dashboard = StandaloneDashboard::new();
