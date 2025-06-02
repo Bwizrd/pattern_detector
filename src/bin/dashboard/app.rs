@@ -40,6 +40,7 @@ pub struct App {
     
     // New fields for zone ID navigation and copying
     pub selected_notification_index: Option<usize>,
+    pub selected_zone_index: Option<usize>, 
     pub last_copied_zone_id: Option<String>,
 
     pub min_strength_filter: f64,
@@ -126,6 +127,7 @@ impl App {
             show_breached: true,
             previous_triggers: std::collections::HashSet::new(),
             selected_notification_index: None,
+            selected_zone_index: None, 
             last_copied_zone_id: None,
             min_strength_filter: 100.0,
             strength_input_mode: false,
@@ -135,8 +137,13 @@ impl App {
 
     pub fn switch_page(&mut self, page: AppPage) {
         // Reset selection when switching to dashboard
-        if matches!(page, AppPage::Dashboard) {
-            self.selected_notification_index = None;
+        match page {
+            AppPage::Dashboard => {
+                self.selected_notification_index = None;
+            }
+            AppPage::NotificationMonitor => {
+                self.selected_zone_index = None;
+            }
         }
         self.current_page = page;
     }
@@ -177,6 +184,58 @@ impl App {
         };
         
         filters.get(timeframe).copied().unwrap_or(true)
+    }
+
+      pub fn select_next_zone(&mut self) {
+        if !self.zones.is_empty() {
+            match self.selected_zone_index {
+                Some(current_index) => {
+                    let next_index = (current_index + 1) % self.zones.len();
+                    self.selected_zone_index = Some(next_index);
+                }
+                None => {
+                    self.selected_zone_index = Some(0);
+                }
+            }
+        }
+    }
+
+    pub fn select_previous_zone(&mut self) {
+        if !self.zones.is_empty() {
+            match self.selected_zone_index {
+                Some(current_index) => {
+                    let prev_index = if current_index == 0 { 
+                        self.zones.len() - 1 
+                    } else { 
+                        current_index - 1 
+                    };
+                    self.selected_zone_index = Some(prev_index);
+                }
+                None => {
+                    self.selected_zone_index = Some(0);
+                }
+            }
+        }
+    }
+
+    // NEW: Copy selected zone ID from dashboard
+    pub fn copy_selected_dashboard_zone_id(&mut self) {
+        if let Some(index) = self.selected_zone_index {
+            if let Some(zone) = self.zones.get(index) {
+                // Try to copy to system clipboard
+                match self.copy_to_clipboard(&zone.zone_id) {
+                    Ok(()) => {
+                        self.last_copied_zone_id = Some(format!("✅ Copied: {}", zone.zone_id));
+                    }
+                    Err(_) => {
+                        // Fallback: just show the zone ID
+                        self.last_copied_zone_id = Some(format!("Zone ID: {}", zone.zone_id));
+                    }
+                }
+            }
+        } else {
+            self.last_copied_zone_id = Some("❌ No zone selected".to_string());
+        }
     }
 
     // Navigation methods for notifications
@@ -260,6 +319,7 @@ impl App {
             self.last_copied_zone_id = Some("❌ No notification selected".to_string());
         }
     }
+
 
     fn copy_to_clipboard(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
         // Try different clipboard commands based on OS
@@ -352,7 +412,18 @@ impl App {
                 self.last_update = Instant::now();
                 self.update_count += 1;
                 
-                // Reset selection if we have fewer notifications now
+                // Reset zone selection if we have fewer zones now
+                if let Some(index) = self.selected_zone_index {
+                    if index >= self.zones.len() {
+                        self.selected_zone_index = if self.zones.is_empty() {
+                            None
+                        } else {
+                            Some(self.zones.len() - 1)
+                        };
+                    }
+                }
+                
+                // Reset notification selection if we have fewer notifications now
                 if let Some(index) = self.selected_notification_index {
                     if index >= self.all_notifications.len() {
                         self.selected_notification_index = if self.all_notifications.is_empty() {
@@ -368,7 +439,7 @@ impl App {
             }
         }
     }
-
+    
     async fn fetch_all_data(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Fetch zones with current prices
         let zones_response = self.get_zones_from_api().await?;

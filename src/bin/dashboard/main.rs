@@ -1,4 +1,4 @@
-// src/bin/dashboard/main.rs - Complete main entry point with enhanced key handling
+// src/bin/dashboard/main.rs - Complete main entry point with zone navigation
 use std::io;
 use tokio::time::{Duration, Instant};
 use crossterm::{
@@ -64,23 +64,38 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app:
                         KeyCode::Char('n') => {
                             app.switch_page(AppPage::NotificationMonitor);
                         }
-                        // Navigation keys for notifications (only on notification monitor)
+                        // Navigation keys - work on both pages but for different content
                         KeyCode::Up => {
-                            if app.current_page == AppPage::NotificationMonitor {
-                                app.select_previous_notification();
+                            match app.current_page {
+                                AppPage::Dashboard => {
+                                    app.select_previous_zone();
+                                }
+                                AppPage::NotificationMonitor => {
+                                    app.select_previous_notification();
+                                }
                             }
                         }
                         KeyCode::Down => {
-                            if app.current_page == AppPage::NotificationMonitor {
-                                app.select_next_notification();
+                            match app.current_page {
+                                AppPage::Dashboard => {
+                                    app.select_next_zone();
+                                }
+                                AppPage::NotificationMonitor => {
+                                    app.select_next_notification();
+                                }
                             }
                         }
                         KeyCode::Char('y') => {
-                            if app.current_page == AppPage::NotificationMonitor {
-                                app.copy_selected_zone_id();
+                            match app.current_page {
+                                AppPage::Dashboard => {
+                                    app.copy_selected_dashboard_zone_id();
+                                }
+                                AppPage::NotificationMonitor => {
+                                    app.copy_selected_zone_id();
+                                }
                             }
                         }
-                        // NEW: Strength filter toggle (only on dashboard)
+                        // Strength filter toggle (only on dashboard)
                         KeyCode::Char('s') => {
                             if app.current_page == AppPage::Dashboard {
                                 app.toggle_strength_input_mode();

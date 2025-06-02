@@ -144,7 +144,7 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
     
     let stats_block = Block::default()
         .borders(Borders::ALL)
-        .title("📊 Stats & Timeframes")
+        .title("📊 Stats & Controls")
         .border_style(Style::default().fg(Color::Green));
 
     // Build stats line with more detail on larger screens
@@ -191,7 +191,7 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         Span::styled(app.get_breached_status(), if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
     ]);
 
-     let strength_line = Line::from(vec![
+    let strength_line = Line::from(vec![
         Span::styled(app.get_strength_filter_status(), 
             if app.strength_input_mode { 
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
@@ -205,6 +205,20 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         },
     ]);
 
+    // NEW: Add selection status line
+    let selection_line = Line::from(vec![
+        if let Some(index) = app.selected_zone_index {
+            Span::styled(format!("Selected: Zone {} ", index + 1), Style::default().fg(Color::Yellow))
+        } else {
+            Span::styled("Selected: None ", Style::default().fg(Color::Gray))
+        },
+        if let Some(copied) = &app.last_copied_zone_id {
+            Span::styled(format!("| {}", copied), Style::default().fg(Color::Green))
+        } else {
+            Span::styled("| ↑↓ to select, 'y' to copy zone ID", Style::default().fg(Color::Gray))
+        },
+    ]);
+
     let controls_line = Line::from(vec![
         Span::styled("Toggle: ", Style::default().fg(Color::Gray)),
         Span::styled("[1]5m ", if app.is_timeframe_enabled("5m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
@@ -213,10 +227,12 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         Span::styled("[4]1h ", if app.is_timeframe_enabled("1h") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
         Span::styled("[5]4h ", if app.is_timeframe_enabled("4h") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
         Span::styled("[6]1d ", if app.is_timeframe_enabled("1d") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
-        Span::styled("[b]breached", if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
+        Span::styled("[b]breached ", if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
+        Span::styled("[s]strength", Style::default().fg(Color::Cyan)),
     ]);
 
-    let stats_text = Text::from(vec![stats_line, timeframes_line, strength_line, controls_line]);
+    // NEW: Build text with 5 lines instead of 4
+    let stats_text = Text::from(vec![stats_line, timeframes_line, strength_line, selection_line, controls_line]);
 
     let stats = Paragraph::new(stats_text)
         .block(stats_block)
@@ -247,25 +263,40 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         // Calculate available width (subtract borders and padding)
         let available_width = area.width.saturating_sub(4); // 2 for borders + 2 for padding
         
-        // Dynamic column configuration that uses ALL available space
-        let (headers, widths, max_rows) = if screen_width > 140 {
-            // Large screens: Show all columns with proportional spacing
-            let base_widths = [15, 6, 10, 15, 12, 12, 12, 8, 10]; // Base proportions
+        // Dynamic column configuration that includes Zone ID
+        let (headers, widths, max_rows) = if screen_width > 160 {
+            // Very large screens: Show all columns including Zone ID
+            let base_widths = [12, 6, 8, 12, 10, 10, 10, 6, 6, 20]; // Added Zone ID column
             let total_base: u16 = base_widths.iter().sum();
             
             let widths = base_widths.iter().map(|&w| {
                 let proportion = (w as f32 / total_base as f32 * available_width as f32) as u16;
-                Constraint::Length(proportion.max(6)) // Minimum 6 chars per column
+                Constraint::Length(proportion.max(6))
             }).collect();
             
             (
-                vec!["Symbol/TF", "Type", "Distance", "Status", "Price", "Proximal", "Distal", "Str", "Touches"],
+                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal", "Distal", "Str", "Touch", "Zone ID"],
                 widths,
-                50  // More rows on large screens
+                50
+            )
+        } else if screen_width > 140 {
+            // Large screens: Show most columns but truncated Zone ID
+            let base_widths = [15, 6, 10, 15, 12, 12, 12, 8, 16]; // Zone ID instead of touches
+            let total_base: u16 = base_widths.iter().sum();
+            
+            let widths = base_widths.iter().map(|&w| {
+                let proportion = (w as f32 / total_base as f32 * available_width as f32) as u16;
+                Constraint::Length(proportion.max(6))
+            }).collect();
+            
+            (
+                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal", "Distal", "Str", "Zone ID"],
+                widths,
+                50
             )
         } else if screen_width > 120 {
-            // Medium-large screens: Hide touches column but use full width
-            let base_widths = [18, 8, 12, 18, 15, 15, 15, 10]; // Larger proportions
+            // Medium-large screens: Basic columns + truncated Zone ID
+            let base_widths = [18, 8, 12, 18, 15, 15, 16];
             let total_base: u16 = base_widths.iter().sum();
             
             let widths = base_widths.iter().map(|&w| {
@@ -274,33 +305,33 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             }).collect();
             
             (
-                vec!["Symbol/TF", "Type", "Distance", "Status", "Price", "Proximal", "Distal", "Str"],
+                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal", "Zone ID"],
                 widths,
                 45
             )
         } else if screen_width > 100 {
-            // Medium screens: Use percentage-based widths for flexibility
+            // Medium screens: Essential columns only
             (
-                vec!["Symbol/TF", "Type", "Distance", "Status", "Price", "Proximal"],
+                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Zone ID"],
                 vec![
-                    Constraint::Percentage(20),  // Symbol/TF gets 20%
-                    Constraint::Percentage(10),  // Type gets 10%
-                    Constraint::Percentage(12),  // Distance gets 12%
-                    Constraint::Percentage(18),  // Status gets 18%
-                    Constraint::Percentage(20),  // Price gets 20%
-                    Constraint::Percentage(20),  // Proximal gets 20%
+                    Constraint::Percentage(18),
+                    Constraint::Percentage(10),
+                    Constraint::Percentage(12),
+                    Constraint::Percentage(18),
+                    Constraint::Percentage(18),
+                    Constraint::Percentage(24),  // Zone ID gets remaining space
                 ],
                 35
             )
         } else {
-            // Small screens: Use all available space with minimal columns
+            // Small screens: Minimal columns
             (
-                vec!["Symbol/TF", "Type", "Distance", "Status"],
+                vec!["Symbol/TF", "Type", "S.Dist", "Status"],
                 vec![
-                    Constraint::Percentage(30),  // Symbol/TF
-                    Constraint::Percentage(15),  // Type
-                    Constraint::Percentage(20),  // Distance
-                    Constraint::Percentage(35),  // Status
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(35),
                 ],
                 25
             )
@@ -311,12 +342,17 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
 
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-        let rows: Vec<Row> = app.zones.iter().take(max_rows).map(|zone| {
+        let rows: Vec<Row> = app.zones.iter().enumerate().take(max_rows).map(|(index, zone)| {
             let symbol_tf = format!("{}/{}", zone.symbol, zone.timeframe);
             let zone_type_short = if zone.zone_type.contains("supply") { "SELL" } else { "BUY" };
             let status_text = format!("{} {}", zone.zone_status.symbol(), zone.zone_status.text());
             
-            let row_style = Style::default().fg(zone.zone_status.color());
+            // Highlight selected row
+            let row_style = if Some(index) == app.selected_zone_index {
+                Style::default().bg(Color::DarkGray).fg(zone.zone_status.color())
+            } else {
+                Style::default().fg(zone.zone_status.color())
+            };
             
             // Build row cells based on screen size
             let mut cells = vec![
@@ -330,30 +366,103 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             if screen_width > 100 {
                 cells.extend(vec![
                     Cell::from(format!("{:.5}", zone.current_price)),
-                    Cell::from(format!("{:.5}", zone.proximal_line)),
                 ]);
                 
                 if screen_width > 120 {
-                    cells.extend(vec![
-                        Cell::from(format!("{:.5}", zone.distal_line)),
-                        Cell::from(format!("{:.0}", zone.strength_score)),
-                    ]);
+                    cells.push(Cell::from(format!("{:.5}", zone.proximal_line)));
                     
                     if screen_width > 140 {
-                        cells.push(Cell::from(format!("{}", zone.touch_count)));
+                        cells.extend(vec![
+                            Cell::from(format!("{:.5}", zone.distal_line)),
+                            Cell::from(format!("{:.0}", zone.strength_score)),
+                        ]);
+                        
+                        if screen_width > 160 {
+                            cells.push(Cell::from(format!("{}", zone.touch_count)));
+                        }
                     }
                 }
+                
+                // Add Zone ID column (truncated based on available space)
+                let zone_id_display = if screen_width > 160 {
+                    zone.zone_id.clone() // Show full ID on very large screens
+                } else if screen_width > 140 {
+                    if zone.zone_id.len() > 16 {
+                        format!("{}...", &zone.zone_id[..13])
+                    } else {
+                        zone.zone_id.clone()
+                    }
+                } else if screen_width > 120 {
+                    if zone.zone_id.len() > 14 {
+                        format!("{}...", &zone.zone_id[..11])
+                    } else {
+                        zone.zone_id.clone()
+                    }
+                } else {
+                    if zone.zone_id.len() > 12 {
+                        format!("{}...", &zone.zone_id[..9])
+                    } else {
+                        zone.zone_id.clone()
+                    }
+                };
+                
+                cells.push(Cell::from(zone_id_display).style(row_style.fg(Color::Magenta)));
             }
             
             Row::new(cells).style(row_style)
         }).collect();
 
-        let table = Table::new(rows)
-            .header(header)
-            .block(table_block)
-            .widths(&widths);
+        // Add selection indicator if there are zones
+        if !rows.is_empty() && app.zones.len() > 0 {
+            let indicator_rows: Vec<Row> = app.zones.iter().enumerate().take(max_rows).map(|(index, _)| {
+                let indicator = if Some(index) == app.selected_zone_index { "►" } else { " " };
+                let style = if Some(index) == app.selected_zone_index {
+                    Style::default().bg(Color::DarkGray).fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                Row::new(vec![Cell::from(indicator).style(style)])
+            }).collect();
 
-        f.render_widget(table, area);
+            // Create side-by-side layout: indicator + main table
+            let table_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(2),  // Indicator column
+                    Constraint::Min(1),     // Main table
+                ])
+                .split(area);
+
+            // Render indicator column
+            let indicator_table = Table::new(indicator_rows)
+                .block(Block::default().borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM))
+                .widths(&[Constraint::Length(2)]);
+
+            f.render_widget(indicator_table, table_chunks[0]);
+
+            // Render main table
+            let main_table_area = Rect {
+                x: table_chunks[1].x,
+                y: table_chunks[1].y,
+                width: table_chunks[1].width,
+                height: table_chunks[1].height,
+            };
+
+            let main_table = Table::new(rows)
+                .header(header)
+                .block(Block::default().borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM))
+                .widths(&widths);
+
+            f.render_widget(main_table, main_table_area);
+        } else {
+            // Fallback if no rows
+            let table = Table::new(rows)
+                .header(header)
+                .block(table_block)
+                .widths(&widths);
+
+            f.render_widget(table, area);
+        }
     }
 }
 
@@ -363,7 +472,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "Press 'q' to quit | 'r' to refresh | 'n' for Notification Monitor | '1-6' toggle timeframes | 'b' toggle breached | 's' edit strength filter | 'c' clear notifications";
+    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | ↑↓ select zone | 'y' copy zone ID | 'c' clear";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))

@@ -35,6 +35,7 @@ pub mod trading;
 mod types;
 mod websocket_server;
 mod zone_detection;
+mod trade_event_logger;
 
 // --- Use necessary types ---
 use crate::cache_endpoints::{
