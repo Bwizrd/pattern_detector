@@ -34,6 +34,7 @@ mod types;
 mod websocket_server;
 mod zone_detection;
 mod terminal_dashboard;
+mod trade_decision_engine;
 
 // --- Use necessary types ---
 use crate::cache_endpoints::{

@@ -13,6 +13,8 @@ use crate::types::EnrichedZone;
 
 use crate::minimal_zone_cache::TradeNotification;
 
+use crate::trade_decision_engine::{TradeDecisionEngine, ValidatedTradeSignal};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewZoneEvent {
     pub zone_id: String,
@@ -56,6 +58,8 @@ pub struct NewRealTimeZoneMonitor {
 
     // Reference to shared cache
     zone_cache: Arc<Mutex<MinimalZoneCache>>,
+
+    trade_engine: Arc<Mutex<TradeDecisionEngine>>,
 }
 
 impl NewRealTimeZoneMonitor {
@@ -70,6 +74,7 @@ impl NewRealTimeZoneMonitor {
             event_sender,
             latest_prices: Arc::new(RwLock::new(HashMap::new())),
             zone_cache,
+            trade_engine: Arc::new(Mutex::new(TradeDecisionEngine::new())),
         };
 
         (monitor, event_receiver)
@@ -500,25 +505,61 @@ impl NewRealTimeZoneMonitor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Do your existing price update logic first
         self.update_price(symbol, price, timeframe).await?;
-
-        // NEW: Also check for cache notifications
+        
+        // Get cache notifications
         let cache_notifications = {
             let mut cache_guard = self.zone_cache.lock().await;
             cache_guard.update_price_and_check_triggers(symbol, price)
         };
-
-        // If we got new notifications, log them and optionally send events
+        
+        // NEW: Process each notification through the trade decision engine
         for notification in cache_notifications {
             info!(
-                "🚨 [ZONE_MONITOR] Cache detected zone trigger: {} {} {}/{} @ {:.5}",
+                "🔔 [ZONE_MONITOR] Cache notification: {} {} {}/{} @ {:.5}",
                 notification.action,
                 notification.symbol,
                 notification.timeframe,
                 notification.zone_id,
                 notification.price
             );
-
-            // Optionally: Convert to your existing NewZoneEvent format and broadcast
+            
+            // Process through trade decision engine
+            let validated_signal = {
+                let mut engine_guard = self.trade_engine.lock().await;
+                engine_guard.process_notification(notification.clone())
+            };
+            
+            if let Some(signal) = validated_signal {
+                // This is a VALIDATED trade signal!
+                info!(
+                    "🚨 [ZONE_MONITOR] VALIDATED TRADE SIGNAL: {} {} {}/{} @ {:.5}",
+                    signal.action, signal.symbol, signal.timeframe, signal.zone_id, signal.price
+                );
+                
+                // TODO: Here you would:
+                // 1. Send to your cTrader API bridge for actual trading
+                // 2. Log to trade history
+                // 3. Send notification to dashboard
+                // 4. Maybe send email/SMS alert
+                
+                // For now, just broadcast as a special event
+                let trade_event = NewZoneEvent {
+                    zone_id: signal.zone_id.clone(),
+                    symbol: signal.symbol.clone(),
+                    timeframe: signal.timeframe.clone(),
+                    event_type: NewZoneEventType::Touch,
+                    price: signal.price,
+                    timestamp: signal.validation_timestamp,
+                    zone_type: if signal.action == "SELL" { "supply".to_string() } else { "demand".to_string() },
+                    confirmed: true,
+                };
+                
+                if let Err(e) = self.event_sender.send(trade_event) {
+                    warn!("⚠️ [ZONE_MONITOR] Failed to send validated signal event: {}", e);
+                }
+            }
+            
+            // Always broadcast the original cache notification too
             let zone_event = NewZoneEvent {
                 zone_id: notification.zone_id.clone(),
                 symbol: notification.symbol.clone(),
@@ -526,22 +567,15 @@ impl NewRealTimeZoneMonitor {
                 event_type: NewZoneEventType::Touch,
                 price: notification.price,
                 timestamp: notification.timestamp,
-                zone_type: if notification.action == "SELL" {
-                    "supply".to_string()
-                } else {
-                    "demand".to_string()
-                },
-                confirmed: true, // Cache confirmed
+                zone_type: if notification.action == "SELL" { "supply".to_string() } else { "demand".to_string() },
+                confirmed: true,
             };
-
+            
             if let Err(e) = self.event_sender.send(zone_event) {
-                warn!(
-                    "⚠️ [ZONE_MONITOR] Failed to send cache notification event: {}",
-                    e
-                );
+                warn!("⚠️ [ZONE_MONITOR] Failed to send cache notification event: {}", e);
             }
         }
-
+        
         Ok(())
     }
 
@@ -555,5 +589,25 @@ impl NewRealTimeZoneMonitor {
     pub async fn clear_cache_notifications(&self) {
         let mut cache_guard = self.zone_cache.lock().await;
         cache_guard.clear_trade_notifications();
+    }
+
+    pub async fn get_validated_signals(&self) -> Vec<ValidatedTradeSignal> {
+        let engine_guard = self.trade_engine.lock().await;
+        engine_guard.get_validated_signals().clone()
+    }
+
+    pub async fn get_daily_signal_count(&self) -> u32 {
+        let engine_guard = self.trade_engine.lock().await;
+        engine_guard.get_daily_signal_count()
+    }
+
+    pub async fn reload_trading_rules(&self) {
+        let mut engine_guard = self.trade_engine.lock().await;
+        engine_guard.reload_rules();
+    }
+
+    pub async fn clear_validated_signals(&self) {
+        let mut engine_guard = self.trade_engine.lock().await;
+        engine_guard.clear_signals();
     }
 }

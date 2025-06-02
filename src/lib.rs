@@ -8,4 +8,5 @@ pub mod backtest_api;
 pub mod zone_detection;
 pub mod minimal_zone_cache; 
 pub mod realtime_zone_monitor;
+pub mod trade_decision_engine;
 pub mod terminal_dashboard;

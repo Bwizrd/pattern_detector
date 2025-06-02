@@ -1,6 +1,6 @@
 // src/minimal_zone_cache.rs - Updated with dynamic date calculation
 use log::{debug, error, info, warn};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
 use std::time::Instant; 
@@ -15,7 +15,7 @@ pub struct CacheSymbolConfig {
 }
 
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeNotification {
     pub timestamp: DateTime<Utc>,
     pub symbol: String,

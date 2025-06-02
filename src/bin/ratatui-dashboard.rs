@@ -1,4 +1,4 @@
-// src/bin/ratatui_dashboard.rs - Advanced TUI dashboard with ratatui
+// src/bin/ratatui_dashboard.rs - Dashboard with API-based trade notifications
 use std::collections::HashMap;
 use std::env;
 use std::io;
@@ -12,7 +12,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
+    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
@@ -40,14 +40,14 @@ pub struct ZoneDistanceInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct TradeNotification {
+pub struct TradeNotificationDisplay {
     pub timestamp: DateTime<Utc>,
     pub symbol: String,
     pub timeframe: String,
-    pub action: String, // BUY or SELL
+    pub action: String,
     pub price: f64,
-    pub zone_type: String,
-    pub strength: f64,
+    pub notification_type: String,
+    pub signal_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,13 +96,13 @@ pub struct App {
     api_base_url: String,
     pip_values: HashMap<String, f64>,
     zones: Vec<ZoneDistanceInfo>,
-    trade_notifications: Vec<TradeNotification>,
+    trade_notifications: Vec<TradeNotificationDisplay>,
     last_update: Instant,
     error_message: Option<String>,
     update_count: u64,
     timeframe_filters: HashMap<String, bool>,
-    previous_triggers: std::collections::HashSet<String>,
     show_breached: bool,
+    previous_triggers: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -144,8 +144,8 @@ impl App {
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
         let mut timeframe_filters = HashMap::new();
-        timeframe_filters.insert("5m".to_string(), false);  // Disabled by default
-        timeframe_filters.insert("15m".to_string(), false); // Disabled by default
+        timeframe_filters.insert("5m".to_string(), false);
+        timeframe_filters.insert("15m".to_string(), false);
         timeframe_filters.insert("30m".to_string(), true);
         timeframe_filters.insert("1h".to_string(), true);
         timeframe_filters.insert("4h".to_string(), true);
@@ -161,8 +161,8 @@ impl App {
             error_message: None,
             update_count: 0,
             timeframe_filters,
-            previous_triggers: std::collections::HashSet::new(),
             show_breached: true,
+            previous_triggers: std::collections::HashSet::new(),
         }
     }
 
@@ -180,51 +180,11 @@ impl App {
         self.timeframe_filters.get(timeframe).copied().unwrap_or(true)
     }
 
-    fn add_trade_notification(&mut self, zone: &ZoneDistanceInfo) {
-        let action = if zone.zone_type.contains("supply") { "SELL" } else { "BUY" };
-        
-        let notification = TradeNotification {
-            timestamp: Utc::now(),
-            symbol: zone.symbol.clone(),
-            timeframe: zone.timeframe.clone(),
-            action: action.to_string(),
-            price: zone.current_price,
-            zone_type: zone.zone_type.clone(),
-            strength: zone.strength_score,
-        };
-
-        self.trade_notifications.insert(0, notification);
-        
-        // Keep only last 50 notifications
-        if self.trade_notifications.len() > 50 {
-            self.trade_notifications.truncate(50);
-        }
-    }
-
     async fn update_data(&mut self) {
         self.error_message = None;
         
-        match self.fetch_zones().await {
-            Ok(zones) => {
-                // Check for new triggers and add notifications
-                let current_triggers: std::collections::HashSet<String> = zones
-                    .iter()
-                    .filter(|z| z.zone_status == ZoneStatus::AtProximal)
-                    .map(|z| format!("{}_{}", z.symbol, z.timeframe))
-                    .collect();
-
-                // Find new triggers (not in previous_triggers)
-                for zone in &zones {
-                    if zone.zone_status == ZoneStatus::AtProximal {
-                        let zone_key = format!("{}_{}", zone.symbol, zone.timeframe);
-                        if !self.previous_triggers.contains(&zone_key) {
-                            self.add_trade_notification(zone);
-                        }
-                    }
-                }
-
-                self.previous_triggers = current_triggers;
-                self.zones = zones;
+        match self.fetch_dashboard_data().await {
+            Ok(()) => {
                 self.last_update = Instant::now();
                 self.update_count += 1;
             }
@@ -234,14 +194,96 @@ impl App {
         }
     }
 
-    async fn fetch_zones(&self) -> Result<Vec<ZoneDistanceInfo>, Box<dyn std::error::Error>> {
-        let zones_json = self.get_zones_from_api().await?;
+    async fn fetch_dashboard_data(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Fetch zones with current prices (existing logic)
+        let zones_response = self.get_zones_from_api().await?;
         let current_prices = self.get_current_prices().await.unwrap_or_default();
         
+        // Fetch trade notifications from new API
+        let notifications_response = self.fetch_trade_notifications_from_api().await?;
+        
+        // Process zones (existing logic)
+        self.zones = self.process_zones_response(zones_response, current_prices)?;
+        
+        // Process notifications from API
+        self.trade_notifications = self.process_api_notifications_response(notifications_response)?;
+        
+        Ok(())
+    }
+
+    async fn fetch_trade_notifications_from_api(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        let url = format!("{}/trade-notifications", self.api_base_url);
+        
+        let response = self.client
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Ok(serde_json::json!({"notifications": []}))
+        }
+    }
+
+    fn process_api_notifications_response(&self, response: Value) -> Result<Vec<TradeNotificationDisplay>, Box<dyn std::error::Error>> {
+        let empty_vec = vec![];
+        let notifications_array = response.get("notifications")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&empty_vec);
+
+        let mut notifications = Vec::new();
+
+        for notif_json in notifications_array.iter().take(25) {
+            let timestamp_str = notif_json.get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            
+            let timestamp = DateTime::parse_from_rfc3339(timestamp_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            let notification = TradeNotificationDisplay {
+                timestamp,
+                symbol: notif_json.get("symbol").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                timeframe: notif_json.get("timeframe").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                action: notif_json.get("action").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                price: notif_json.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                notification_type: "zone_trigger".to_string(),
+                signal_id: notif_json.get("zone_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            };
+
+            notifications.push(notification);
+        }
+
+        Ok(notifications)
+    }
+
+    async fn clear_notifications_via_api(&self) {
+        let url = format!("{}/trade-notifications/clear", self.api_base_url);
+        
+        match self.client
+            .post(&url)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    log::info!("✅ Notifications cleared via API");
+                }
+            }
+            Err(_) => {
+                // Ignore errors
+            }
+        }
+    }
+
+    fn process_zones_response(&self, zones_json: Vec<Value>, current_prices: HashMap<String, f64>) -> Result<Vec<ZoneDistanceInfo>, Box<dyn std::error::Error>> {
         let mut zone_distances = Vec::new();
         
         for zone_json in &zones_json {
-            if let Ok(zone_info) = self.extract_zone_distance_info(zone_json, &current_prices).await {
+            if let Ok(zone_info) = self.extract_zone_distance_info(zone_json, &current_prices) {
                 // Filter by timeframe
                 if self.is_timeframe_enabled(&zone_info.timeframe) {
                     // Filter out breached zones if disabled
@@ -257,19 +299,15 @@ impl App {
         
         zone_distances.sort_by(|a, b| {
             match (&a.zone_status, &b.zone_status) {
-                // Triggers always come first
                 (ZoneStatus::AtProximal, ZoneStatus::AtProximal) => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
                 (ZoneStatus::AtProximal, _) => std::cmp::Ordering::Less,
                 (_, ZoneStatus::AtProximal) => std::cmp::Ordering::Greater,
-                // Inside zones come next (negative signed distance)
                 (ZoneStatus::InsideZone, ZoneStatus::InsideZone) => a.signed_distance_pips.partial_cmp(&b.signed_distance_pips).unwrap_or(std::cmp::Ordering::Equal),
                 (ZoneStatus::InsideZone, _) => std::cmp::Ordering::Less,
                 (_, ZoneStatus::InsideZone) => std::cmp::Ordering::Greater,
-                // Breached zones: sort by smallest breach distance first (most recently breached)
                 (ZoneStatus::Breached, ZoneStatus::Breached) => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(std::cmp::Ordering::Equal),
-                (ZoneStatus::Breached, _) => std::cmp::Ordering::Greater, // Breached zones go to bottom
+                (ZoneStatus::Breached, _) => std::cmp::Ordering::Greater,
                 (_, ZoneStatus::Breached) => std::cmp::Ordering::Less,
-                // Then sort by signed distance (negative first, then positive by proximity)
                 _ => a.signed_distance_pips.partial_cmp(&b.signed_distance_pips).unwrap_or(std::cmp::Ordering::Equal),
             }
         });
@@ -353,8 +391,6 @@ impl App {
         let proximity_threshold = 2.0 * pip_value;
         
         if is_supply {
-            // Supply zone: proximal=zone_low (bottom), distal=zone_high (top)
-            // Price above distal_line = breached
             if current_price >= distal_line + proximity_threshold {
                 ZoneStatus::Breached
             } else if (current_price - distal_line).abs() <= proximity_threshold {
@@ -367,8 +403,6 @@ impl App {
                 ZoneStatus::Approaching
             }
         } else {
-            // Demand zone: proximal=zone_high (top), distal=zone_low (bottom)  
-            // Price below distal_line = breached
             if current_price <= distal_line - proximity_threshold {
                 ZoneStatus::Breached
             } else if (current_price - distal_line).abs() <= proximity_threshold {
@@ -383,7 +417,7 @@ impl App {
         }
     }
 
-    async fn extract_zone_distance_info(
+    fn extract_zone_distance_info(
         &self, 
         zone_json: &Value,
         current_prices: &HashMap<String, f64>
@@ -436,7 +470,7 @@ impl App {
             .ok_or_else(|| format!("No price data for symbol: {}", symbol))?;
         
         if zone_high <= 0.0 || zone_low <= 0.0 || zone_high <= zone_low {
-            return Err("Invalid zone boundaries".into());
+            return Err(format!("Invalid zone boundaries").into());
         }
         
         let is_supply = zone_type.contains("supply");
@@ -741,6 +775,7 @@ fn ui(f: &mut Frame, app: &App) {
             
             Line::from(vec![
                 Span::styled(format!("{} ", time_str), Style::default().fg(Color::Gray)),
+                Span::styled("🎯 ", Style::default().fg(Color::White)),
                 Span::styled(format!("{} ", notif.action), Style::default().fg(action_color).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("{}/", notif.symbol), Style::default().fg(Color::Cyan)),
                 Span::styled(format!("{}", notif.timeframe), Style::default().fg(Color::Yellow)),
@@ -816,7 +851,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app:
                         app.update_data().await;
                     }
                     KeyCode::Char('c') => {
-                        app.trade_notifications.clear();
+                        app.clear_notifications_via_api().await;
+                        app.update_data().await;
                     }
                     KeyCode::Char('1') => {
                         app.toggle_timeframe("5m");
