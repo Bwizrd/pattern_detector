@@ -1,6 +1,8 @@
-// src/bin/dashboard/app.rs - App state and business logic
+// src/bin/dashboard/app.rs - Complete app state and business logic with independent timeframe filters
 use std::collections::HashMap;
 use std::env;
+use std::process::Command;
+use std::io::Write;
 use tokio::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -28,9 +30,21 @@ pub struct App {
     pub last_update: Instant,
     pub error_message: Option<String>,
     pub update_count: u64,
-    pub timeframe_filters: HashMap<String, bool>,
+    
+    // CHANGED: Separate timeframe filters for each page
+    pub dashboard_timeframe_filters: HashMap<String, bool>,
+    pub notification_timeframe_filters: HashMap<String, bool>,
+    
     pub show_breached: bool,
     pub previous_triggers: std::collections::HashSet<String>,
+    
+    // New fields for zone ID navigation and copying
+    pub selected_notification_index: Option<usize>,
+    pub last_copied_zone_id: Option<String>,
+
+    pub min_strength_filter: f64,
+    pub strength_input_mode: bool,
+    pub strength_input_buffer: String,
 }
 
 impl App {
@@ -78,13 +92,22 @@ impl App {
         let api_base_url = env::var("API_BASE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
-        let mut timeframe_filters = HashMap::new();
-        timeframe_filters.insert("5m".to_string(), false);
-        timeframe_filters.insert("15m".to_string(), false);
-        timeframe_filters.insert("30m".to_string(), true);
-        timeframe_filters.insert("1h".to_string(), true);
-        timeframe_filters.insert("4h".to_string(), true);
-        timeframe_filters.insert("1d".to_string(), true);
+        // CHANGED: Create separate timeframe filters for each page
+        let mut dashboard_timeframe_filters = HashMap::new();
+        dashboard_timeframe_filters.insert("5m".to_string(), false);
+        dashboard_timeframe_filters.insert("15m".to_string(), false);
+        dashboard_timeframe_filters.insert("30m".to_string(), true);
+        dashboard_timeframe_filters.insert("1h".to_string(), true);
+        dashboard_timeframe_filters.insert("4h".to_string(), true);
+        dashboard_timeframe_filters.insert("1d".to_string(), true);
+
+        let mut notification_timeframe_filters = HashMap::new();
+        notification_timeframe_filters.insert("5m".to_string(), true);  // Different defaults for notifications
+        notification_timeframe_filters.insert("15m".to_string(), true);
+        notification_timeframe_filters.insert("30m".to_string(), true);
+        notification_timeframe_filters.insert("1h".to_string(), true);
+        notification_timeframe_filters.insert("4h".to_string(), true);
+        notification_timeframe_filters.insert("1d".to_string(), true);
 
         Self {
             client: Client::new(),
@@ -98,19 +121,47 @@ impl App {
             last_update: Instant::now(),
             error_message: None,
             update_count: 0,
-            timeframe_filters,
+            dashboard_timeframe_filters,
+            notification_timeframe_filters,
             show_breached: true,
             previous_triggers: std::collections::HashSet::new(),
+            selected_notification_index: None,
+            last_copied_zone_id: None,
+            min_strength_filter: 100.0,
+            strength_input_mode: false,
+            strength_input_buffer: String::new(),
         }
     }
 
     pub fn switch_page(&mut self, page: AppPage) {
+        // Reset selection when switching to dashboard
+        if matches!(page, AppPage::Dashboard) {
+            self.selected_notification_index = None;
+        }
         self.current_page = page;
     }
 
+    // CHANGED: Update toggle_timeframe to work with the current page's filters
     pub fn toggle_timeframe(&mut self, timeframe: &str) {
-        if let Some(enabled) = self.timeframe_filters.get_mut(timeframe) {
+        let filters = match self.current_page {
+            AppPage::Dashboard => &mut self.dashboard_timeframe_filters,
+            AppPage::NotificationMonitor => &mut self.notification_timeframe_filters,
+        };
+        
+        if let Some(enabled) = filters.get_mut(timeframe) {
             *enabled = !*enabled;
+        }
+        
+        // Reset selection if currently selected notification is now filtered out
+        // (only relevant for notification page)
+        if matches!(self.current_page, AppPage::NotificationMonitor) {
+            if let Some(selected_index) = self.selected_notification_index {
+                if let Some(notification) = self.all_notifications.get(selected_index) {
+                    if !self.is_timeframe_enabled(&notification.timeframe) {
+                        self.selected_notification_index = None;
+                    }
+                }
+            }
         }
     }
 
@@ -118,8 +169,179 @@ impl App {
         self.show_breached = !self.show_breached;
     }
 
+    // CHANGED: Update is_timeframe_enabled to use the current page's filters
     pub fn is_timeframe_enabled(&self, timeframe: &str) -> bool {
-        self.timeframe_filters.get(timeframe).copied().unwrap_or(true)
+        let filters = match self.current_page {
+            AppPage::Dashboard => &self.dashboard_timeframe_filters,
+            AppPage::NotificationMonitor => &self.notification_timeframe_filters,
+        };
+        
+        filters.get(timeframe).copied().unwrap_or(true)
+    }
+
+    // Navigation methods for notifications
+    pub fn select_next_notification(&mut self) {
+        let filtered_notifications: Vec<_> = self.all_notifications.iter()
+            .enumerate()
+            .filter(|(_, notif)| self.is_timeframe_enabled(&notif.timeframe))
+            .collect();
+
+        if !filtered_notifications.is_empty() {
+            match self.selected_notification_index {
+                Some(current_index) => {
+                    // Find current position in filtered list
+                    if let Some(current_pos) = filtered_notifications.iter().position(|(idx, _)| *idx == current_index) {
+                        // Move to next in filtered list
+                        let next_pos = (current_pos + 1) % filtered_notifications.len();
+                        self.selected_notification_index = Some(filtered_notifications[next_pos].0);
+                    } else {
+                        // Current selection not in filtered list, select first
+                        self.selected_notification_index = Some(filtered_notifications[0].0);
+                    }
+                }
+                None => {
+                    // No selection, select first filtered notification
+                    self.selected_notification_index = Some(filtered_notifications[0].0);
+                }
+            }
+        }
+    }
+
+    pub fn select_previous_notification(&mut self) {
+        let filtered_notifications: Vec<_> = self.all_notifications.iter()
+            .enumerate()
+            .filter(|(_, notif)| self.is_timeframe_enabled(&notif.timeframe))
+            .collect();
+
+        if !filtered_notifications.is_empty() {
+            match self.selected_notification_index {
+                Some(current_index) => {
+                    // Find current position in filtered list
+                    if let Some(current_pos) = filtered_notifications.iter().position(|(idx, _)| *idx == current_index) {
+                        // Move to previous in filtered list
+                        let prev_pos = if current_pos == 0 { 
+                            filtered_notifications.len() - 1 
+                        } else { 
+                            current_pos - 1 
+                        };
+                        self.selected_notification_index = Some(filtered_notifications[prev_pos].0);
+                    } else {
+                        // Current selection not in filtered list, select first
+                        self.selected_notification_index = Some(filtered_notifications[0].0);
+                    }
+                }
+                None => {
+                    // No selection, select first filtered notification
+                    self.selected_notification_index = Some(filtered_notifications[0].0);
+                }
+            }
+        }
+    }
+
+    pub fn copy_selected_zone_id(&mut self) {
+        if let Some(index) = self.selected_notification_index {
+            if let Some(notification) = self.all_notifications.get(index) {
+                if let Some(zone_id) = &notification.signal_id {
+                    // Try to copy to system clipboard
+                    match self.copy_to_clipboard(zone_id) {
+                        Ok(()) => {
+                            self.last_copied_zone_id = Some(format!("✅ Copied: {}", zone_id));
+                        }
+                        Err(_) => {
+                            // Fallback: just show the zone ID
+                            self.last_copied_zone_id = Some(format!("Zone ID: {}", zone_id));
+                        }
+                    }
+                } else {
+                    self.last_copied_zone_id = Some("❌ No zone ID available".to_string());
+                }
+            }
+        } else {
+            self.last_copied_zone_id = Some("❌ No notification selected".to_string());
+        }
+    }
+
+    fn copy_to_clipboard(&self, text: &str) -> Result<(), Box<dyn std::error::Error>> {
+        // Try different clipboard commands based on OS
+        let commands = [
+            // macOS
+            ("pbcopy", vec![]),
+            // Linux with xclip
+            ("xclip", vec!["-selection", "clipboard"]),
+            // Linux with xsel
+            ("xsel", vec!["--clipboard", "--input"]),
+            // Windows (if you're using WSL)
+            ("clip.exe", vec![]),
+        ];
+
+        for (cmd, args) in commands.iter() {
+            if let Ok(mut process) = Command::new(cmd)
+                .args(args)
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+            {
+                if let Some(stdin) = process.stdin.as_mut() {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = process.wait();
+                return Ok(());
+            }
+        }
+        
+        Err("No clipboard command available".into())
+    }
+
+     pub fn toggle_strength_input_mode(&mut self) {
+        if self.strength_input_mode {
+            // Exiting input mode - try to parse the buffer
+            if let Ok(value) = self.strength_input_buffer.parse::<f64>() {
+                if value >= 0.0 {
+                    self.min_strength_filter = value;
+                }
+            }
+            self.strength_input_buffer.clear();
+            self.strength_input_mode = false;
+        } else {
+            // Entering input mode - populate buffer with current value
+            self.strength_input_buffer = self.min_strength_filter.to_string();
+            self.strength_input_mode = true;
+        }
+    }
+    
+    pub fn handle_strength_input(&mut self, c: char) {
+        if self.strength_input_mode {
+            match c {
+                '0'..='9' | '.' => {
+                    // Only allow one decimal point
+                    if c == '.' && self.strength_input_buffer.contains('.') {
+                        return;
+                    }
+                    self.strength_input_buffer.push(c);
+                }
+                _ => {} // Ignore other characters
+            }
+        }
+    }
+    
+    pub fn handle_strength_backspace(&mut self) {
+        if self.strength_input_mode {
+            self.strength_input_buffer.pop();
+        }
+    }
+    
+    pub fn cancel_strength_input(&mut self) {
+        if self.strength_input_mode {
+            self.strength_input_buffer.clear();
+            self.strength_input_mode = false;
+        }
+    }
+    
+    pub fn get_strength_filter_status(&self) -> String {
+        if self.strength_input_mode {
+            format!("Min Strength: {} (editing)", self.strength_input_buffer)
+        } else {
+            format!("Min Strength: {}", self.min_strength_filter)
+        }
     }
 
     pub async fn update_data(&mut self) {
@@ -129,6 +351,17 @@ impl App {
             Ok(()) => {
                 self.last_update = Instant::now();
                 self.update_count += 1;
+                
+                // Reset selection if we have fewer notifications now
+                if let Some(index) = self.selected_notification_index {
+                    if index >= self.all_notifications.len() {
+                        self.selected_notification_index = if self.all_notifications.is_empty() {
+                            None
+                        } else {
+                            Some(self.all_notifications.len() - 1)
+                        };
+                    }
+                }
             }
             Err(e) => {
                 self.error_message = Some(format!("Error: {}", e));
@@ -300,8 +533,14 @@ impl App {
         (total, triggers, inside, close, watch)
     }
 
+    // CHANGED: Update get_timeframe_status to use the current page's filters
     pub fn get_timeframe_status(&self) -> String {
-        let enabled_timeframes: Vec<&str> = self.timeframe_filters
+        let filters = match self.current_page {
+            AppPage::Dashboard => &self.dashboard_timeframe_filters,
+            AppPage::NotificationMonitor => &self.notification_timeframe_filters,
+        };
+        
+        let enabled_timeframes: Vec<&str> = filters
             .iter()
             .filter_map(|(tf, &enabled)| if enabled { Some(tf.as_str()) } else { None })
             .collect();
@@ -317,7 +556,7 @@ impl App {
         if self.show_breached { "ON" } else { "OFF" }
     }
 
-    // Zone processing methods...
+    // Zone processing methods (keep all existing methods)...
     fn process_zones_response(&self, zones_json: Vec<Value>, current_prices: HashMap<String, f64>) -> Result<Vec<ZoneDistanceInfo>, Box<dyn std::error::Error>> {
         let mut zone_distances = Vec::new();
         
@@ -329,6 +568,12 @@ impl App {
                     if zone_info.zone_status == ZoneStatus::Breached && !self.show_breached {
                         continue;
                     }
+                    
+                    // NEW: Filter by strength (only on dashboard)
+                    if matches!(self.current_page, AppPage::Dashboard) && zone_info.strength_score < self.min_strength_filter {
+                        continue;
+                    }
+                    
                     zone_distances.push(zone_info);
                 }
             }

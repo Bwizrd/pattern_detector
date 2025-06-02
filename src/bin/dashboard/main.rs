@@ -1,4 +1,4 @@
-// src/bin/ratatui_dashboard.rs - Main dashboard entry point
+// src/bin/dashboard/main.rs - Complete main entry point with enhanced key handling
 use std::io;
 use tokio::time::{Duration, Instant};
 use crossterm::{
@@ -30,43 +30,89 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app:
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('r') => {
-                        app.update_data().await;
+                // Handle strength input mode first
+                if app.strength_input_mode {
+                    match key.code {
+                        KeyCode::Enter => {
+                            app.toggle_strength_input_mode(); // This will save the input
+                        }
+                        KeyCode::Esc => {
+                            app.cancel_strength_input();
+                        }
+                        KeyCode::Backspace => {
+                            app.handle_strength_backspace();
+                        }
+                        KeyCode::Char(c) => {
+                            app.handle_strength_input(c);
+                        }
+                        _ => {}
                     }
-                    KeyCode::Char('c') => {
-                        app.clear_notifications_via_api().await;
-                        app.update_data().await;
+                } else {
+                    // Normal key handling when not in strength input mode
+                    match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('r') => {
+                            app.update_data().await;
+                        }
+                        KeyCode::Char('c') => {
+                            app.clear_notifications_via_api().await;
+                            app.update_data().await;
+                        }
+                        KeyCode::Char('d') => {
+                            app.switch_page(AppPage::Dashboard);
+                        }
+                        KeyCode::Char('n') => {
+                            app.switch_page(AppPage::NotificationMonitor);
+                        }
+                        // Navigation keys for notifications (only on notification monitor)
+                        KeyCode::Up => {
+                            if app.current_page == AppPage::NotificationMonitor {
+                                app.select_previous_notification();
+                            }
+                        }
+                        KeyCode::Down => {
+                            if app.current_page == AppPage::NotificationMonitor {
+                                app.select_next_notification();
+                            }
+                        }
+                        KeyCode::Char('y') => {
+                            if app.current_page == AppPage::NotificationMonitor {
+                                app.copy_selected_zone_id();
+                            }
+                        }
+                        // NEW: Strength filter toggle (only on dashboard)
+                        KeyCode::Char('s') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.toggle_strength_input_mode();
+                            }
+                        }
+                        // Timeframe toggles work on both pages
+                        KeyCode::Char('1') => {
+                            app.toggle_timeframe("5m");
+                        }
+                        KeyCode::Char('2') => {
+                            app.toggle_timeframe("15m");
+                        }
+                        KeyCode::Char('3') => {
+                            app.toggle_timeframe("30m");
+                        }
+                        KeyCode::Char('4') => {
+                            app.toggle_timeframe("1h");
+                        }
+                        KeyCode::Char('5') => {
+                            app.toggle_timeframe("4h");
+                        }
+                        KeyCode::Char('6') => {
+                            app.toggle_timeframe("1d");
+                        }
+                        // Breached toggle only works on dashboard
+                        KeyCode::Char('b') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.toggle_breached();
+                            }
+                        }
+                        _ => {}
                     }
-                    KeyCode::Char('d') => {
-                        app.switch_page(AppPage::Dashboard);
-                    }
-                    KeyCode::Char('n') => {
-                        app.switch_page(AppPage::NotificationMonitor);
-                    }
-                    KeyCode::Char('1') => {
-                        app.toggle_timeframe("5m");
-                    }
-                    KeyCode::Char('2') => {
-                        app.toggle_timeframe("15m");
-                    }
-                    KeyCode::Char('3') => {
-                        app.toggle_timeframe("30m");
-                    }
-                    KeyCode::Char('4') => {
-                        app.toggle_timeframe("1h");
-                    }
-                    KeyCode::Char('5') => {
-                        app.toggle_timeframe("4h");
-                    }
-                    KeyCode::Char('6') => {
-                        app.toggle_timeframe("1d");
-                    }
-                    KeyCode::Char('b') => {
-                        app.toggle_breached();
-                    }
-                    _ => {}
                 }
             }
         }

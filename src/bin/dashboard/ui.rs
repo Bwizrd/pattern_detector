@@ -1,4 +1,4 @@
-// src/bin/dashboard/ui.rs - UI rendering functions
+// src/bin/dashboard/ui.rs - Complete UI rendering functions with zone ID display
 use chrono::Utc;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -11,12 +11,12 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::types::{AppPage, ZoneStatus};
+use crate::types::{AppPage, ZoneStatus, TradeNotificationDisplay};
 
 pub fn ui(f: &mut Frame, app: &App) {
     match app.current_page {
         AppPage::Dashboard => ui_dashboard(f, app),
-        AppPage::NotificationMonitor => ui_notification_monitor(f, app),
+        AppPage::NotificationMonitor => ui_notification_monitor(f, app), // ← Keep original name
     }
 }
 
@@ -85,9 +85,10 @@ pub fn ui_notification_monitor(f: &mut Frame, app: &App) {
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(1),
+            Constraint::Length(3),    // Header
+            Constraint::Length(3),    // Notification header + timeframe status
+            Constraint::Length(3),    // Timeframe controls
+            Constraint::Min(1),       // Notifications list
         ])
         .split(main_chunks[0]);
 
@@ -102,8 +103,13 @@ pub fn ui_notification_monitor(f: &mut Frame, app: &App) {
         .split(main_chunks[1]);
 
     render_header(f, app, left_chunks[0], "Notifications");
-    render_all_notifications_panel(f, app, left_chunks[1], left_chunks[2]);
-    render_notification_help(f, right_chunks[1]);
+    
+    // Add timeframe status display
+    render_notification_timeframe_status(f, app, left_chunks[1]);
+    render_notification_timeframe_controls(f, app, left_chunks[2]);
+    render_all_notifications_panel_enhanced(f, app, Rect::new(0, 0, 0, 0), left_chunks[3]); // Skip header, use full area
+    
+    render_notification_help_enhanced(f, right_chunks[1]);
     render_validated_trades_panel(f, app, right_chunks[0], right_chunks[2]);
 }
 
@@ -185,6 +191,20 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         Span::styled(app.get_breached_status(), if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
     ]);
 
+     let strength_line = Line::from(vec![
+        Span::styled(app.get_strength_filter_status(), 
+            if app.strength_input_mode { 
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else { 
+                Style::default().fg(Color::Cyan) 
+            }),
+        if app.strength_input_mode {
+            Span::styled(" (Enter to confirm, Esc to cancel)", Style::default().fg(Color::Gray))
+        } else {
+            Span::styled(" | Press 's' to edit", Style::default().fg(Color::Gray))
+        },
+    ]);
+
     let controls_line = Line::from(vec![
         Span::styled("Toggle: ", Style::default().fg(Color::Gray)),
         Span::styled("[1]5m ", if app.is_timeframe_enabled("5m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
@@ -196,7 +216,7 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         Span::styled("[b]breached", if app.show_breached { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Red) }),
     ]);
 
-    let stats_text = Text::from(vec![stats_line, timeframes_line, controls_line]);
+    let stats_text = Text::from(vec![stats_line, timeframes_line, strength_line, controls_line]);
 
     let stats = Paragraph::new(stats_text)
         .block(stats_block)
@@ -239,7 +259,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             }).collect();
             
             (
-                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal", "Distal", "Str", "Touches"],
+                vec!["Symbol/TF", "Type", "Distance", "Status", "Price", "Proximal", "Distal", "Str", "Touches"],
                 widths,
                 50  // More rows on large screens
             )
@@ -254,18 +274,18 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             }).collect();
             
             (
-                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal", "Distal", "Str"],
+                vec!["Symbol/TF", "Type", "Distance", "Status", "Price", "Proximal", "Distal", "Str"],
                 widths,
                 45
             )
         } else if screen_width > 100 {
             // Medium screens: Use percentage-based widths for flexibility
             (
-                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Proximal"],
+                vec!["Symbol/TF", "Type", "Distance", "Status", "Price", "Proximal"],
                 vec![
                     Constraint::Percentage(20),  // Symbol/TF gets 20%
                     Constraint::Percentage(10),  // Type gets 10%
-                    Constraint::Percentage(12),  // S.Dist gets 12%
+                    Constraint::Percentage(12),  // Distance gets 12%
                     Constraint::Percentage(18),  // Status gets 18%
                     Constraint::Percentage(20),  // Price gets 20%
                     Constraint::Percentage(20),  // Proximal gets 20%
@@ -275,11 +295,11 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         } else {
             // Small screens: Use all available space with minimal columns
             (
-                vec!["Symbol/TF", "Type", "S.Dist", "Status"],
+                vec!["Symbol/TF", "Type", "Distance", "Status"],
                 vec![
                     Constraint::Percentage(30),  // Symbol/TF
                     Constraint::Percentage(15),  // Type
-                    Constraint::Percentage(20),  // S.Dist
+                    Constraint::Percentage(20),  // Distance
                     Constraint::Percentage(35),  // Status
                 ],
                 25
@@ -343,7 +363,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "Press 'q' to quit | 'r' to refresh | 'n' for Notification Monitor | '1-6' toggle timeframes | 'b' toggle breached | 'c' clear notifications";
+    let help_text = "Press 'q' to quit | 'r' to refresh | 'n' for Notification Monitor | '1-6' toggle timeframes | 'b' toggle breached | 's' edit strength filter | 'c' clear notifications";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))
@@ -385,7 +405,7 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
         f.render_widget(empty_text, content_area);
     } else {
         let trades_lines: Vec<Line> = app.placed_trades.iter().take(25).map(|trade| {
-            let time_str = trade.timestamp.format("%m-%d %H:%M:%S").to_string();
+            let time_str = trade.timestamp.format("%H:%M:%S").to_string();
             let direction_color = if trade.direction == "BUY" { Color::Green } else { Color::Red };
             
             Line::from(vec![
@@ -453,59 +473,189 @@ fn render_trade_alert_popup(f: &mut Frame, app: &App, size: Rect) {
     }
 }
 
-fn render_all_notifications_panel(f: &mut Frame, app: &App, header_area: Rect, content_area: Rect) {
-    // Header
+// Enhanced notification functions
+fn render_all_notifications_panel_enhanced(f: &mut Frame, app: &App, header_area: Rect, content_area: Rect) {
+    // Header with timeframe filter status
     let left_header_block = Block::default()
         .borders(Borders::ALL)
         .title("🔔 All Zone Notifications")
         .title_alignment(Alignment::Center)
         .border_style(Style::default().fg(Color::Cyan));
 
-    let left_header_text = format!("Total: {} notifications", app.all_notifications.len());
+    // Filter notifications by enabled timeframes - THIS IS THE KEY FIX
+    let filtered_notifications: Vec<(usize, &TradeNotificationDisplay)> = app.all_notifications.iter()
+        .enumerate()
+        .filter(|(_, notif)| app.is_timeframe_enabled(&notif.timeframe))
+        .collect();
 
-    let left_header = Paragraph::new(left_header_text)
+    let header_text = format!(
+        "Total: {} notifications (filtered: {}){}{}",
+        app.all_notifications.len(),
+        filtered_notifications.len(),
+        if app.selected_notification_index.is_some() { 
+            format!(" | Selected: {}", app.selected_notification_index.unwrap() + 1) 
+        } else { 
+            "".to_string() 
+        },
+        if let Some(copied) = &app.last_copied_zone_id {
+            format!(" | {}", copied)
+        } else {
+            "".to_string()
+        }
+    );
+
+    let left_header = Paragraph::new(header_text)
         .block(left_header_block)
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::White));
 
     f.render_widget(left_header, header_area);
 
-    // Content
+    // Content with better layout
     let notif_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    if app.all_notifications.is_empty() {
-        let empty_text = Paragraph::new("No zone notifications yet.\n\nAll zone touches will appear here.")
+    if filtered_notifications.is_empty() {
+        let empty_text = if app.all_notifications.is_empty() {
+            "No zone notifications yet.\n\nAll zone touches will appear here.\n\nUse ↑↓ arrows to select, 'y' to copy zone ID\n1-6 to toggle timeframes"
+        } else {
+            "No notifications for enabled timeframes.\n\nUse 1-6 keys to toggle timeframes:\n[1]5m [2]15m [3]30m [4]1h [5]4h [6]1d"
+        };
+        
+        let empty_widget = Paragraph::new(empty_text)
             .block(notif_block)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });
 
-        f.render_widget(empty_text, content_area);
+        f.render_widget(empty_widget, content_area);
     } else {
-        let notif_lines: Vec<Line> = app.all_notifications.iter().take(30).map(|notif| {
-            let time_str = notif.timestamp.format("%m-%d %H:%M:%S").to_string();
+        // Calculate available width for better layout
+        let available_width = content_area.width.saturating_sub(4); // Account for borders
+        
+        // Use a table for better alignment and space usage
+        let header_cells = ["Time", "Action", "Pair/TF", "Price", "Zone ID"]
+            .iter()
+            .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+
+        let header = Row::new(header_cells).height(1).bottom_margin(1);
+
+        // Dynamic column widths based on available space
+        let widths = if available_width > 80 {
+            vec![
+                Constraint::Length(10),  // Time: HH:MM:SS
+                Constraint::Length(6),   // Action: BUY/SELL
+                Constraint::Length(12),  // Pair/TF: USDCHF/15m
+                Constraint::Length(10),  // Price: 0.81726
+                Constraint::Min(16),     // Zone ID: Full ID with remaining space
+            ]
+        } else {
+            vec![
+                Constraint::Length(8),   // Time: HH:MM
+                Constraint::Length(4),   // Action: B/S
+                Constraint::Length(10),  // Pair/TF
+                Constraint::Length(8),   // Price
+                Constraint::Min(12),     // Zone ID
+            ]
+        };
+
+        let rows: Vec<Row> = filtered_notifications.iter().enumerate().take(30).map(|(display_index, (original_index, notif))| {
+            let time_str = if available_width > 80 {
+                notif.timestamp.format("%H:%M:%S").to_string()
+            } else {
+                notif.timestamp.format("%H:%M").to_string()
+            };
+            
+            let action_str = if available_width > 80 {
+                notif.action.clone()
+            } else {
+                if notif.action == "BUY" { "B".to_string() } else { "S".to_string() }
+            };
+            
+            let pair_tf = format!("{}/{}", notif.symbol, notif.timeframe);
+            let price_str = format!("{:.5}", notif.price);
+            
+            // Show full zone ID or truncated based on space
+            let zone_id = notif.signal_id.as_deref().unwrap_or("N/A");
+            let display_zone_id = if available_width > 100 {
+                zone_id.to_string() // Show full ID
+            } else if zone_id.len() > 12 {
+                format!("{}...", &zone_id[..12])
+            } else {
+                zone_id.to_string()
+            };
+            
+            // FIXED: Check selection against original index, not display index
+            let row_style = if Some(*original_index) == app.selected_notification_index {
+                Style::default().bg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+            
             let action_color = if notif.action == "BUY" { Color::Green } else { Color::Red };
             
-            Line::from(vec![
-                Span::styled(format!("{} ", time_str), Style::default().fg(Color::Gray)),
-                Span::styled("🔔 ", Style::default().fg(Color::White)),
-                Span::styled(format!("{} ", notif.action), Style::default().fg(action_color)),
-                Span::styled(format!("{}/", notif.symbol), Style::default().fg(Color::Cyan)),
-                Span::styled(format!("{} ", notif.timeframe), Style::default().fg(Color::Yellow)),
-                Span::styled(format!("@ {:.5}", notif.price), Style::default().fg(Color::White)),
+            Row::new(vec![
+                Cell::from(time_str).style(row_style.fg(Color::Gray)),
+                Cell::from(action_str).style(row_style.fg(action_color)),
+                Cell::from(pair_tf).style(row_style.fg(Color::Cyan)),
+                Cell::from(price_str).style(row_style.fg(Color::White)),
+                Cell::from(display_zone_id).style(row_style.fg(Color::Magenta)),
             ])
         }).collect();
 
-        let notif_text = Text::from(notif_lines);
+        // Add selection indicator column if there are notifications
+        if !rows.is_empty() {
+            let indicator_rows: Vec<Row> = filtered_notifications.iter().enumerate().take(30).map(|(display_index, (original_index, _))| {
+                // FIXED: Check selection against original index
+                let indicator = if Some(*original_index) == app.selected_notification_index { "►" } else { " " };
+                let style = if Some(*original_index) == app.selected_notification_index {
+                    Style::default().bg(Color::DarkGray).fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
+                Row::new(vec![Cell::from(indicator).style(style)])
+            }).collect();
 
-        let notifications = Paragraph::new(notif_text)
-            .block(notif_block)
-            .style(Style::default().fg(Color::White))
-            .wrap(Wrap { trim: true });
+            // Create side-by-side layout: indicator + main table
+            let table_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(2),  // Indicator column
+                    Constraint::Min(1),     // Main table
+                ])
+                .split(content_area);
 
-        f.render_widget(notifications, content_area);
+            // Render indicator column
+            let indicator_table = Table::new(indicator_rows)
+                .block(Block::default().borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM))
+                .widths(&[Constraint::Length(2)]);
+
+            f.render_widget(indicator_table, table_chunks[0]);
+
+            // Render main table
+            let main_table_area = Rect {
+                x: table_chunks[1].x,
+                y: table_chunks[1].y,
+                width: table_chunks[1].width,
+                height: table_chunks[1].height,
+            };
+
+            let main_table = Table::new(rows)
+                .header(header)
+                .block(Block::default().borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM))
+                .widths(&widths);
+
+            f.render_widget(main_table, main_table_area);
+        } else {
+            // Fallback if no rows
+            let table = Table::new(rows)
+                .header(header)
+                .block(notif_block)
+                .widths(&widths);
+
+            f.render_widget(table, content_area);
+        }
     }
 }
 
@@ -542,7 +692,7 @@ fn render_validated_trades_panel(f: &mut Frame, app: &App, header_area: Rect, co
     } else {
         let mut detailed_lines = Vec::new();
         for trade in app.validated_trades.iter().take(10) { // Show fewer with more detail
-            let time_str = trade.timestamp.format("%m-%d %H:%M:%S").to_string();
+            let time_str = trade.timestamp.format("%H:%M:%S").to_string();
             let direction_color = if trade.direction == "BUY" { Color::Green } else { Color::Red };
             
             // Trade header line
@@ -579,17 +729,67 @@ fn render_validated_trades_panel(f: &mut Frame, app: &App, header_area: Rect, co
     }
 }
 
-fn render_notification_help(f: &mut Frame, area: Rect) {
+fn render_notification_help_enhanced(f: &mut Frame, area: Rect) {
     let help_block = Block::default()
         .borders(Borders::ALL)
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "Press 'q' to quit | 'r' to refresh | 'd' for Dashboard | 'c' clear notifications";
+    let help_text = "'q' quit | 'r' refresh | 'd' Dashboard | 'c' clear | ↑↓ select notification | 'y' copy zone ID";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center);
 
     f.render_widget(help, area);
+}
+
+fn render_notification_timeframe_status(f: &mut Frame, app: &App, area: Rect) {
+    let status_block = Block::default()
+        .borders(Borders::ALL)
+        .title("📊 Timeframe Filter")
+        .border_style(Style::default().fg(Color::Green));
+
+    let enabled_timeframes = app.get_timeframe_status();
+    let total_notifications = app.all_notifications.len();
+    let filtered_count = app.all_notifications.iter()
+        .filter(|notif| app.is_timeframe_enabled(&notif.timeframe))
+        .count();
+
+    let status_text = format!(
+        "Active: {} | Showing: {}/{} notifications",
+        enabled_timeframes,
+        filtered_count,
+        total_notifications
+    );
+
+    let status = Paragraph::new(status_text)
+        .block(status_block)
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Center);
+
+    f.render_widget(status, area);
+}
+
+fn render_notification_timeframe_controls(f: &mut Frame, app: &App, area: Rect) {
+    let controls_block = Block::default()
+        .borders(Borders::ALL)
+        .title("⚙️ Toggle Timeframes")
+        .border_style(Style::default().fg(Color::Gray));
+
+    let controls_line = Line::from(vec![
+        Span::styled("[1]5m ", if app.is_timeframe_enabled("5m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[2]15m ", if app.is_timeframe_enabled("15m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[3]30m ", if app.is_timeframe_enabled("30m") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[4]1h ", if app.is_timeframe_enabled("1h") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[5]4h ", if app.is_timeframe_enabled("4h") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+        Span::styled("[6]1d ", if app.is_timeframe_enabled("1d") { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) }),
+    ]);
+
+    let controls = Paragraph::new(controls_line)
+        .block(controls_block)
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center);
+
+    f.render_widget(controls, area);
 }
