@@ -4,10 +4,10 @@ use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responde
 use log::{error, info};
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::collections::HashMap;
 
 // --- Module Declarations ---
 mod backtest;
@@ -28,13 +28,13 @@ mod realtime_cache_updater;
 mod realtime_monitor; // Keep existing for websocket_server.rs compatibility
 mod realtime_zone_monitor; // ← ADD NEW MODULE
 mod simple_price_websocket;
+mod terminal_dashboard;
+mod trade_decision_engine;
 pub mod trades;
 pub mod trading;
 mod types;
 mod websocket_server;
 mod zone_detection;
-mod terminal_dashboard;
-mod trade_decision_engine;
 
 // --- Use necessary types ---
 use crate::cache_endpoints::{
@@ -88,12 +88,12 @@ async fn get_current_prices_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
     log::info!("Current prices endpoint called");
-    
+
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         log::info!("Zone monitor available, getting prices");
         let prices = monitor.get_current_prices_by_symbol().await;
         log::info!("Retrieved {} prices", prices.len());
-        
+
         HttpResponse::Ok().json(serde_json::json!({
             "prices": prices,
             "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -115,7 +115,7 @@ async fn test_prices_handler() -> impl Responder {
     test_prices.insert("EURUSD".to_string(), 1.1234);
     test_prices.insert("GBPUSD".to_string(), 1.2567);
     test_prices.insert("USDJPY".to_string(), 143.45);
-    
+
     HttpResponse::Ok().json(serde_json::json!({
         "prices": test_prices,
         "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -129,11 +129,11 @@ async fn get_trade_notifications_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
     log::info!("Trade notifications endpoint called");
-    
+
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         let notifications = monitor.get_trade_notifications_from_cache().await;
         log::info!("Retrieved {} trade notifications", notifications.len());
-        
+
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "count": notifications.len(),
@@ -155,11 +155,11 @@ async fn clear_trade_notifications_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
     log::info!("Clear trade notifications endpoint called");
-    
+
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         monitor.clear_cache_notifications().await;
         log::info!("Trade notifications cleared");
-        
+
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "message": "Trade notifications cleared",
@@ -167,6 +167,56 @@ async fn clear_trade_notifications_handler(
         }))
     } else {
         log::warn!("Zone monitor not available for clearing notifications");
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Zone monitor not available",
+            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+        }))
+    }
+}
+
+async fn get_validated_signals_handler(
+    zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
+) -> impl Responder {
+    log::info!("Validated signals endpoint called");
+
+    if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
+        let signals = monitor.get_validated_signals().await;
+        log::info!("Retrieved {} validated signals", signals.len());
+
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "count": signals.len(),
+            "signals": signals,
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        log::warn!("Zone monitor not available for validated signals");
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Zone monitor not available",
+            "signals": [],
+            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+        }))
+    }
+}
+
+async fn clear_validated_signals_handler(
+    zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
+) -> impl Responder {
+    log::info!("Clear validated signals endpoint called");
+
+    if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
+        monitor.clear_validated_signals().await;
+        log::info!("Validated signals cleared");
+
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Validated signals cleared",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        log::warn!("Zone monitor not available for clearing validated signals");
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
             "error": "Zone monitor not available",
@@ -378,7 +428,7 @@ async fn main() -> std::io::Result<()> {
     print_server_info(&host, port);
 
     let http_client_for_app_factory = Arc::clone(&shared_http_client);
-    
+
     // Clone zone_monitor for the HTTP server
     let zone_monitor_for_app = zone_monitor.clone();
 
@@ -450,8 +500,23 @@ async fn main() -> std::io::Result<()> {
             .route("/current-prices", web::get().to(get_current_prices_handler))
             .route("/test-prices", web::get().to(test_prices_handler))
             // NEW: TRADE NOTIFICATION ENDPOINTS
-            .route("/trade-notifications", web::get().to(get_trade_notifications_handler))
-            .route("/trade-notifications/clear", web::post().to(clear_trade_notifications_handler))
+            .route(
+                "/trade-notifications",
+                web::get().to(get_trade_notifications_handler),
+            )
+            .route(
+                "/trade-notifications/clear",
+                web::post().to(clear_trade_notifications_handler),
+            )
+            // ADD THESE ROUTES TO YOUR HttpServer in main.rs:
+            .route(
+                "/validated-signals",
+                web::get().to(get_validated_signals_handler),
+            )
+            .route(
+                "/validated-signals/clear",
+                web::post().to(clear_validated_signals_handler),
+            )
     })
     .bind((host, port))?
     .run();
@@ -490,5 +555,7 @@ fn print_server_info(host: &str, port: u16) {
     println!("  GET  /test-prices");
     println!("  GET  /trade-notifications");
     println!("  POST /trade-notifications/clear");
+    println!("  GET  /validated-signals");
+    println!("  POST /validated-signals/clear");
     println!("--------------------------------------------------");
 }

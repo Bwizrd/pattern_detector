@@ -1,10 +1,12 @@
 // src/trade_decision_engine.rs - Filters and validates trade triggers
+use crate::minimal_zone_cache::{TradeNotification, MinimalZoneCache}; // ← Fixed import
+use chrono::{DateTime, Datelike, Timelike, Utc, Weekday};
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
-use chrono::{DateTime, Utc, Weekday, Datelike, Timelike};
-use crate::minimal_zone_cache::TradeNotification;
+use std::sync::Arc; // ← Added import
+use tokio::sync::Mutex; // ← Added import
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedTradeSignal {
@@ -24,25 +26,25 @@ pub struct ValidatedTradeSignal {
 pub struct TradingRules {
     // Symbol filtering
     pub allowed_symbols: HashSet<String>,
-    
-    // Timeframe filtering  
+
+    // Timeframe filtering
     pub allowed_timeframes: HashSet<String>,
-    
+
     // Day filtering (0 = Sunday, 1 = Monday, etc.)
     pub allowed_weekdays: HashSet<u8>,
-    
+
     // Zone quality filters
     pub min_touch_count: i32,
     pub max_touch_count: Option<i32>,
     pub min_zone_strength: f64,
-    
+
     // Timing filters
     pub trading_start_hour_utc: Option<u8>,
     pub trading_end_hour_utc: Option<u8>,
-    
+
     // Anti-spam protection
     pub zone_cooldown_minutes: u64, // Prevent re-triggering same zone
-    
+
     // General controls
     pub trading_enabled: bool,
     pub max_daily_signals: u32,
@@ -102,7 +104,8 @@ impl TradingRules {
         let trading_enabled = env::var("TRADING_ENABLED")
             .unwrap_or_else(|_| "false".to_string())
             .trim()
-            .to_lowercase() == "true";
+            .to_lowercase()
+            == "true";
 
         let max_daily_signals = env::var("TRADING_MAX_DAILY_SIGNALS")
             .unwrap_or_else(|_| "5".to_string())
@@ -126,15 +129,42 @@ impl TradingRules {
 
     pub fn log_current_settings(&self) {
         info!("🔧 [TRADE_RULES] Current Trading Rules:");
-        info!("🔧 [TRADE_RULES]   Trading Enabled: {}", self.trading_enabled);
-        info!("🔧 [TRADE_RULES]   Allowed Symbols: {:?}", self.allowed_symbols);
-        info!("🔧 [TRADE_RULES]   Allowed Timeframes: {:?}", self.allowed_timeframes);
-        info!("🔧 [TRADE_RULES]   Allowed Weekdays: {:?}", self.allowed_weekdays);
-        info!("🔧 [TRADE_RULES]   Touch Count: {} - {:?}", self.min_touch_count, self.max_touch_count);
-        info!("🔧 [TRADE_RULES]   Min Zone Strength: {}", self.min_zone_strength);
-        info!("🔧 [TRADE_RULES]   Trading Hours: {:?} - {:?}", self.trading_start_hour_utc, self.trading_end_hour_utc);
-        info!("🔧 [TRADE_RULES]   Zone Cooldown: {} minutes", self.zone_cooldown_minutes);
-        info!("🔧 [TRADE_RULES]   Max Daily Signals: {}", self.max_daily_signals);
+        info!(
+            "🔧 [TRADE_RULES]   Trading Enabled: {}",
+            self.trading_enabled
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Allowed Symbols: {:?}",
+            self.allowed_symbols
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Allowed Timeframes: {:?}",
+            self.allowed_timeframes
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Allowed Weekdays: {:?}",
+            self.allowed_weekdays
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Touch Count: {} - {:?}",
+            self.min_touch_count, self.max_touch_count
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Min Zone Strength: {}",
+            self.min_zone_strength
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Trading Hours: {:?} - {:?}",
+            self.trading_start_hour_utc, self.trading_end_hour_utc
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Zone Cooldown: {} minutes",
+            self.zone_cooldown_minutes
+        );
+        info!(
+            "🔧 [TRADE_RULES]   Max Daily Signals: {}",
+            self.max_daily_signals
+        );
     }
 }
 
@@ -144,6 +174,7 @@ pub struct TradeDecisionEngine {
     daily_signal_count: u32,
     last_reset_date: DateTime<Utc>,
     validated_signals: Vec<ValidatedTradeSignal>,
+    zone_cache: Option<Arc<Mutex<MinimalZoneCache>>>, // ← Fixed with proper imports
 }
 
 impl TradeDecisionEngine {
@@ -157,6 +188,21 @@ impl TradeDecisionEngine {
             daily_signal_count: 0,
             last_reset_date: Utc::now(),
             validated_signals: Vec::new(),
+            zone_cache: None, // No cache by default
+        }
+    }
+
+    pub fn new_with_cache(zone_cache: Arc<Mutex<MinimalZoneCache>>) -> Self {
+        let rules = TradingRules::from_env();
+        rules.log_current_settings();
+
+        Self {
+            rules,
+            triggered_zones: HashMap::new(),
+            daily_signal_count: 0,
+            last_reset_date: Utc::now(),
+            validated_signals: Vec::new(),
+            zone_cache: Some(zone_cache), // ← Fixed
         }
     }
 
@@ -166,44 +212,58 @@ impl TradeDecisionEngine {
         info!("🔄 [TRADE_ENGINE] Trading rules reloaded from environment");
     }
 
-    pub fn process_notification(&mut self, notification: TradeNotification) -> Option<ValidatedTradeSignal> {
+    // ← Fixed: Made async to handle the touch count check
+    pub async fn process_notification(
+        &mut self,
+        notification: TradeNotification,
+    ) -> Option<ValidatedTradeSignal> {
         // Reset daily counter if new day
         self.reset_daily_counter_if_needed();
 
-        let validation_result = self.validate_notification(&notification);
-        
+        let validation_result = self.validate_notification(&notification).await; // ← Added await
+
         match validation_result {
             Ok(reason) => {
-                let signal = self.create_validated_signal(notification, reason);
-                info!("✅ [TRADE_ENGINE] VALIDATED SIGNAL: {} {} {}/{} @ {:.5}", 
-                      signal.action, signal.symbol, signal.timeframe, signal.zone_id, signal.price);
-                
+                let touch_count = self.get_zone_touch_count(&notification.zone_id).await; // ← Fixed
+                let signal = self.create_validated_signal(notification, reason, touch_count); // ← Pass touch count
+                info!(
+                    "✅ [TRADE_ENGINE] VALIDATED SIGNAL: {} {} {}/{} @ {:.5}",
+                    signal.action, signal.symbol, signal.timeframe, signal.zone_id, signal.price
+                );
+
                 // Track this zone as triggered
-                self.triggered_zones.insert(signal.zone_id.clone(), Utc::now());
-                
+                self.triggered_zones
+                    .insert(signal.zone_id.clone(), Utc::now());
+
                 // Increment daily counter
                 self.daily_signal_count += 1;
-                
+
                 // Store the signal
                 self.validated_signals.insert(0, signal.clone());
-                
+
                 // Keep only last 50 signals
                 if self.validated_signals.len() > 50 {
                     self.validated_signals.truncate(50);
                 }
-                
+
                 Some(signal)
             }
             Err(reason) => {
-                debug!("❌ [TRADE_ENGINE] REJECTED: {} {} {}/{} - {}", 
-                       notification.action, notification.symbol, notification.timeframe, 
-                       notification.zone_id, reason);
+                debug!(
+                    "❌ [TRADE_ENGINE] REJECTED: {} {} {}/{} - {}",
+                    notification.action,
+                    notification.symbol,
+                    notification.timeframe,
+                    notification.zone_id,
+                    reason
+                );
                 None
             }
         }
     }
 
-    fn validate_notification(&self, notification: &TradeNotification) -> Result<String, String> {
+    // ← Fixed: Made async
+    async fn validate_notification(&self, notification: &TradeNotification) -> Result<String, String> {
         // Check if trading is enabled
         if !self.rules.trading_enabled {
             return Err("Trading disabled".to_string());
@@ -211,55 +271,90 @@ impl TradeDecisionEngine {
 
         // Check daily limit
         if self.daily_signal_count >= self.rules.max_daily_signals {
-            return Err(format!("Daily limit reached: {}/{}", self.daily_signal_count, self.rules.max_daily_signals));
+            return Err(format!(
+                "Daily limit reached: {}/{}",
+                self.daily_signal_count, self.rules.max_daily_signals
+            ));
         }
 
         // Check symbol allowlist
-        if !self.rules.allowed_symbols.contains(&notification.symbol.to_uppercase()) {
-            return Err(format!("Symbol {} not in allowed list", notification.symbol));
+        if !self
+            .rules
+            .allowed_symbols
+            .contains(&notification.symbol.to_uppercase())
+        {
+            return Err(format!(
+                "Symbol {} not in allowed list",
+                notification.symbol
+            ));
         }
 
         // Check timeframe allowlist
-        if !self.rules.allowed_timeframes.contains(&notification.timeframe.to_lowercase()) {
-            return Err(format!("Timeframe {} not in allowed list", notification.timeframe));
+        if !self
+            .rules
+            .allowed_timeframes
+            .contains(&notification.timeframe.to_lowercase())
+        {
+            return Err(format!(
+                "Timeframe {} not in allowed list",
+                notification.timeframe
+            ));
         }
 
         // Check weekday
         let current_weekday = Utc::now().weekday();
         let weekday_num = match current_weekday {
-            Weekday::Mon => 1, Weekday::Tue => 2, Weekday::Wed => 3, 
-            Weekday::Thu => 4, Weekday::Fri => 5, Weekday::Sat => 6, 
+            Weekday::Mon => 1,
+            Weekday::Tue => 2,
+            Weekday::Wed => 3,
+            Weekday::Thu => 4,
+            Weekday::Fri => 5,
+            Weekday::Sat => 6,
             Weekday::Sun => 7,
         };
-        
+
         if !self.rules.allowed_weekdays.contains(&weekday_num) {
             return Err(format!("Trading not allowed on {}", current_weekday));
         }
 
         // Check trading hours
-        if let (Some(start_hour), Some(end_hour)) = (self.rules.trading_start_hour_utc, self.rules.trading_end_hour_utc) {
+        if let (Some(start_hour), Some(end_hour)) = (
+            self.rules.trading_start_hour_utc,
+            self.rules.trading_end_hour_utc,
+        ) {
             let current_hour = Utc::now().hour() as u8;
             if current_hour < start_hour || current_hour > end_hour {
-                return Err(format!("Outside trading hours: {} (allowed: {}-{})", current_hour, start_hour, end_hour));
+                return Err(format!(
+                    "Outside trading hours: {} (allowed: {}-{})",
+                    current_hour, start_hour, end_hour
+                ));
             }
         }
 
         // Check zone strength
         if notification.strength < self.rules.min_zone_strength {
-            return Err(format!("Zone strength {:.1} below minimum {:.1}", notification.strength, self.rules.min_zone_strength));
+            return Err(format!(
+                "Zone strength {:.1} below minimum {:.1}",
+                notification.strength, self.rules.min_zone_strength
+            ));
         }
 
-        // Check touch count - we need to get this from the zone data
-        // For now, we'll assume it's passed or we'll enhance this later
-        let touch_count = self.get_zone_touch_count(&notification.zone_id);
-        
+        // Check touch count - now properly async
+        let touch_count = self.get_zone_touch_count(&notification.zone_id).await; // ← Fixed
+
         if touch_count < self.rules.min_touch_count {
-            return Err(format!("Touch count {} below minimum {}", touch_count, self.rules.min_touch_count));
+            return Err(format!(
+                "Touch count {} below minimum {}",
+                touch_count, self.rules.min_touch_count
+            ));
         }
 
         if let Some(max_touches) = self.rules.max_touch_count {
             if touch_count > max_touches {
-                return Err(format!("Touch count {} above maximum {}", touch_count, max_touches));
+                return Err(format!(
+                    "Touch count {} above maximum {}",
+                    touch_count, max_touches
+                ));
             }
         }
 
@@ -267,22 +362,40 @@ impl TradeDecisionEngine {
         if let Some(last_trigger_time) = self.triggered_zones.get(&notification.zone_id) {
             let minutes_since_trigger = (Utc::now() - *last_trigger_time).num_minutes() as u64;
             if minutes_since_trigger < self.rules.zone_cooldown_minutes {
-                return Err(format!("Zone in cooldown: {} minutes left", 
-                                 self.rules.zone_cooldown_minutes - minutes_since_trigger));
+                return Err(format!(
+                    "Zone in cooldown: {} minutes left",
+                    self.rules.zone_cooldown_minutes - minutes_since_trigger
+                ));
             }
         }
 
         Ok(format!("Validated: {} criteria passed", "all"))
     }
 
-    fn get_zone_touch_count(&self, _zone_id: &str) -> i32 {
-        // TODO: This should query the actual zone data from cache
-        // For now, return a default value
-        // You'll need to pass zone data or query the cache here
-        1
+    // ← Fixed: Now properly async
+    async fn get_zone_touch_count(&self, zone_id: &str) -> i32 {
+        if let Some(cache) = &self.zone_cache {
+            let cache_guard = cache.lock().await;
+            // Search through zones to find matching zone_id
+            let zones = cache_guard.get_all_zones();
+            for zone in zones {
+                if let Some(id) = &zone.zone_id {
+                    if id == zone_id {
+                        return zone.touch_count.unwrap_or(0) as i32;
+                    }
+                }
+            }
+        }
+        0 // Zone not found or no cache
     }
 
-    fn create_validated_signal(&self, notification: TradeNotification, reason: String) -> ValidatedTradeSignal {
+    // ← Fixed: Added touch_count parameter
+    fn create_validated_signal(
+        &self,
+        notification: TradeNotification,
+        reason: String,
+        touch_count: i32, // ← Added parameter
+    ) -> ValidatedTradeSignal {
         ValidatedTradeSignal {
             signal_id: format!("SIGNAL_{}_{}", notification.zone_id, Utc::now().timestamp()),
             zone_id: notification.zone_id.clone(),
@@ -291,7 +404,7 @@ impl TradeDecisionEngine {
             action: notification.action.clone(),
             price: notification.price,
             zone_strength: notification.strength,
-            touch_count: self.get_zone_touch_count(&notification.zone_id),
+            touch_count, // ← Use the passed value
             validation_timestamp: Utc::now(),
             validation_reason: reason,
         }
@@ -326,6 +439,7 @@ impl TradeDecisionEngine {
     // Clean up old triggered zones (call periodically)
     pub fn cleanup_old_triggers(&mut self) {
         let cutoff_time = Utc::now() - chrono::Duration::hours(24);
-        self.triggered_zones.retain(|_, &mut trigger_time| trigger_time > cutoff_time);
+        self.triggered_zones
+            .retain(|_, &mut trigger_time| trigger_time > cutoff_time);
     }
 }

@@ -73,8 +73,8 @@ impl NewRealTimeZoneMonitor {
             active_zones: Arc::new(RwLock::new(HashMap::new())),
             event_sender,
             latest_prices: Arc::new(RwLock::new(HashMap::new())),
-            zone_cache,
-            trade_engine: Arc::new(Mutex::new(TradeDecisionEngine::new())),
+            zone_cache: zone_cache.clone(), // ← Fix 1: Clone here
+            trade_engine: Arc::new(Mutex::new(TradeDecisionEngine::new_with_cache(zone_cache))),
         };
 
         (monitor, event_receiver)
@@ -526,7 +526,7 @@ impl NewRealTimeZoneMonitor {
             // Process through trade decision engine
             let validated_signal = {
                 let mut engine_guard = self.trade_engine.lock().await;
-                engine_guard.process_notification(notification.clone())
+                engine_guard.process_notification(notification.clone()).await // ← Fix 2: Add .await
             };
             
             if let Some(signal) = validated_signal {
