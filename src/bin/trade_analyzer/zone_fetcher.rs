@@ -54,8 +54,9 @@ impl ZoneFetcher {
         let zone_type = zone_json.get("type").or_else(|| zone_json.get("zone_type")).and_then(|v| v.as_str()).ok_or("Missing type")?.to_string();
         let strength_score = zone_json.get("strength_score").and_then(|v| v.as_f64()).unwrap_or(50.0);
         let is_active = zone_json.get("is_active").and_then(|v| v.as_bool()).unwrap_or(false);
+        let touch_count = zone_json.get("touch_count").and_then(|v| v.as_i64()).map(|v| v as i32); // Added touch_count parsing
             
-        Ok(ZoneData { zone_id, symbol, timeframe, zone_high, zone_low, zone_type, strength_score, is_active })
+        Ok(ZoneData { zone_id, symbol, timeframe, zone_high, zone_low, zone_type, strength_score, is_active, touch_count })
     }
     
     fn is_timeframe_eligible(&self, timeframe: &str) -> bool {

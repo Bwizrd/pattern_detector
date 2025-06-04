@@ -2,6 +2,7 @@
 use crate::config::AnalysisConfig;
 use crate::csv_writer::CsvWriter;
 use crate::price_fetcher::PriceFetcher;
+use crate::trade_validation::BacktestTradeValidator;
 use crate::types::*;
 use crate::zone_fetcher::ZoneFetcher;
 use chrono::{DateTime, Utc};
@@ -13,6 +14,7 @@ pub struct TradeAnalyzer {
     zone_fetcher: ZoneFetcher,
     price_fetcher: PriceFetcher,
     csv_writer: CsvWriter,
+    trade_validator: BacktestTradeValidator, // Added trade validator
     zones: Vec<ZoneData>,
     price_data: HashMap<String, Vec<PriceCandle>>,
 }
@@ -24,6 +26,7 @@ impl TradeAnalyzer {
             zone_fetcher: ZoneFetcher::new(),
             price_fetcher: PriceFetcher::new(),
             csv_writer: CsvWriter::new(),
+            trade_validator: BacktestTradeValidator::new(), // Initialize trade validator
             zones: Vec::new(),
             price_data: HashMap::new(),
         }
@@ -54,7 +57,7 @@ impl TradeAnalyzer {
         Ok(())
     }
 
-    async fn analyze_trades(&self) -> Result<Vec<TradeResult>, Box<dyn std::error::Error>> {
+    async fn analyze_trades(&mut self) -> Result<Vec<TradeResult>, Box<dyn std::error::Error>> {
         info!("🔍 Starting minute-by-minute trade analysis...");
         
         let mut trade_results = Vec::new();
@@ -88,23 +91,61 @@ impl TradeAnalyzer {
                         continue; 
                     }
                     
-                    if self.check_zone_entry(zone, *current_price) && self.validate_trade_signal(zone, current_time) {
-                        let (tp_price, sl_price) = self.calculate_tp_sl_levels(zone, *current_price);
-                        
-                        let open_trade = OpenTrade {
-                            zone_id: zone.zone_id.clone(),
-                            symbol: zone.symbol.clone(),
-                            timeframe: zone.timeframe.clone(),
-                            action: if zone.zone_type.contains("supply") { "SELL".to_string() } else { "BUY".to_string() },
-                            entry_time: current_time,
-                            entry_price: *current_price,
-                            take_profit: tp_price,
-                            stop_loss: sl_price,
-                            zone_strength: zone.strength_score,
-                        };
-                        
-                        info!("📈 NEW TRADE: {} {} {} @ {:.5}", open_trade.action, open_trade.symbol, open_trade.timeframe, open_trade.entry_price);
-                        open_trades.push(open_trade);
+                    if self.check_zone_entry(zone, *current_price) {
+                        // Use EXACT main app validation logic
+                        let touch_count = zone.touch_count.unwrap_or(0);
+                        match self.trade_validator.validate_trade_signal(
+                            &zone.zone_id,
+                            &zone.symbol,
+                            &zone.timeframe,
+                            zone.strength_score,
+                            touch_count,
+                            current_time,
+                        ) {
+                            Ok(validation_reason) => {
+                                let (tp_price, sl_price) = self.calculate_tp_sl_levels(zone, *current_price);
+                                
+                                let open_trade = OpenTrade {
+                                    zone_id: zone.zone_id.clone(),
+                                    symbol: zone.symbol.clone(),
+                                    timeframe: zone.timeframe.clone(),
+                                    action: if zone.zone_type.contains("supply") { "SELL".to_string() } else { "BUY".to_string() },
+                                    entry_time: current_time,
+                                    entry_price: *current_price,
+                                    take_profit: tp_price,
+                                    stop_loss: sl_price,
+                                    zone_strength: zone.strength_score,
+                                };
+                                
+                                info!("📈 NEW TRADE: {} {} {} @ {:.5} [{}]", 
+                                      open_trade.action, open_trade.symbol, open_trade.timeframe, 
+                                      open_trade.entry_price, validation_reason);
+                                open_trades.push(open_trade);
+                            }
+                            Err(rejection_reason) => {
+                                info!("🚫 TRADE REJECTED: {} {} {} @ {:.5} - {}", 
+                                      if zone.zone_type.contains("supply") { "SELL" } else { "BUY" },
+                                      zone.symbol, zone.timeframe, current_price, rejection_reason);
+                                
+                                // Optional: Track rejected signals for analysis
+                                let rejected_trade = TradeResult {
+                                    entry_time: current_time,
+                                    symbol: zone.symbol.clone(),
+                                    timeframe: zone.timeframe.clone(),
+                                    zone_id: zone.zone_id.clone(),
+                                    action: if zone.zone_type.contains("supply") { "SELL".to_string() } else { "BUY".to_string() },
+                                    entry_price: *current_price,
+                                    exit_time: None,
+                                    exit_price: None,
+                                    exit_reason: "VALIDATION_FAILED".to_string(),
+                                    pnl_pips: None,
+                                    duration_minutes: None,
+                                    zone_strength: zone.strength_score,
+                                    validation_reason: Some(rejection_reason),
+                                };
+                                trade_results.push(rejected_trade);
+                            }
+                        }
                     }
                 }
             }
@@ -132,6 +173,7 @@ impl TradeAnalyzer {
                             pnl_pips: Some(pnl_pips),
                             duration_minutes: Some(duration_minutes),
                             zone_strength: open_trade.zone_strength,
+                            validation_reason: Some("Trade executed successfully".to_string()),
                         };
                         
                         info!("🎯 TRADE CLOSED: {} {} @ {:.5} -> {:.5} | {:.1} pips | {} | {}min", 
@@ -160,6 +202,7 @@ impl TradeAnalyzer {
                                 pnl_pips: Some(pnl_pips),
                                 duration_minutes: Some(duration_minutes),
                                 zone_strength: open_trade.zone_strength,
+                                validation_reason: Some("Zone invalidated".to_string()),
                             };
                             
                             info!("❌ ZONE INVALIDATED: {} {} @ {:.5} | {:.1} pips | {}min", 
@@ -201,6 +244,7 @@ impl TradeAnalyzer {
                 pnl_pips: Some(pnl_pips),
                 duration_minutes: Some(duration_minutes),
                 zone_strength: open_trade.zone_strength,
+                validation_reason: Some("Still open at analysis end".to_string()),
             };
             
             trade_results.push(still_open_trade);
@@ -291,6 +335,8 @@ impl TradeAnalyzer {
     }
 
     fn validate_trade_signal(&self, _zone: &ZoneData, _current_time: DateTime<Utc>) -> bool {
+        // This method is now replaced by the BacktestTradeValidator
+        // Keeping for backward compatibility, but shouldn't be used
         true
     }
 

@@ -33,7 +33,8 @@ impl CsvWriter {
             "exit_reason", 
             "pnl_pips", 
             "duration_minutes", 
-            "zone_strength"
+            "zone_strength",
+            "validation_reason"
         ])?;
         
         for trade in trades {
@@ -50,6 +51,7 @@ impl CsvWriter {
                 trade.pnl_pips.map_or("".to_string(), |p| format!("{:.1}", p)),
                 trade.duration_minutes.map_or("".to_string(), |d| d.to_string()),
                 format!("{:.1}", trade.zone_strength),
+                trade.validation_reason.as_ref().unwrap_or(&"".to_string()).clone(),
             ];
             writer.write_record(&record)?;
         }

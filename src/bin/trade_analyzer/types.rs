@@ -12,6 +12,7 @@ pub struct ZoneData {
     pub zone_type: String, // supply/demand
     pub strength_score: f64,
     pub is_active: bool,
+    pub touch_count: Option<i32>, // Added for validation logic
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,10 +35,11 @@ pub struct TradeResult {
     pub entry_price: f64,
     pub exit_time: Option<DateTime<Utc>>,
     pub exit_price: Option<f64>,
-    pub exit_reason: String, // TP_HIT, SL_HIT, ZONE_INVALIDATED, STILL_OPEN
+    pub exit_reason: String, // TP_HIT, SL_HIT, ZONE_INVALIDATED, STILL_OPEN, VALIDATION_FAILED
     pub pnl_pips: Option<f64>,
     pub duration_minutes: Option<i64>,
     pub zone_strength: f64,
+    pub validation_reason: Option<String>, // Added to track why trade was/wasn't taken
 }
 
 #[derive(Debug, Clone)]
