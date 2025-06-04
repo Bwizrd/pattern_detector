@@ -35,6 +35,7 @@ dashmap = "5.5"
 ctrlc = "3.4"
 crossterm = "0.27"
 ratatui = "0.24"
+clap = { version = "4.0", features = ["derive"] }
 
 
 [[bin]]

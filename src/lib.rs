@@ -10,3 +10,5 @@ pub mod minimal_zone_cache;
 pub mod realtime_zone_monitor;
 pub mod trade_decision_engine;
 pub mod terminal_dashboard;
+pub mod trade_event_logger;
+pub mod trade_tracker;

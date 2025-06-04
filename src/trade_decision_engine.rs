@@ -442,4 +442,39 @@ impl TradeDecisionEngine {
         self.triggered_zones
             .retain(|_, &mut trigger_time| trigger_time > cutoff_time);
     }
+
+    pub async fn process_notification_with_reason(
+        &mut self,
+        notification: TradeNotification,
+    ) -> Result<ValidatedTradeSignal, String> {
+        // Reset daily counter if new day
+        self.reset_daily_counter_if_needed();
+
+        let validation_result = self.validate_notification(&notification).await;
+
+        match validation_result {
+            Ok(reason) => {
+                let touch_count = self.get_zone_touch_count(&notification.zone_id).await;
+                let signal = self.create_validated_signal(notification, reason, touch_count);
+                
+                // Track this zone as triggered
+                self.triggered_zones
+                    .insert(signal.zone_id.clone(), Utc::now());
+
+                // Increment daily counter
+                self.daily_signal_count += 1;
+
+                // Store the signal
+                self.validated_signals.insert(0, signal.clone());
+
+                // Keep only last 50 signals
+                if self.validated_signals.len() > 50 {
+                    self.validated_signals.truncate(50);
+                }
+
+                Ok(signal)
+            }
+            Err(reason) => Err(reason),
+        }
+    }
 }
