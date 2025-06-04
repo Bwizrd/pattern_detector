@@ -798,7 +798,7 @@ impl NewRealTimeZoneMonitor {
             return;
         }
 
-        info!(
+        debug!(
             "🔍 [PROXIMITY_DEBUG] Checking proximity for: {} @ {:.5} (timeframe: {} - ALLOWED)",
             symbol, price, timeframe
         );
