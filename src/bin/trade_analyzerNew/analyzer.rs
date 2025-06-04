@@ -62,12 +62,6 @@ impl TradeAnalyzer {
         // Print trading rules
         self.print_trading_rules();
 
-        // Test CSV writing first
-        info!("🧪 TESTING CSV WRITING CAPABILITY...");
-        match self.test_proximity_write().await {
-            Ok(()) => info!("✅ TEST CSV WRITE SUCCESSFUL"),
-            Err(e) => warn!("❌ TEST CSV WRITE FAILED: {}", e),
-        }
 
         // Run proximity analysis
         info!("🔍 STARTING PROXIMITY ANALYSIS...");
@@ -99,26 +93,6 @@ impl TradeAnalyzer {
         Ok(())
     }
 
-    // Test method for CSV writing
-    async fn test_proximity_write(&self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("🧪 Testing simple CSV write...");
-
-        std::fs::create_dir_all("trades")?;
-        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let test_filename = format!("trades/test_proximity_{}.csv", timestamp);
-
-        let file = std::fs::File::create(&test_filename)?;
-        let mut writer = csv::Writer::from_writer(file);
-
-        writer.write_record(&["test_col1", "test_col2"])?;
-        writer.write_record(&["test_data1", "test_data2"])?;
-        writer.flush()?;
-
-        info!("✅ Test file created: {}", test_filename);
-        println!("📄 Test file created: {}", test_filename);
-
-        Ok(())
-    }
 
     fn print_zone_diagnostics(&self) {
         info!("📊 ZONE DIAGNOSTICS:");
