@@ -45,6 +45,8 @@ impl SoundNotifier {
         let buy_sound = env::var("BUY_SOUND_FILE").unwrap_or_else(|_| {
             if cfg!(target_os = "windows") {
                 "SystemAsterisk".to_string() // Windows system sound
+            } else if cfg!(target_os = "macos") {
+                "/System/Library/Sounds/Glass.aiff".to_string() // macOS system sound
             } else {
                 "sounds/buy_signal.wav".to_string() // Custom sound file
             }
@@ -53,6 +55,8 @@ impl SoundNotifier {
         let sell_sound = env::var("SELL_SOUND_FILE").unwrap_or_else(|_| {
             if cfg!(target_os = "windows") {
                 "SystemExclamation".to_string() // Windows system sound
+            } else if cfg!(target_os = "macos") {
+                "/System/Library/Sounds/Purr.aiff".to_string() // macOS system sound
             } else {
                 "sounds/sell_signal.wav".to_string() // Custom sound file
             }
@@ -70,6 +74,115 @@ impl SoundNotifier {
             buy_sound,
             sell_sound,
         }
+    }
+
+    pub async fn play_proximity_alert(&self, symbol: &str, zone_type: &str, distance_pips: f64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        // Use different sounds for supply vs demand proximity
+        let proximity_sound = if cfg!(target_os = "macos") {
+            if zone_type.to_lowercase().contains("supply") {
+                "/System/Library/Sounds/Tink.aiff" // Higher pitched for supply zones
+            } else {
+                "/System/Library/Sounds/Pop.aiff" // Different tone for demand zones
+            }
+        } else if cfg!(target_os = "windows") {
+            "SystemQuestion" // Windows system sound
+        } else {
+            "sounds/proximity_alert.wav" // Linux custom file
+        };
+
+        self.play_sound_file(proximity_sound).await?;
+        
+        info!("🔊 Played proximity alert for {} {} zone @ {:.1} pips away", 
+              symbol, zone_type, distance_pips);
+
+        Ok(())
+    }
+
+    pub async fn play_inside_zone_alert(&self, symbol: &str, zone_type: &str, distance_from_proximal: f64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        // Use more urgent/different sounds for inside zone alerts
+        let inside_zone_sound = if cfg!(target_os = "macos") {
+            if zone_type.to_lowercase().contains("supply") {
+                "/System/Library/Sounds/Sosumi.aiff" // More urgent sound for supply zones
+            } else {
+                "/System/Library/Sounds/Submarine.aiff" // Different urgent sound for demand zones
+            }
+        } else if cfg!(target_os = "windows") {
+            "SystemExclamation" // More urgent Windows system sound
+        } else {
+            "sounds/inside_zone_alert.wav" // Linux custom file
+        };
+
+        self.play_sound_file(inside_zone_sound).await?;
+        
+        info!("🔊 Played INSIDE ZONE alert for {} {} zone @ {:.1} pips from proximal", 
+              symbol, zone_type, distance_from_proximal);
+
+        Ok(())
+    }
+
+    async fn play_sound_file(&self, sound_file: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let result = if cfg!(target_os = "macos") {
+            // macOS afplay command
+            Command::new("afplay")
+                .arg(sound_file)
+                .output()
+        } else if cfg!(target_os = "windows") {
+            // Windows PowerShell command
+            if sound_file.starts_with("System") {
+                Command::new("powershell")
+                    .args(&[
+                        "-Command",
+                        &format!("[System.Media.SystemSounds]::{}::Play()", sound_file)
+                    ])
+                    .output()
+            } else {
+                Command::new("powershell")
+                    .args(&[
+                        "-Command",
+                        &format!("(New-Object Media.SoundPlayer '{}').PlaySync()", sound_file)
+                    ])
+                    .output()
+            }
+        } else {
+            // Linux audio players
+            let command = self.sound_command.as_ref().unwrap();
+            match command.as_str() {
+                "paplay" => Command::new(command).arg(sound_file).output(),
+                "aplay" => Command::new(command).arg(sound_file).output(),
+                "ffplay" => Command::new(command)
+                    .args(&["-nodisp", "-autoexit", sound_file])
+                    .output(),
+                _ => return Err("Unsupported audio command".into()),
+            }
+        };
+
+        match result {
+            Ok(output) => {
+                if !output.status.success() {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    error!("🔊 Sound playback failed: {}", error);
+                    return Err(format!("Sound playback failed: {}", error).into());
+                }
+            }
+            Err(e) => {
+                error!("🔊 Failed to execute sound command: {}", e);
+                return Err(format!("Failed to execute sound command: {}", e).into());
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn play_trade_signal(&self, signal: &ValidatedTradeSignal) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -137,10 +250,12 @@ impl SoundNotifier {
                 if !output.status.success() {
                     let error = String::from_utf8_lossy(&output.stderr);
                     error!("🔊 Sound playback failed: {}", error);
+                    return Err(format!("Sound playback failed: {}", error).into());
                 }
             }
             Err(e) => {
                 error!("🔊 Failed to execute sound command: {}", e);
+                return Err(format!("Failed to execute sound command: {}", e).into());
             }
         }
 
@@ -155,6 +270,8 @@ impl SoundNotifier {
         // Play a test sound
         let test_sound = if cfg!(target_os = "windows") {
             "SystemAsterisk"
+        } else if cfg!(target_os = "macos") {
+            "/System/Library/Sounds/Ping.aiff"
         } else {
             &self.buy_sound
         };
@@ -171,16 +288,14 @@ impl SoundNotifier {
 
         let startup_sound = if cfg!(target_os = "windows") {
             "SystemStart"
+        } else if cfg!(target_os = "macos") {
+            "/System/Library/Sounds/Ping.aiff"
         } else {
             "sounds/startup.wav"
         };
 
-        if let Err(e) = self.play_sound(startup_sound).await {
-            warn!("🔊 Failed to play startup sound: {}", e);
-        } else {
-            info!("🔊 Trading bot startup sound played");
-        }
-
+        self.play_sound_file(startup_sound).await?;
+        info!("🔊 Trading bot startup sound played");
         Ok(())
     }
 }

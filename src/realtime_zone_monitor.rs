@@ -60,6 +60,8 @@ pub struct NewRealTimeZoneMonitor {
     zone_cache: Arc<Mutex<MinimalZoneCache>>,
 
     trade_engine: Arc<Mutex<TradeDecisionEngine>>,
+
+    proximity_alert_cache: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
 }
 
 impl NewRealTimeZoneMonitor {
@@ -75,6 +77,7 @@ impl NewRealTimeZoneMonitor {
             latest_prices: Arc::new(RwLock::new(HashMap::new())),
             zone_cache: zone_cache.clone(),
             trade_engine: Arc::new(Mutex::new(TradeDecisionEngine::new_with_cache(zone_cache))),
+            proximity_alert_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
         (monitor, event_receiver)
@@ -508,6 +511,8 @@ impl NewRealTimeZoneMonitor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Do your existing price update logic first
         self.update_price(symbol, price, timeframe).await?;
+        self.check_proximity_for_price_update(symbol, price, timeframe)
+            .await;
 
         // Get cache notifications
         let cache_notifications = {
@@ -678,4 +683,287 @@ impl NewRealTimeZoneMonitor {
         let mut engine_guard = self.trade_engine.lock().await;
         engine_guard.clear_signals();
     }
+
+    pub async fn get_proximity_distances_debug(&self) -> Vec<ProximityDebugInfo> {
+        let zones_guard = self.active_zones.read().await;
+        let prices_guard = self.latest_prices.read().await;
+        let mut distances = Vec::new();
+
+        // Get proximity threshold from environment
+        let proximity_threshold_pips = std::env::var("PROXIMITY_THRESHOLD_PIPS")
+            .unwrap_or_else(|_| "15.0".to_string())
+            .parse::<f64>()
+            .unwrap_or(15.0);
+
+        for (zone_id, live_zone_status) in zones_guard.iter() {
+            let zone = &live_zone_status.zone;
+
+            if let (Some(symbol), Some(timeframe), Some(zone_high), Some(zone_low)) =
+                (&zone.symbol, &zone.timeframe, zone.zone_high, zone.zone_low)
+            {
+                // Try different price key formats to find current price
+                let price_candidates = vec![
+                    format!("{}_{}", symbol, timeframe),
+                    symbol.clone(),
+                    format!("{}_SB_{}", symbol.replace("_SB", ""), timeframe),
+                ];
+
+                let mut current_price = None;
+                for price_key in price_candidates {
+                    if let Some((price, _time)) = prices_guard.get(&price_key) {
+                        current_price = Some(*price);
+                        break;
+                    }
+                }
+
+                let zone_type = zone.zone_type.as_deref().unwrap_or("");
+                let is_supply = zone_type.to_lowercase().contains("supply");
+
+                // Calculate proximal line (entry point)
+                let proximal_line = if is_supply {
+                    zone_low // For supply zones, we enter when price reaches the low
+                } else {
+                    zone_high // For demand zones, we enter when price reaches the high
+                };
+
+                let (distance_pips, within_threshold) = if let Some(price) = current_price {
+                    let distance = calculate_pips_distance_simple(symbol, price, proximal_line);
+                    let within = distance <= proximity_threshold_pips;
+                    (Some(distance), within)
+                } else {
+                    (None, false)
+                };
+
+                distances.push(ProximityDebugInfo {
+                    symbol: symbol.clone(),
+                    timeframe: timeframe.clone(),
+                    zone_type: zone_type.to_string(),
+                    current_price,
+                    proximal_line,
+                    distance_pips,
+                    zone_high,
+                    zone_low,
+                    is_active: zone.is_active,
+                    zone_id: zone_id.clone(),
+                    within_threshold,
+                    proximity_threshold_pips,
+                });
+            }
+        }
+
+        // Sort by distance (closest first)
+        distances.sort_by(|a, b| match (a.distance_pips, b.distance_pips) {
+            (Some(a_dist), Some(b_dist)) => a_dist
+                .partial_cmp(&b_dist)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+
+        distances
+    }
+
+    /// Get zones that are currently within proximity threshold
+    pub async fn get_zones_within_proximity(&self) -> Vec<ProximityDebugInfo> {
+        let all_distances = self.get_proximity_distances_debug().await;
+        all_distances
+            .into_iter()
+            .filter(|info| info.within_threshold && info.is_active)
+            .collect()
+    }
+
+    async fn check_proximity_for_price_update(&self, symbol: &str, price: f64, timeframe: &str) {
+        let proximity_threshold_pips = std::env::var("PROXIMITY_THRESHOLD_PIPS")
+            .unwrap_or_else(|_| "15.0".to_string())
+            .parse::<f64>()
+            .unwrap_or(15.0);
+
+        let cooldown_minutes = std::env::var("PROXIMITY_ALERT_COOLDOWN_MINUTES")
+            .unwrap_or_else(|_| "30".to_string())
+            .parse::<i64>()
+            .unwrap_or(30);
+
+        // Get allowed timeframes for proximity alerts
+        let allowed_timeframes = std::env::var("PROXIMITY_ALLOWED_TIMEFRAMES")
+            .unwrap_or_else(|_| "30m,1h,4h,1d".to_string())
+            .split(',')
+            .map(|tf| tf.trim().to_string())
+            .collect::<Vec<String>>();
+
+        // Skip if this timeframe is not allowed
+        if !allowed_timeframes.contains(&timeframe.to_string()) {
+            debug!("🔍 [PROXIMITY_FILTER] Skipping proximity check for {} (timeframe {} not in allowed list: {:?})", 
+           symbol, timeframe, allowed_timeframes);
+            return;
+        }
+
+        info!(
+            "🔍 [PROXIMITY_DEBUG] Checking proximity for: {} @ {:.5} (timeframe: {} - ALLOWED)",
+            symbol, price, timeframe
+        );
+
+        let zones_guard = self.active_zones.read().await;
+
+        // Use static cooldown cache for simplicity
+        use std::sync::LazyLock;
+        static PROXIMITY_COOLDOWN: LazyLock<std::sync::Mutex<HashMap<String, DateTime<Utc>>>> =
+            LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+        for (zone_id, live_zone) in zones_guard.iter() {
+            let zone = &live_zone.zone;
+
+            if let Some(zone_symbol) = &zone.symbol {
+                if zone_symbol == symbol && zone.is_active {
+                    // Only check zones that match the current timeframe
+                    if zone.timeframe.as_deref().unwrap_or("") != timeframe {
+                        continue;
+                    }
+
+                    if let (Some(zone_high), Some(zone_low), Some(zone_type)) =
+                        (zone.zone_high, zone.zone_low, &zone.zone_type)
+                    {
+                        let is_supply = zone_type.to_lowercase().contains("supply");
+                        let proximal_line = if is_supply { zone_low } else { zone_high };
+                        let distal_line = if is_supply { zone_high } else { zone_low };
+
+                        // Check if price is INSIDE the zone
+                        let is_inside_zone = if is_supply {
+                            // For supply: inside if price is between zone_low (proximal) and zone_high (distal)
+                            price >= zone_low && price <= zone_high
+                        } else {
+                            // For demand: inside if price is between zone_high (proximal) and zone_low (distal)
+                            price <= zone_high && price >= zone_low
+                        };
+
+                        if is_inside_zone {
+                            // Price is INSIDE the zone - different handling
+                            let should_alert = {
+                                let now = Utc::now();
+                                let mut cooldown = PROXIMITY_COOLDOWN.lock().unwrap();
+                                let cooldown_key = format!("{}_INSIDE", zone_id); // Different key for inside alerts
+
+                                if let Some(last_alert) = cooldown.get(&cooldown_key) {
+                                    let elapsed = (now - *last_alert).num_minutes();
+                                    if elapsed >= cooldown_minutes {
+                                        cooldown.insert(cooldown_key, now);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    cooldown.insert(cooldown_key, now);
+                                    true
+                                }
+                            };
+
+                            if should_alert {
+                                let distance_from_proximal =
+                                    calculate_pips_distance_simple(symbol, price, proximal_line);
+                                let distance_from_distal =
+                                    calculate_pips_distance_simple(symbol, price, distal_line);
+
+                                info!("🎯 [INSIDE_ZONE] PRICE INSIDE {} {} zone {} - {:.1} pips from proximal, {:.1} pips from distal ({})", 
+                              symbol, zone_type, zone_id, distance_from_proximal, distance_from_distal, timeframe);
+
+                                if let Some(notification_manager) =
+                                    get_global_notification_manager()
+                                {
+                                    notification_manager
+                                        .notify_inside_zone_alert(
+                                            symbol,
+                                            price,
+                                            zone_type,
+                                            zone_high,
+                                            zone_low,
+                                            zone_id,
+                                            timeframe,
+                                            distance_from_proximal,
+                                            distance_from_distal,
+                                        )
+                                        .await;
+                                }
+                            } else {
+                                debug!(
+                                    "🔍 [COOLDOWN] Inside zone alert for {} in cooldown, skipping",
+                                    zone_id
+                                );
+                            }
+                        } else {
+                            // Price is OUTSIDE the zone - check for proximity to proximal line
+                            let distance_pips =
+                                calculate_pips_distance_simple(symbol, price, proximal_line);
+
+                            // Only alert if approaching (not inside) and within threshold
+                            if distance_pips <= proximity_threshold_pips {
+                                let should_alert = {
+                                    let now = Utc::now();
+                                    let mut cooldown = PROXIMITY_COOLDOWN.lock().unwrap();
+                                    let cooldown_key = format!("{}_APPROACHING", zone_id); // Different key for approaching alerts
+
+                                    if let Some(last_alert) = cooldown.get(&cooldown_key) {
+                                        let elapsed = (now - *last_alert).num_minutes();
+                                        if elapsed >= cooldown_minutes {
+                                            cooldown.insert(cooldown_key, now);
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        cooldown.insert(cooldown_key, now);
+                                        true
+                                    }
+                                };
+
+                                if should_alert {
+                                    info!("🎯 [PROXIMITY_ALERT] APPROACHING {} {} zone {} - {:.1} pips away ({})", 
+                                  symbol, zone_type, zone_id, distance_pips, timeframe);
+
+                                    if let Some(notification_manager) =
+                                        get_global_notification_manager()
+                                    {
+                                        notification_manager
+                                            .notify_proximity_alert(
+                                                symbol,
+                                                price,
+                                                zone_type,
+                                                zone_high,
+                                                zone_low,
+                                                zone_id,
+                                                timeframe,
+                                                distance_pips,
+                                            )
+                                            .await;
+                                    }
+                                } else {
+                                    debug!("🔍 [COOLDOWN] Approaching zone alert for {} in cooldown, skipping", zone_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+#[derive(Debug, serde::Serialize)]
+pub struct ProximityDebugInfo {
+    pub symbol: String,
+    pub timeframe: String,
+    pub zone_type: String,
+    pub current_price: Option<f64>,
+    pub proximal_line: f64,
+    pub distance_pips: Option<f64>,
+    pub zone_high: f64,
+    pub zone_low: f64,
+    pub is_active: bool,
+    pub zone_id: String,
+    pub within_threshold: bool,
+    pub proximity_threshold_pips: f64,
+}
+
+// Helper function for pip calculation (add this at the end of the file)
+fn calculate_pips_distance_simple(symbol: &str, price1: f64, price2: f64) -> f64 {
+    let pip_value = if symbol.contains("JPY") { 0.01 } else { 0.0001 };
+    (price1 - price2).abs() / pip_value
 }

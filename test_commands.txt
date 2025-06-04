@@ -1,0 +1,118 @@
+# =============================================================================
+# COPY & PASTE INDIVIDUAL COMMANDS
+# =============================================================================
+
+# 1. Test All Notifications (Telegram + Sound)
+curl -X POST http://localhost:8080/notifications/test
+
+# 2. Test Proximity Alerts Only
+curl -X POST http://localhost:8080/proximity/test
+
+# 3. Check Proximity Configuration
+curl http://localhost:8080/proximity/status
+
+# 4. Check Trading Status
+curl http://localhost:8080/trading/status
+
+# 5. Send Daily Summary
+curl -X POST http://localhost:8080/notifications/daily-summary
+
+# 6. Manual Trade Test (FIXED - with all required fields)
+curl -X POST http://localhost:8080/trading/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EURUSD",
+    "action": "BUY", 
+    "price": 1.12345,
+    "timeframe": "4h",
+    "zone_id": "test_zone_123",
+    "zone_type": "demand",
+    "timestamp": "2025-06-04T14:30:25Z",
+    "zone_strength": 8
+  }'
+
+# 7. Manual Trade Test - SELL Signal
+curl -X POST http://localhost:8080/trading/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "GBPUSD",
+    "action": "SELL", 
+    "price": 1.25678,
+    "timeframe": "1h",
+    "zone_id": "test_zone_456",
+    "zone_type": "supply",
+    "timestamp": "2025-06-04T14:30:25Z",
+    "zone_strength": 9
+  }'
+
+# 8. Get Current Prices
+curl http://localhost:8080/current-prices
+
+# 9. Get Trade Notifications
+curl http://localhost:8080/trade-notifications
+
+# 10. Get Validated Signals
+curl http://localhost:8080/trading/validated-signals
+
+# 11. Clear Validated Signals
+curl -X POST http://localhost:8080/trading/validated-signals/clear
+
+# 12. Clear Trade Notifications  
+curl -X POST http://localhost:8080/trade-notifications/clear
+
+# 13. Reload Trading Rules
+curl -X POST http://localhost:8080/trading/reload-rules
+
+# 14. Health Check
+curl http://localhost:8080/health
+
+# =============================================================================
+# PRETTY JSON OUTPUT (if you have jq installed)
+# =============================================================================
+
+# Test notifications with pretty output
+curl -s -X POST http://localhost:8080/notifications/test | jq '.'
+
+# Test proximity with pretty output
+curl -s -X POST http://localhost:8080/proximity/test | jq '.'
+
+# Check proximity status with pretty output
+curl -s http://localhost:8080/proximity/status | jq '.'
+
+# Manual trade test with pretty output
+curl -s -X POST http://localhost:8080/trading/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EURUSD",
+    "action": "BUY", 
+    "price": 1.12345,
+    "timeframe": "4h",
+    "zone_id": "test_zone_123",
+    "zone_type": "demand",
+    "timestamp": "2025-06-04T14:30:25Z",
+    "zone_strength": 8
+  }' | jq '.'
+
+# =============================================================================
+# QUICK TEST SEQUENCE (run all at once)
+# =============================================================================
+
+echo "Testing notifications..." && \
+curl -s -X POST http://localhost:8080/notifications/test && \
+echo -e "\n\nTesting proximity..." && \
+curl -s -X POST http://localhost:8080/proximity/test && \
+echo -e "\n\nTesting trade validation..." && \
+curl -s -X POST http://localhost:8080/trading/test \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EURUSD",
+    "action": "BUY", 
+    "price": 1.12345,
+    "timeframe": "4h",
+    "zone_id": "test_zone_123",
+    "zone_type": "demand",
+    "timestamp": "2025-06-04T14:30:25Z",
+    "zone_strength": 8
+  }' && \
+echo -e "\n\nChecking status..." && \
+curl -s http://localhost:8080/proximity/status

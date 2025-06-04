@@ -19,6 +19,75 @@ impl NotificationManager {
         }
     }
 
+    /// Send proximity alert notifications (price approaching zone)
+    pub async fn notify_proximity_alert(&self, symbol: &str, current_price: f64, zone_type: &str, zone_high: f64, zone_low: f64, zone_id: &str, timeframe: &str, distance_pips: f64) {
+        info!(
+            "📢 Sending proximity notifications for {} {} zone @ {:.5} ({:.1} pips away)", 
+            symbol, zone_type, current_price, distance_pips
+        );
+
+        // Send notifications concurrently
+        let telegram_task = self.telegram.send_proximity_alert(symbol, current_price, zone_type, zone_high, zone_low, zone_id, timeframe, distance_pips);
+        let sound_task = self.sound.play_proximity_alert(symbol, zone_type, distance_pips);
+
+        // Wait for both to complete
+        let (telegram_result, sound_result) = tokio::join!(telegram_task, sound_task);
+
+        // Log any errors but don't fail
+        if let Err(e) = telegram_result {
+            error!("📱 Proximity Telegram notification failed: {}", e);
+        }
+
+        if let Err(e) = sound_result {
+            error!("🔊 Proximity sound notification failed: {}", e);
+        }
+    }
+
+    /// Send inside zone alert notifications (price is inside the zone)
+    pub async fn notify_inside_zone_alert(
+        &self,
+        symbol: &str,
+        current_price: f64,
+        zone_type: &str,
+        zone_high: f64,
+        zone_low: f64,
+        zone_id: &str,
+        timeframe: &str,
+        distance_from_proximal: f64,
+        distance_from_distal: f64,
+    ) {
+        info!(
+            "📢 Sending INSIDE ZONE notifications for {} {} zone @ {:.5} ({:.1} pips from proximal, {:.1} pips from distal)", 
+            symbol, zone_type, current_price, distance_from_proximal, distance_from_distal
+        );
+
+        // Send notifications concurrently
+        let telegram_task = self.telegram.send_inside_zone_alert(
+            symbol, 
+            current_price, 
+            zone_type, 
+            zone_high, 
+            zone_low, 
+            zone_id, 
+            timeframe, 
+            distance_from_proximal, 
+            distance_from_distal
+        );
+        let sound_task = self.sound.play_inside_zone_alert(symbol, zone_type, distance_from_proximal);
+
+        // Wait for both to complete
+        let (telegram_result, sound_result) = tokio::join!(telegram_task, sound_task);
+
+        // Log any errors but don't fail
+        if let Err(e) = telegram_result {
+            error!("📱 Inside Zone Telegram notification failed: {}", e);
+        }
+
+        if let Err(e) = sound_result {
+            error!("🔊 Inside Zone sound notification failed: {}", e);
+        }
+    }
+
     /// Send all notifications for a validated trade signal
     pub async fn notify_trade_signal(&self, signal: &ValidatedTradeSignal) {
         info!(
