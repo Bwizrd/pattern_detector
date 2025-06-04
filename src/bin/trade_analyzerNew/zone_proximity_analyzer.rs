@@ -134,6 +134,7 @@ impl ZoneProximityAnalyzer {
         if distance_from_proximal <= proximity_threshold {
             let distance_pips = distance_from_proximal / pip_value;
             let touch_threshold_pips = touch_threshold / pip_value;
+        let _touch_threshold_pips = touch_threshold / pip_value; // Prefix with underscore since it's unused
             let proximity_threshold_pips = proximity_threshold / pip_value;
             let is_actual_touch = distance_from_proximal <= touch_threshold;
             let proximity_percentage = if touch_threshold > 0.0 {
@@ -230,48 +231,11 @@ impl ZoneProximityAnalyzer {
         }
     }
 
-    pub async fn write_proximity_report(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write_proximity_summary_only(&self) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all("trades")?;
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         
-        // Write detailed proximity events
-        let events_filename = format!("trades/zone_proximity_events_{}.csv", timestamp);
-        info!("📝 Writing {} proximity events to: {}", self.proximity_events.len(), events_filename);
-        
-        let events_file = std::fs::File::create(&events_filename)?;
-        let mut events_writer = csv::Writer::from_writer(events_file);
-        
-        events_writer.write_record(&[
-            "timestamp", "zone_id", "symbol", "timeframe", "zone_type",
-            "zone_high", "zone_low", "zone_strength", "current_price", "proximal_line",
-            "distance_from_proximal", "distance_pips", "proximity_threshold", 
-            "proximity_threshold_pips", "is_actual_touch", "proximity_percentage"
-        ])?;
-
-        for event in &self.proximity_events {
-            let record = vec![
-                event.timestamp.to_rfc3339(),
-                event.zone_id.clone(),
-                event.symbol.clone(),
-                event.timeframe.clone(),
-                event.zone_type.clone(),
-                event.zone_high.to_string(),
-                event.zone_low.to_string(),
-                format!("{:.1}", event.zone_strength),
-                format!("{:.5}", event.current_price),
-                format!("{:.5}", event.proximal_line),
-                format!("{:.6}", event.distance_from_proximal),
-                format!("{:.1}", event.distance_pips),
-                format!("{:.6}", event.proximity_threshold),
-                format!("{:.1}", event.proximity_threshold_pips),
-                event.is_actual_touch.to_string(),
-                format!("{:.1}", event.proximity_percentage),
-            ];
-            events_writer.write_record(&record)?;
-        }
-        events_writer.flush()?;
-
-        // Write zone summaries
+        // Write ONLY zone summaries (closest approach per zone)
         let summary_filename = format!("trades/zone_proximity_summary_{}.csv", timestamp);
         info!("📝 Writing {} zone summaries to: {}", self.zone_summaries.len(), summary_filename);
         
@@ -280,15 +244,15 @@ impl ZoneProximityAnalyzer {
         
         summary_writer.write_record(&[
             "zone_id", "symbol", "timeframe", "zone_type", "zone_high", "zone_low", 
-            "zone_strength", "total_proximity_events", "actual_touches", 
-            "closest_distance_pips", "closest_timestamp", "closest_price",
-            "average_distance_pips", "first_proximity_time", "last_proximity_time"
+            "zone_strength", "closest_distance_pips", "closest_timestamp", "closest_price",
+            "was_actual_touch"
         ])?;
 
         let mut summaries: Vec<_> = self.zone_summaries.values().collect();
         summaries.sort_by(|a, b| a.closest_distance_pips.partial_cmp(&b.closest_distance_pips).unwrap());
 
-        for summary in summaries {
+        for summary in &summaries {
+            let was_actual_touch = summary.actual_touches > 0;
             let record = vec![
                 summary.zone_id.clone(),
                 summary.symbol.clone(),
@@ -297,32 +261,24 @@ impl ZoneProximityAnalyzer {
                 format!("{:.5}", summary.zone_high),
                 format!("{:.5}", summary.zone_low),
                 format!("{:.1}", summary.zone_strength),
-                summary.total_proximity_events.to_string(),
-                summary.actual_touches.to_string(),
                 format!("{:.1}", summary.closest_distance_pips),
                 summary.closest_timestamp.to_rfc3339(),
                 format!("{:.5}", summary.closest_price),
-                format!("{:.1}", summary.average_distance_pips),
-                summary.first_proximity_time.to_rfc3339(),
-                summary.last_proximity_time.to_rfc3339(),
+                was_actual_touch.to_string(),
             ];
             summary_writer.write_record(&record)?;
         }
         summary_writer.flush()?;
 
-        println!("📄 Proximity reports saved:");
-        println!("   Events: {}", events_filename);
-        println!("   Summary: {}", summary_filename);
+        println!("📄 Zone proximity summary saved: {}", summary_filename);
 
-        // Print top near misses
+        // Print top 10 closest approaches
         info!("🎯 TOP 10 CLOSEST ZONE APPROACHES:");
-        let mut top_approaches: Vec<_> = self.zone_summaries.values().collect();
-        top_approaches.sort_by(|a, b| a.closest_distance_pips.partial_cmp(&b.closest_distance_pips).unwrap());
-        
-        for (i, summary) in top_approaches.iter().take(10).enumerate() {
-            info!("   {}: {} {} {} - {:.1} pips away (at {})", 
+        for (i, summary) in summaries.iter().take(10).enumerate() {
+            let status = if summary.actual_touches > 0 { "✅ TOUCHED" } else { "📍 CLOSE" };
+            info!("   {}: {} {} {} - {:.1} pips away (at {}) {}", 
                   i+1, summary.symbol, summary.timeframe, &summary.zone_id[..8],
-                  summary.closest_distance_pips, summary.closest_timestamp.format("%H:%M:%S"));
+                  summary.closest_distance_pips, summary.closest_timestamp.format("%H:%M:%S"), status);
         }
 
         Ok(())
