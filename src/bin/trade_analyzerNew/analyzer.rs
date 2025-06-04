@@ -84,6 +84,7 @@ impl TradeAnalyzer {
 
         // Write results
         self.csv_writer.write_results(&trade_results).await?;
+        self.write_clean_trades(&trade_results).await?;
         self.csv_writer.print_summary(&trade_results);
 
         info!("🎉 Trade analysis completed successfully!");
@@ -515,4 +516,65 @@ impl TradeAnalyzer {
             (take_profit, stop_loss)
         }
     }
+    // Add this method to your existing TradeAnalyzer impl block:
+
+async fn write_clean_trades(&self, trade_results: &[TradeResult]) -> Result<(), Box<dyn std::error::Error>> {
+    // Filter out validation failures - only keep actual executed trades
+    let clean_trades: Vec<&TradeResult> = trade_results.iter()
+        .filter(|trade| trade.exit_reason != "VALIDATION_FAILED")
+        .collect();
+
+    if clean_trades.is_empty() {
+        info!("📝 No executed trades to write to clean trades file");
+        return Ok(());
+    }
+
+    std::fs::create_dir_all("trades")?;
+    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("trades/trades-{}.csv", timestamp);
+    
+    info!("📝 Writing {} clean trades to: {}", clean_trades.len(), filename);
+    
+    let file = std::fs::File::create(&filename)?;
+    let mut writer = csv::Writer::from_writer(file);
+    
+    writer.write_record(&[
+        "entry_time", 
+        "symbol", 
+        "timeframe", 
+        "zone_id", 
+        "action", 
+        "entry_price", 
+        "exit_time", 
+        "exit_price", 
+        "exit_reason", 
+        "pnl_pips", 
+        "duration_minutes", 
+        "zone_strength"
+    ])?;
+    
+    for trade in clean_trades {
+        let record = vec![
+            trade.entry_time.to_rfc3339(),
+            trade.symbol.clone(),
+            trade.timeframe.clone(),
+            trade.zone_id.clone(),
+            trade.action.clone(),
+            trade.entry_price.to_string(),
+            trade.exit_time.map_or("".to_string(), |t| t.to_rfc3339()),
+            trade.exit_price.map_or("".to_string(), |p| p.to_string()),
+            trade.exit_reason.clone(),
+            trade.pnl_pips.map_or("".to_string(), |p| format!("{:.1}", p)),
+            trade.duration_minutes.map_or("".to_string(), |d| d.to_string()),
+            format!("{:.1}", trade.zone_strength),
+        ];
+        writer.write_record(&record)?;
+    }
+    
+    writer.flush()?;
+    info!("✅ Clean trades CSV written successfully: {}", filename);
+    println!("📄 Clean trades saved to: {}", filename);
+    Ok(())
+}
+
 }
