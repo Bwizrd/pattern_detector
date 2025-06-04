@@ -3,7 +3,7 @@ use crate::detect::CandleData;
 use crate::patterns::PatternRecognizer;
 use crate::trades::{Trade, TradeConfig, TradeSummary};
 use crate::trading::TradeExecutor;
-use log::{error, info, trace, warn};
+use log::{error, info, trace, warn, debug};
 use serde_json::json; // Ensure log crate is available (add to Cargo.toml if needed)
 
 pub struct FiftyPercentBeforeBigBarRecognizer {
@@ -106,54 +106,54 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             // <<< --- START DEBUG LOGGING FOR TARGET --- >>>
             let is_target_fifty_candle = fifty_candle.time == target_fifty_candle_time;
             if is_target_fifty_candle {
-                error!("[RECOGNIZER_DEBUG] Checking target fifty_candle at index {}: Time={}, O={:.5}, H={:.5}, L={:.5}, C={:.5}",
+                debug!("[RECOGNIZER_DEBUG] Checking target fifty_candle at index {}: Time={}, O={:.5}, H={:.5}, L={:.5}, C={:.5}",
                     i, fifty_candle.time, fifty_candle.open, fifty_candle.high, fifty_candle.low, fifty_candle.close);
-                error!("[RECOGNIZER_DEBUG] Corresponding big_candle: Time={}, O={:.5}, H={:.5}, L={:.5}, C={:.5}",
+                debug!("[RECOGNIZER_DEBUG] Corresponding big_candle: Time={}, O={:.5}, H={:.5}, L={:.5}, C={:.5}",
                     big_candle.time, big_candle.open, big_candle.high, big_candle.low, big_candle.close);
-                error!("[RECOGNIZER_DEBUG] Current Run Config: avg_range={:.5}, big_bar_thresh={:.5}, max_fifty_range_thresh={:.5}",
+                debug!("[RECOGNIZER_DEBUG] Current Run Config: avg_range={:.5}, big_bar_thresh={:.5}, max_fifty_range_thresh={:.5}",
                     avg_range, big_bar_threshold, max_fifty_range_threshold);
             }
             // <<< --- END DEBUG LOGGING FOR TARGET (initial info) --- >>>
 
             let fifty_range = fifty_candle.high - fifty_candle.low;
-            if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] fifty_range={:.5}", fifty_range); }
+            if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] fifty_range={:.5}", fifty_range); }
             if fifty_range <= 1e-9 {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: fifty_range too small"); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: fifty_range too small"); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: fifty_candle range ({}) is zero or negative", i, fifty_range);
                 continue;
             }
             if fifty_range > max_fifty_range_threshold {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: fifty_range ({:.5}) > max_fifty_range_threshold ({:.5})", fifty_range, max_fifty_range_threshold); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: fifty_range ({:.5}) > max_fifty_range_threshold ({:.5})", fifty_range, max_fifty_range_threshold); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: fifty_candle range ({:.5}) exceeds max threshold ({:.5})", i, fifty_range, max_fifty_range_threshold);
                 continue;
             }
 
             let fifty_body_size = (fifty_candle.close - fifty_candle.open).abs();
-            if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] fifty_body_size={:.5}", fifty_body_size); }
+            if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] fifty_body_size={:.5}", fifty_body_size); }
             if fifty_body_size > (fifty_range * self.max_body_size_percent / 100.0) {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: fifty_body_size too large relative to its range"); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: fifty_body_size too large relative to its range"); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: fifty_candle body size ({:.5}) exceeds max percent ({}) of its range ({:.5})", i, fifty_body_size, self.max_body_size_percent, fifty_range);
                 continue;
             }
 
             let big_range = big_candle.high - big_candle.low;
-            if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] big_range={:.5}", big_range); }
+            if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] big_range={:.5}", big_range); }
             if big_range <= 1e-9 {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: big_range too small"); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: big_range too small"); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: big_candle range ({}) is zero or negative", i, big_range);
                 continue;
             }
             if big_range <= big_bar_threshold {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: big_range ({:.5}) <= big_bar_threshold ({:.5})", big_range, big_bar_threshold); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: big_range ({:.5}) <= big_bar_threshold ({:.5})", big_range, big_bar_threshold); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: big_candle range ({:.5}) does not exceed threshold ({:.5})", i, big_range, big_bar_threshold);
                 continue;
             }
 
             let big_body_size = (big_candle.close - big_candle.open).abs();
             let big_body_percentage = if big_range > 1e-9 { big_body_size / big_range } else { 0.0 };
-            if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] big_body_percentage={:.2}", big_body_percentage); }
+            if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] big_body_percentage={:.2}", big_body_percentage); }
             if big_body_percentage < self.min_big_bar_body_percent {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: big_body_percentage too small"); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: big_body_percentage too small"); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: big_candle body percentage ({:.2}) is below minimum ({:.2})", i, big_body_percentage, self.min_big_bar_body_percent);
                 continue;
             }
@@ -162,18 +162,18 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             let is_confirmed = if !self.require_breakout_close { true }
                                else if is_bullish_big_bar { big_candle.close > fifty_candle.high }
                                else { big_candle.close < fifty_candle.low };
-            if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] is_bullish_big_bar={}, require_breakout_close={}, is_confirmed={}", is_bullish_big_bar, self.require_breakout_close, is_confirmed); }
+            if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] is_bullish_big_bar={}, require_breakout_close={}, is_confirmed={}", is_bullish_big_bar, self.require_breakout_close, is_confirmed); }
             if !is_confirmed {
-                if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] SKIP: breakout not confirmed"); }
+                if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] SKIP: breakout not confirmed"); }
                 trace!("[FiftyPercentRecognizer] Skipping i={}: big_candle close ({:.5}) did not confirm breakout of fifty_candle range [{:.5}, {:.5}]", i, big_candle.close, fifty_candle.low, fifty_candle.high);
                 continue;
             }
 
             // If all checks pass, create the zone
             if is_target_fifty_candle {
-                error!("[RECOGNIZER_DEBUG] ALL CHECKS PASSED for target fifty_candle at index {}. Proceeding to create zone.", i);
+                debug!("[RECOGNIZER_DEBUG] ALL CHECKS PASSED for target fifty_candle at index {}. Proceeding to create zone.", i);
             }
-            info!(
+            debug!(
                 "[FiftyPercentRecognizer] Pattern candidate CONFIRMED at i={}: fifty_time={}, big_time={}, fifty_H={:.5}, fifty_L={:.5}, big_C={:.5}",
                 i, fifty_candle.time, big_candle.time, fifty_candle.high, fifty_candle.low, big_candle.close
             );
@@ -197,12 +197,12 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
                 let zone_broken = if is_bullish_big_bar { candle.close < actual_zone_low } else { candle.close > actual_zone_high };
 
                 if zone_broken {
-                    if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] Target zone broken internally by recognizer at candle j={}: C={:.5}, relevant_boundary={:.5}", j, candle.close, if is_bullish_big_bar {actual_zone_low} else {actual_zone_high}); }
+                    if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] Target zone broken internally by recognizer at candle j={}: C={:.5}, relevant_boundary={:.5}", j, candle.close, if is_bullish_big_bar {actual_zone_low} else {actual_zone_high}); }
                     zone_end_index = j;
                     break;
                 }
                 if j >= i + 100 { // Limit extension
-                    if is_target_fifty_candle { error!("[RECOGNIZER_DEBUG] Target zone extension limit reached at j={}", j); }
+                    if is_target_fifty_candle { debug!("[RECOGNIZER_DEBUG] Target zone extension limit reached at j={}", j); }
                     zone_end_index = j;
                     break;
                 }

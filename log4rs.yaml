@@ -11,17 +11,6 @@ appenders:
     encoder:
       # Format: Time(UTC) Level [Target] Message {NewLine}
       pattern: "{d(%Y-%m-%dT%H:%M:%SZ)(utc)} {h({l})} [{t}] - {m}{n}"
-    # Example policy: Rolling file based on size
-    # policy:
-    #   kind: compound
-    #   trigger:
-    #     kind: size
-    #     limit: 10 mb
-    #   roller:
-    #     kind: fixed_window
-    #     base: 1
-    #     count: 5
-    #     pattern: "logs/backend.{}.log" # Pattern for rolled files
 
   # An appender named "stdout" that writes to standard output
   stdout:
@@ -32,16 +21,71 @@ appenders:
 # Root logger configuration
 root:
   # Set the minimum log level (trace, debug, info, warn, error)
-  level: debug
+  level: info
   # List of appenders to use
   appenders:
     - logfile # Log to file
     - stdout  # Also log to console (optional, remove if you ONLY want file)
 
-# You can optionally configure specific loggers (targets) here
-# loggers:
-#   pattern_detector::detect: # Example: Only log 'info' level and above for detect module
-#     level: info
-#     appenders:
-#       - logfile
-#     additive: false # Prevents messages from propagating to the root logger
+# Configure specific loggers to filter noise
+loggers:
+  # Reduce HTTP request spam - only log HTTP errors (4xx, 5xx)
+  actix_web::middleware::logger:
+    level: warn
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  # Reduce other actix noise
+  actix_web:
+    level: warn
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  # Keep your important app logs at info level
+  pattern_detector::minimal_zone_cache:
+    level: info
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  pattern_detector::trade_decision_engine:
+    level: info
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  pattern_detector::realtime_zone_monitor:
+    level: info
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  pattern_detector::main:
+    level: info
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  # Reduce reqwest HTTP client noise
+  reqwest:
+    level: warn
+    appenders:
+      - logfile
+      - stdout
+    additive: false
+
+  # Reduce hyper HTTP library noise
+  hyper:
+    level: warn
+    appenders:
+      - logfile
+      - stdout
+    additive: false

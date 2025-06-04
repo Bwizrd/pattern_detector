@@ -12,3 +12,6 @@ pub mod trade_decision_engine;
 pub mod terminal_dashboard;
 pub mod trade_event_logger;
 pub mod trade_tracker;
+pub mod notification_manager;
+pub mod telegram_notifier;
+pub mod sound_notifier;

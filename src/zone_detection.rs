@@ -42,7 +42,7 @@ impl ZoneDetectionEngine {
     
     /// Main zone detection function - works with any candlestick data
     pub fn detect_zones(&self, request: ZoneDetectionRequest) -> Result<ZoneDetectionResult, CoreError> {
-        info!(
+        debug!(
             "[ZoneEngine] Detecting zones for {}/{} with {} candles",
             request.symbol, request.timeframe, request.candles.len()
         );
@@ -78,7 +78,7 @@ impl ZoneDetectionEngine {
         
         let total_detected = supply_zones.len() + demand_zones.len();
         
-        info!(
+        debug!(
             "[ZoneEngine] Completed detection for {}/{}: {} supply, {} demand zones",
             request.symbol, request.timeframe, supply_zones.len(), demand_zones.len()
         );

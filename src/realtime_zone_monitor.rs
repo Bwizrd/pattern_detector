@@ -1,4 +1,4 @@
-// src/realtime_zone_monitor.rs - Fixed implementation 
+// src/realtime_zone_monitor.rs - Fixed implementation
 use chrono::{DateTime, Utc};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
@@ -9,9 +9,11 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::minimal_zone_cache::MinimalZoneCache;
-use crate::types::EnrichedZone;
 use crate::minimal_zone_cache::TradeNotification;
 use crate::trade_decision_engine::{TradeDecisionEngine, ValidatedTradeSignal};
+use crate::types::EnrichedZone;
+
+use crate::notification_manager::get_global_notification_manager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewZoneEvent {
@@ -278,11 +280,12 @@ impl NewRealTimeZoneMonitor {
 
         drop(zones_guard);
 
-        // Send all events
+        // // Send all events
         for event in events_to_send {
-            if let Err(e) = self.event_sender.send(event) {
-                warn!("⚠️ [NEW_ZONE_MONITOR] Failed to send event: {}", e);
-            }
+            // if let Err(e) = self.event_sender.send(event) {
+            //     warn!("⚠️ [NEW_ZONE_MONITOR] Failed to send event: {}", e);
+            // }
+            let _ = self.event_sender.send(event);
         }
 
         info!(
@@ -409,9 +412,10 @@ impl NewRealTimeZoneMonitor {
 
         // Send all events
         for event in events_to_send {
-            if let Err(e) = self.event_sender.send(event) {
-                warn!("⚠️ [NEW_ZONE_MONITOR] Failed to send event: {}", e);
-            }
+            // if let Err(e) = self.event_sender.send(event) {
+            //     warn!("⚠️ [NEW_ZONE_MONITOR] Failed to send event: {}", e);
+            // }
+            let _ = self.event_sender.send(event);
         }
 
         Ok(())
@@ -514,9 +518,11 @@ impl NewRealTimeZoneMonitor {
         // Get trade logger from global state
         use std::sync::LazyLock;
         static GLOBAL_TRADE_LOGGER: LazyLock<
-            std::sync::Mutex<Option<Arc<tokio::sync::Mutex<crate::trade_event_logger::TradeEventLogger>>>>,
+            std::sync::Mutex<
+                Option<Arc<tokio::sync::Mutex<crate::trade_event_logger::TradeEventLogger>>>,
+            >,
         > = LazyLock::new(|| std::sync::Mutex::new(None));
-        
+
         let trade_logger = GLOBAL_TRADE_LOGGER.lock().unwrap().clone();
 
         // Process each notification through the trade decision engine
@@ -540,7 +546,9 @@ impl NewRealTimeZoneMonitor {
             // Process through trade decision engine
             let validated_signal = {
                 let mut engine_guard = self.trade_engine.lock().await;
-                engine_guard.process_notification(notification.clone()).await
+                engine_guard
+                    .process_notification(notification.clone())
+                    .await
             };
 
             if let Some(signal) = validated_signal {
@@ -555,6 +563,14 @@ impl NewRealTimeZoneMonitor {
                     let logger_guard = logger_arc.lock().await;
                     logger_guard.log_signal_validated(&signal).await;
                     drop(logger_guard);
+                }
+
+                // *** ADD THIS NEW SECTION FOR NOTIFICATIONS ***
+                // Send notifications for validated trade signal
+                if let Some(notification_manager) = get_global_notification_manager() {
+                    notification_manager.notify_trade_signal(&signal).await;
+                } else {
+                    warn!("📢 Notification manager not available for signal notification");
                 }
 
                 // TODO: Here you would:
@@ -621,7 +637,7 @@ impl NewRealTimeZoneMonitor {
             };
 
             if let Err(e) = self.event_sender.send(zone_event) {
-                warn!(
+                debug!(
                     "⚠️ [ZONE_MONITOR] Failed to send cache notification event: {}",
                     e
                 );

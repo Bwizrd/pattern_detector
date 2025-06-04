@@ -1,11 +1,11 @@
 // src/types.rs
 // Contains shared data structures used by both the web server handlers and potentially the generator.
 
-use serde::{Deserialize, Serialize};
 pub use crate::detect::{CandleData, ChartQuery}; // Imports from detect.rs
+use log::{warn, debug};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap; // Needed for HashMap fields
-use log::{warn};
-use serde_json::Value; 
 // --- Structs used as Input Parameters (e.g., for web requests) ---
 
 #[derive(Deserialize, Debug, Clone)]
@@ -42,9 +42,9 @@ pub struct EnrichedZone {
     pub start_idx: Option<u64>,  // Index of the first candle forming the zone
     pub end_idx: Option<u64>,    // Index of the LAST candle forming the zone (e.g., the big bar)
     pub start_time: Option<String>, // ISO 8601 format string of start_idx candle
-    pub end_time: Option<String>,   // ISO 8601 format string of end_idx candle
-    pub zone_high: Option<f64>,     // Top boundary of the zone
-    pub zone_low: Option<f64>,      // Bottom boundary of the zone
+    pub end_time: Option<String>, // ISO 8601 format string of end_idx candle
+    pub zone_high: Option<f64>,  // Top boundary of the zone
+    pub zone_low: Option<f64>,   // Bottom boundary of the zone
     pub fifty_percent_line: Option<f64>, // Midpoint of the zone
     pub detection_method: Option<String>, // How the zone was identified
 
@@ -52,7 +52,7 @@ pub struct EnrichedZone {
     pub zone_type: Option<String>, // e.g., "supply_zone", "demand_zone". Renamed from 'type'.
 
     #[serde(skip_serializing_if = "Option::is_none")] // Added skip_serializing_if
-    pub extended: Option<bool>,         // Was the zone extended during detection?
+    pub extended: Option<bool>, // Was the zone extended during detection?
     #[serde(skip_serializing_if = "Option::is_none")] // Added skip_serializing_if
     pub extension_percent: Option<f64>, // How much was it extended?
 
@@ -90,10 +90,9 @@ pub struct EnrichedZone {
     // --- *** NEW FIELD for Touch Points *** ---
     #[serde(skip_serializing_if = "Option::is_none")]
     pub touch_points: Option<Vec<TouchPoint>>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug_candles: Option<Vec<serde_json::Value>>,
-
     // Optional: Include candles involved in the zone state? Might make JSON large.
     // #[serde(skip_serializing_if = "Option::is_none")]
     // pub candles: Option<Vec<CandleData>>,
@@ -158,26 +157,37 @@ pub fn deserialize_raw_zone_value(zone_json: &Value) -> Result<EnrichedZone, Str
         Ok(zone) => {
             // Post-deserialization checks or defaults if needed
             if zone.zone_id.is_none() {
-                // We expect the enrichment logic to add this now if missing
-                warn!("deserialize_raw_zone_value: Zone missing zone_id (will be generated during enrichment). JSON: {:?}", zone_json.get("start_time"));
+                debug!(
+                    "Zone missing zone_id (will be generated during enrichment). Time: {:?}",
+                    zone_json.get("start_time")
+                );
             }
-             if zone.zone_type.is_none() {
+            if zone.zone_type.is_none() {
                 // Try to infer from detection_method if possible, or rely on enrichment context
-                warn!("deserialize_raw_zone_value: Zone missing zone_type. JSON: {:?}", zone_json.get("detection_method"));
-                 // Enrichment logic should set this based on context (supply/demand loop)
-             }
-            if zone.end_idx.is_none() {
-                 warn!("deserialize_raw_zone_value: Zone missing end_idx. JSON: {:?}", zone_json);
-                 // This is critical for enrichment, maybe return error? Or let enrichment handle Option?
-                 // Returning Ok for now, enrichment will fail later if None.
+                debug!(
+                    "deserialize_raw_zone_value: Zone missing zone_type. JSON: {:?}",
+                    zone_json.get("detection_method")
+                );
+                // Enrichment logic should set this based on context (supply/demand loop)
             }
-             // `is_active` should default to false due to `#[serde(default)]` if missing
+            if zone.end_idx.is_none() {
+                debug!(
+                    "deserialize_raw_zone_value: Zone missing end_idx. JSON: {:?}",
+                    zone_json
+                );
+                // This is critical for enrichment, maybe return error? Or let enrichment handle Option?
+                // Returning Ok for now, enrichment will fail later if None.
+            }
+            // `is_active` should default to false due to `#[serde(default)]` if missing
 
             Ok(zone)
         }
         Err(e) => {
             // Log the specific error and the JSON that failed
-            let error_msg = format!("deserialize_raw_zone_value error: {}. Failed JSON: {}", e, zone_json);
+            let error_msg = format!(
+                "deserialize_raw_zone_value error: {}. Failed JSON: {}",
+                e, zone_json
+            );
             warn!("{}", error_msg); // Use warn or error as appropriate
             Err(error_msg)
         }
@@ -207,7 +217,7 @@ pub struct StoredZone {
     // Specific candles forming the zone
     #[serde(skip_serializing_if = "Option::is_none")] // Keep Option for flexibility
     pub bars_active: Option<u64>, // <<< Ensure this exists
-    
+
     #[serde(default)]
     pub formation_candles: Vec<CandleData>,
     // --- ADD THESE FIELDS ---
@@ -215,13 +225,13 @@ pub struct StoredZone {
     pub touch_count: Option<i64>, // Use i64 for InfluxDB integer type
     #[serde(skip_serializing_if = "Option::is_none")] // Don't expect in input JSON yet
     pub strength_score: Option<f64>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeframe: Option<String>,
-    
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone_type: Option<String>,
     // --- END ADDED FIELDS ---
@@ -235,12 +245,13 @@ pub struct FindAndVerifyZoneQueryParams {
     pub timeframe: String,
     pub target_formation_start_time: String, // RFC3339
     pub pattern: String,
-    pub fetch_window_start_time: String,     // RFC3339
-    pub fetch_window_end_time: String,       // RFC3339
+    pub fetch_window_start_time: String, // RFC3339
+    pub fetch_window_end_time: String,   // RFC3339
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub struct FindAndVerifyZoneQueryParamsSerializable { // For echoing in response
+pub struct FindAndVerifyZoneQueryParamsSerializable {
+    // For echoing in response
     pub symbol: String,
     pub timeframe: String,
     pub target_formation_start_time: String,
@@ -250,7 +261,8 @@ pub struct FindAndVerifyZoneQueryParamsSerializable { // For echoing in response
 }
 
 #[derive(Serialize, Debug, Default, Clone)]
-pub struct FoundZoneActivityDetails { // Details of THE ONE zone if found
+pub struct FoundZoneActivityDetails {
+    // Details of THE ONE zone if found
     pub detected_zone_actual_start_time: Option<String>,
     pub zone_high: Option<f64>,
     pub zone_low: Option<f64>,
@@ -266,16 +278,16 @@ pub struct FoundZoneActivityDetails { // Details of THE ONE zone if found
 }
 
 #[derive(Serialize, Debug)]
-pub struct FindAndVerifyZoneResult { // Overall response for the endpoint
+pub struct FindAndVerifyZoneResult {
+    // Overall response for the endpoint
     pub query_params: FindAndVerifyZoneQueryParamsSerializable,
     pub fetched_candles_count: usize,
     pub found_zone_details: Option<FoundZoneActivityDetails>,
     pub message: String,
     pub error_details: Option<String>,
     pub recognizer_raw_output_for_target_zone: Option<serde_json::Value>, // For debugging
-    // We can add overall_fetch_start/end if needed later, from the logic function
+                                                                          // We can add overall_fetch_start/end if needed later, from the logic function
 }
-
 
 #[derive(serde::Deserialize, Debug, Clone, Default)]
 pub struct ZoneCsvRecord {

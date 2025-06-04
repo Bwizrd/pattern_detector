@@ -1,12 +1,11 @@
-// src/main.rs - Complete file with trade logging and tracking integration
+// src/main.rs - Clean version focused on real-time trading with reduced logging
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Responder};
-use log::{error, info};
+use log::{error, info, warn};
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -31,13 +30,20 @@ mod realtime_zone_monitor;
 mod simple_price_websocket;
 mod terminal_dashboard;
 mod trade_decision_engine;
-mod trade_event_logger;
-mod trade_tracker;
+mod trade_event_logger;  // Keep for real-time trade logging
 pub mod trades;
 pub mod trading;
 mod types;
 mod websocket_server;
 mod zone_detection;
+
+// Add these new module declarations at the top of main.rs after your existing modules:
+mod telegram_notifier;
+mod sound_notifier;
+mod notification_manager;
+
+// Add these imports after your existing use statements:
+use crate::notification_manager::{NotificationManager, get_global_notification_manager, set_global_notification_manager};
 
 // --- Use necessary types ---
 use crate::cache_endpoints::{
@@ -49,8 +55,8 @@ use crate::realtime_cache_updater::RealtimeCacheUpdater;
 use crate::realtime_zone_monitor::NewRealTimeZoneMonitor;
 use crate::simple_price_websocket::SimplePriceWebSocketServer;
 use crate::terminal_dashboard::TerminalDashboard;
+use crate::trade_decision_engine::TradeDecisionEngine;
 use crate::trade_event_logger::TradeEventLogger;
-use crate::trade_tracker::{TradeTracker, TradeTrackingRequest};
 
 // --- Global State ---
 use std::sync::LazyLock;
@@ -58,12 +64,12 @@ static GLOBAL_PRICE_BROADCASTER: LazyLock<
     std::sync::Mutex<Option<tokio::sync::broadcast::Sender<String>>>,
 > = LazyLock::new(|| std::sync::Mutex::new(None));
 
-static GLOBAL_TRADE_LOGGER: LazyLock<
-    std::sync::Mutex<Option<Arc<tokio::sync::Mutex<TradeEventLogger>>>>,
+static GLOBAL_TRADE_ENGINE: LazyLock<
+    std::sync::Mutex<Option<Arc<tokio::sync::Mutex<TradeDecisionEngine>>>>,
 > = LazyLock::new(|| std::sync::Mutex::new(None));
 
-static GLOBAL_TRADE_TRACKER: LazyLock<
-    std::sync::Mutex<Option<Arc<tokio::sync::Mutex<TradeTracker>>>>,
+static GLOBAL_TRADE_LOGGER: LazyLock<
+    std::sync::Mutex<Option<Arc<tokio::sync::Mutex<TradeEventLogger>>>>,
 > = LazyLock::new(|| std::sync::Mutex::new(None));
 
 #[derive(serde::Serialize)]
@@ -81,15 +87,15 @@ struct QueryParams {
 }
 
 // --- Helper Functions ---
+pub fn get_global_trade_engine() -> Option<Arc<tokio::sync::Mutex<TradeDecisionEngine>>> {
+    GLOBAL_TRADE_ENGINE.lock().unwrap().clone()
+}
+
 pub fn get_global_trade_logger() -> Option<Arc<tokio::sync::Mutex<TradeEventLogger>>> {
     GLOBAL_TRADE_LOGGER.lock().unwrap().clone()
 }
 
-pub fn get_global_trade_tracker() -> Option<Arc<tokio::sync::Mutex<TradeTracker>>> {
-    GLOBAL_TRADE_TRACKER.lock().unwrap().clone()
-}
-
-// --- API Handlers ---
+// --- Core API Handlers ---
 async fn echo(query: web::Query<QueryParams>) -> impl Responder {
     let response = EchoResponse {
         data: format!(
@@ -108,24 +114,17 @@ async fn health_check() -> impl Responder {
 async fn get_current_prices_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
-    log::info!("Current prices endpoint called");
-
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
-        log::info!("Zone monitor available, getting prices");
         let prices = monitor.get_current_prices_by_symbol().await;
-        log::info!("Retrieved {} prices", prices.len());
-
         HttpResponse::Ok().json(serde_json::json!({
             "prices": prices,
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "count": prices.len()
         }))
     } else {
-        log::warn!("Zone monitor not available");
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "error": "Zone monitor not available",
-            "prices": {},
-            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+            "prices": {}
         }))
     }
 }
@@ -140,19 +139,15 @@ async fn test_prices_handler() -> impl Responder {
         "prices": test_prices,
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "count": test_prices.len(),
-        "note": "Test prices - replace with real monitor data"
+        "note": "Test prices for WebSocket testing"
     }))
 }
 
 async fn get_trade_notifications_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
-    log::info!("Trade notifications endpoint called");
-
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         let notifications = monitor.get_trade_notifications_from_cache().await;
-        log::info!("Retrieved {} trade notifications", notifications.len());
-
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "count": notifications.len(),
@@ -160,12 +155,10 @@ async fn get_trade_notifications_handler(
             "timestamp": chrono::Utc::now().to_rfc3339()
         }))
     } else {
-        log::warn!("Zone monitor not available for trade notifications");
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
             "error": "Zone monitor not available",
-            "notifications": [],
-            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+            "notifications": []
         }))
     }
 }
@@ -173,23 +166,17 @@ async fn get_trade_notifications_handler(
 async fn clear_trade_notifications_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
-    log::info!("Clear trade notifications endpoint called");
-
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         monitor.clear_cache_notifications().await;
-        log::info!("Trade notifications cleared");
-
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "message": "Trade notifications cleared",
             "timestamp": chrono::Utc::now().to_rfc3339()
         }))
     } else {
-        log::warn!("Zone monitor not available for clearing notifications");
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
-            "error": "Zone monitor not available",
-            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+            "error": "Zone monitor not available"
         }))
     }
 }
@@ -197,12 +184,8 @@ async fn clear_trade_notifications_handler(
 async fn get_validated_signals_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
-    log::info!("Validated signals endpoint called");
-
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         let signals = monitor.get_validated_signals().await;
-        log::info!("Retrieved {} validated signals", signals.len());
-
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "count": signals.len(),
@@ -210,12 +193,10 @@ async fn get_validated_signals_handler(
             "timestamp": chrono::Utc::now().to_rfc3339()
         }))
     } else {
-        log::warn!("Zone monitor not available for validated signals");
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
             "error": "Zone monitor not available",
-            "signals": [],
-            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+            "signals": []
         }))
     }
 }
@@ -223,516 +204,167 @@ async fn get_validated_signals_handler(
 async fn clear_validated_signals_handler(
     zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
 ) -> impl Responder {
-    log::info!("Clear validated signals endpoint called");
-
     if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
         monitor.clear_validated_signals().await;
-        log::info!("Validated signals cleared");
-
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "message": "Validated signals cleared",
             "timestamp": chrono::Utc::now().to_rfc3339()
         }))
     } else {
-        log::warn!("Zone monitor not available for clearing validated signals");
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
-            "error": "Zone monitor not available",
-            "message": "Check if ENABLE_REALTIME_MONITOR=true"
+            "error": "Zone monitor not available"
         }))
     }
 }
 
-// --- Trade Logging Handlers ---
-async fn get_trade_log_info() -> impl Responder {
-    if let Some(logger_arc) = get_global_trade_logger() {
-        let logger_guard = logger_arc.lock().await;
-        let log_path = logger_guard.get_log_file_path();
-
-        let metadata = match fs::metadata(log_path) {
-            Ok(meta) => Some(serde_json::json!({
-                "size_bytes": meta.len(),
-                "created": meta.created().ok().map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
-                "modified": meta.modified().ok().map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-            })),
-            Err(_) => None,
-        };
-
+// --- Trading Control Handlers ---
+async fn get_trading_status() -> impl Responder {
+    if let Some(engine_arc) = get_global_trade_engine() {
+        let engine_guard = engine_arc.lock().await;
+        let rules = engine_guard.get_rules();
+        let daily_signals = engine_guard.get_daily_signal_count();
+        
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
-            "log_file_path": log_path.display().to_string(),
-            "historical_analysis_complete": logger_guard.has_completed_historical_analysis(),
-            "metadata": metadata,
+            "trading_enabled": rules.trading_enabled,
+            "daily_signal_count": daily_signals,
+            "max_daily_signals": rules.max_daily_signals,
+            "allowed_symbols": rules.allowed_symbols,
+            "allowed_timeframes": rules.allowed_timeframes,
+            "min_zone_strength": rules.min_zone_strength,
             "timestamp": chrono::Utc::now().to_rfc3339()
         }))
     } else {
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
-            "error": "Trade logger not available",
-            "message": "Trade logging system not initialized"
+            "error": "Trade engine not available"
         }))
     }
 }
 
-async fn get_recent_trade_logs(query: web::Query<HashMap<String, String>>) -> impl Responder {
-    let lines_to_read = query
-        .get("lines")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(100);
-
-    if let Some(logger_arc) = get_global_trade_logger() {
-        let logger_guard = logger_arc.lock().await;
-        let log_path = logger_guard.get_log_file_path();
-
-        match fs::read_to_string(log_path) {
-            Ok(content) => {
-                let lines: Vec<&str> = content.lines().collect();
-                let recent_lines: Vec<&str> = lines
-                    .iter()
-                    .rev()
-                    .take(lines_to_read)
-                    .rev()
-                    .copied()
-                    .collect();
-
-                let mut parsed_entries = Vec::new();
-                let mut parse_errors = 0;
-
-                for line in recent_lines {
-                    match serde_json::from_str::<serde_json::Value>(line) {
-                        Ok(json) => parsed_entries.push(json),
-                        Err(_) => parse_errors += 1,
-                    }
-                }
-
-                HttpResponse::Ok().json(serde_json::json!({
-                    "status": "success",
-                    "total_entries": parsed_entries.len(),
-                    "parse_errors": parse_errors,
-                    "requested_lines": lines_to_read,
-                    "entries": parsed_entries,
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                }))
-            }
-            Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "error": "Failed to read log file",
-                "message": e.to_string()
-            })),
-        }
-    } else {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "status": "error",
-            "error": "Trade logger not available"
-        }))
-    }
-}
-
-async fn get_trade_log_stats() -> impl Responder {
-    if let Some(logger_arc) = get_global_trade_logger() {
-        let logger_guard = logger_arc.lock().await;
-        let log_path = logger_guard.get_log_file_path();
-
-        match fs::read_to_string(log_path) {
-            Ok(content) => {
-                let lines: Vec<&str> = content.lines().collect();
-                let total_entries = lines.len();
-
-                let mut event_type_counts = HashMap::new();
-                let mut symbol_counts = HashMap::new();
-                let mut timeframe_counts = HashMap::new();
-                let mut parse_errors = 0;
-
-                for line in lines {
-                    match serde_json::from_str::<serde_json::Value>(line) {
-                        Ok(entry) => {
-                            if let Some(event_type) = entry.get("event_type").and_then(|v| v.as_str()) {
-                                *event_type_counts.entry(event_type.to_string()).or_insert(0) += 1;
-                            }
-
-                            if let Some(details) = entry.get("details") {
-                                if let Some(symbol) = details.get("symbol").and_then(|v| v.as_str()) {
-                                    *symbol_counts.entry(symbol.to_string()).or_insert(0) += 1;
-                                }
-                                if let Some(timeframe) = details.get("timeframe").and_then(|v| v.as_str()) {
-                                    *timeframe_counts.entry(timeframe.to_string()).or_insert(0) += 1;
-                                }
-                            }
-                        }
-                        Err(_) => parse_errors += 1,
-                    }
-                }
-
-                HttpResponse::Ok().json(serde_json::json!({
-                    "status": "success",
-                    "total_entries": total_entries,
-                    "parse_errors": parse_errors,
-                    "event_type_counts": event_type_counts,
-                    "symbol_counts": symbol_counts,
-                    "timeframe_counts": timeframe_counts,
-                    "historical_analysis_complete": logger_guard.has_completed_historical_analysis(),
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                }))
-            }
-            Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "error": "Failed to read log file",
-                "message": e.to_string()
-            })),
-        }
-    } else {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "status": "error",
-            "error": "Trade logger not available"
-        }))
-    }
-}
-
-async fn download_trade_log() -> impl Responder {
-    if let Some(logger_arc) = get_global_trade_logger() {
-        let logger_guard = logger_arc.lock().await;
-        let log_path = logger_guard.get_log_file_path();
-
-        match fs::read(log_path) {
-            Ok(content) => {
-                let filename = log_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("trade_log.log");
-
-                HttpResponse::Ok()
-                    .content_type("application/octet-stream")
-                    .append_header((
-                        "Content-Disposition",
-                        format!("attachment; filename=\"{}\"", filename),
-                    ))
-                    .body(content)
-            }
-            Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "error": "Failed to read log file",
-                "message": e.to_string()
-            })),
-        }
-    } else {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "status": "error",
-            "error": "Trade logger not available"
-        }))
-    }
-}
-
-async fn trigger_historical_analysis(
-    shared_cache: web::Data<Arc<Mutex<MinimalZoneCache>>>,
-) -> impl Responder {
-    if let Some(logger_arc) = get_global_trade_logger() {
-        let mut logger_guard = logger_arc.lock().await;
-
-        if logger_guard.has_completed_historical_analysis() {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "status": "error",
-                "error": "Historical analysis already completed",
-                "message": "Analysis can only be run once per session"
-            }));
-        }
-
-        match logger_guard.analyze_historical_trades(Arc::clone(&shared_cache)).await {
-            Ok(analysis) => HttpResponse::Ok().json(serde_json::json!({
-                "status": "success",
-                "message": "Historical analysis completed",
-                "analysis": analysis,
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            })),
-            Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
-                "status": "error",
-                "error": "Historical analysis failed",
-                "message": e.to_string()
-            })),
-        }
-    } else {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "status": "error",
-            "error": "Trade logger not available"
-        }))
-    }
-}
-
-// --- Trade Tracking Handlers ---
-async fn start_tracking_todays_trades(
-    query: web::Query<HashMap<String, String>>,
-) -> impl Responder {
-    let tp_pips = query.get("tp_pips").and_then(|s| s.parse::<f64>().ok());
-    let sl_pips = query.get("sl_pips").and_then(|s| s.parse::<f64>().ok());
-
-    if let Some(tracker_arc) = get_global_trade_tracker() {
-        let mut tracker_guard = tracker_arc.lock().await;
-        
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let csv_path = std::path::PathBuf::from("trades").join(format!("{}_validated_trades.csv", today));
-
-        match tracker_guard.load_trades_from_csv(&csv_path, tp_pips, sl_pips).await {
-            Ok(count) => {
-                info!("📈 Started tracking {} trades from today's CSV", count);
-                HttpResponse::Ok().json(serde_json::json!({
-                    "status": "success",
-                    "message": format!("Started tracking {} trades", count),
-                    "csv_file": csv_path.display().to_string(),
-                    "default_tp_pips": tp_pips,
-                    "default_sl_pips": sl_pips,
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                }))
-            }
-            Err(e) => {
-                error!("Failed to load trades from CSV: {}", e);
-                HttpResponse::InternalServerError().json(serde_json::json!({
-                    "status": "error",
-                    "error": "Failed to load trades from CSV",
-                    "message": e.to_string()
-                }))
-            }
-        }
-    } else {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "status": "error",
-            "error": "Trade tracker not available"
-        }))
-    }
-}
-
-async fn track_custom_trades(
-    request_body: web::Json<TradeTrackingRequest>,
-) -> impl Responder {
-    if let Some(tracker_arc) = get_global_trade_tracker() {
-        let mut tracker_guard = tracker_arc.lock().await;
-        
-        tracker_guard.track_trades_from_request(request_body.into_inner());
+async fn get_validated_signals_from_engine() -> impl Responder {
+    if let Some(engine_arc) = get_global_trade_engine() {
+        let engine_guard = engine_arc.lock().await;
+        let signals = engine_guard.get_validated_signals();
         
         HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
-            "message": "Custom trades added to tracking",
+            "count": signals.len(),
+            "signals": signals,
             "timestamp": chrono::Utc::now().to_rfc3339()
         }))
     } else {
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
-            "error": "Trade tracker not available"
+            "error": "Trade engine not available"
         }))
     }
 }
 
-async fn get_tracked_trades_status(
-    zone_monitor_data: web::Data<Option<Arc<NewRealTimeZoneMonitor>>>,
-) -> impl Responder {
-    if let Some(tracker_arc) = get_global_trade_tracker() {
-        let mut tracker_guard = tracker_arc.lock().await;
+async fn clear_validated_signals_from_engine() -> impl Responder {
+    if let Some(engine_arc) = get_global_trade_engine() {
+        let mut engine_guard = engine_arc.lock().await;
+        engine_guard.clear_signals();
         
-        let current_prices = if let Some(monitor) = zone_monitor_data.get_ref().as_ref() {
-            monitor.get_current_prices_by_symbol().await
-        } else {
-            HashMap::new()
-        };
-
-        let response = tracker_guard.update_with_current_prices(&current_prices).await;
-        HttpResponse::Ok().json(response)
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Validated signals cleared from engine",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
     } else {
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "status": "error",
-            "error": "Trade tracker not available"
+            "error": "Trade engine not available"
         }))
     }
 }
 
-async fn serve_trade_dashboard() -> impl Responder {
-    let html = r#"
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trade Dashboard</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 1400px; margin: 0 auto; }
-        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .profit { color: #27ae60; font-weight: bold; }
-        .loss { color: #e74c3c; font-weight: bold; }
-        .neutral { color: #7f8c8d; }
-        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background: #34495e; color: white; }
-        .status-open { background: #3498db; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-        .status-tp { background: #27ae60; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-        .status-sl { background: #e74c3c; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-        .controls { margin-bottom: 20px; }
-        .btn { background: #3498db; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
-        .btn:hover { background: #2980b9; }
-        .error { color: #e74c3c; background: #ffebee; padding: 10px; border-radius: 4px; margin: 10px 0; }
-        .success { color: #27ae60; background: #e8f5e8; padding: 10px; border-radius: 4px; margin: 10px 0; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📈 Trade Dashboard</h1>
-            <p>Real-time tracking of today's validated trades</p>
-        </div>
+async fn manual_trade_test(
+    request_body: web::Json<crate::minimal_zone_cache::TradeNotification>,
+) -> impl Responder {
+    let notification = request_body.into_inner();
+    
+    if let (Some(engine_arc), Some(logger_arc)) = (get_global_trade_engine(), get_global_trade_logger()) {
+        let mut engine_guard = engine_arc.lock().await;
+        let logger_guard = logger_arc.lock().await;
+        
+        // Log the incoming notification
+        logger_guard.log_notification_received(&notification).await;
+        
+        // Process through trade decision engine
+        match engine_guard.process_notification_with_reason(notification.clone()).await {
+            Ok(validated_signal) => {
+                logger_guard.log_signal_validated(&validated_signal).await;
+                info!("📈 Manual test - Trade validated: {} {} @ {:.5}", 
+                      validated_signal.action, validated_signal.symbol, validated_signal.price);
+                      
+                HttpResponse::Ok().json(serde_json::json!({
+                    "status": "success",
+                    "result": "validated",
+                    "signal": validated_signal,
+                    "message": "Trade notification successfully validated",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }))
+            }
+            Err(reason) => {
+                logger_guard.log_signal_rejected(&notification, reason.clone()).await;
+                warn!("📈 Manual test - Trade rejected: {} {} @ {:.5} - {}", 
+                      notification.action, notification.symbol, notification.price, reason);
+                      
+                HttpResponse::Ok().json(serde_json::json!({
+                    "status": "success",
+                    "result": "rejected",
+                    "reason": reason,
+                    "notification": notification,
+                    "message": "Trade notification was rejected",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }))
+            }
+        }
+    } else {
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Trade engine or logger not available"
+        }))
+    }
+}
 
-        <div class="controls">
-            <button class="btn" onclick="loadTodaysTrades()">Load Today's Trades</button>
-            <button class="btn" onclick="refreshStatus()">Refresh Status</button>
-            <input type="number" id="tpPips" placeholder="TP Pips (e.g. 50)" style="padding: 8px; margin: 0 10px;">
-            <input type="number" id="slPips" placeholder="SL Pips (e.g. 25)" style="padding: 8px;">
-        </div>
-
-        <div id="messages"></div>
-
-        <div class="summary" id="summary" style="display: none;">
-            <div class="card">
-                <h3>Total P&L</h3>
-                <div id="totalPnl" class="neutral">$0.00</div>
-            </div>
-            <div class="card">
-                <h3>Open Trades</h3>
-                <div id="openTrades">0</div>
-            </div>
-            <div class="card">
-                <h3>Win Rate</h3>
-                <div id="winRate">0%</div>
-            </div>
-            <div class="card">
-                <h3>Profit Factor</h3>
-                <div id="profitFactor">0.00</div>
-            </div>
-        </div>
-
-        <div id="tradesTable"></div>
-    </div>
-
-    <script>
-        let refreshInterval;
-
-        async function loadTodaysTrades() {
-            const tpPips = document.getElementById('tpPips').value;
-            const slPips = document.getElementById('slPips').value;
+// --- Real-time Trade Processing ---
+async fn process_trade_notifications() {
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+    
+    loop {
+        interval.tick().await;
+        
+        // Get trade engine and logger
+        let (trade_engine, trade_logger) = {
+            let engine = get_global_trade_engine();
+            let logger = get_global_trade_logger();
+            (engine, logger)
+        };
+        
+        if let (Some(engine_arc), Some(logger_arc)) = (trade_engine, trade_logger) {
+            // Process any trade notifications from the zone monitor
+            // Note: You'll need to implement a way to get notifications from your zone monitor
+            // This is a placeholder showing how it would work once you have that mechanism
             
-            let url = '/api/track/load-today';
-            const params = new URLSearchParams();
-            if (tpPips) params.append('tp_pips', tpPips);
-            if (slPips) params.append('sl_pips', slPips);
-            if (params.toString()) url += '?' + params.toString();
-
-            try {
-                const response = await fetch(url, { method: 'POST' });
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    showMessage(data.message, 'success');
-                    refreshStatus();
-                    startAutoRefresh();
-                } else {
-                    showMessage(data.error || 'Failed to load trades', 'error');
-                }
-            } catch (error) {
-                showMessage('Error loading trades: ' + error.message, 'error');
+            // For now, just handle periodic maintenance
+            {
+                let mut engine_guard = engine_arc.lock().await;
+                engine_guard.cleanup_old_triggers();
             }
         }
-
-        async function refreshStatus() {
-            try {
-                const response = await fetch('/api/track/status');
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    updateDashboard(data);
-                    document.getElementById('summary').style.display = 'grid';
-                } else {
-                    showMessage(data.error || 'Failed to get status', 'error');
-                }
-            } catch (error) {
-                showMessage('Error refreshing status: ' + error.message, 'error');
+        
+        // Check for daily rollover in logger
+        if let Some(logger_arc) = get_global_trade_logger() {
+            let mut logger_guard = logger_arc.lock().await;
+            if let Err(e) = logger_guard.force_rollover_check().await {
+                error!("Trade logger rollover failed: {}", e);
             }
         }
-
-        function updateDashboard(data) {
-            // Update summary
-            document.getElementById('totalPnl').textContent = '$' + data.total_pnl.toFixed(2);
-            document.getElementById('totalPnl').className = data.total_pnl >= 0 ? 'profit' : 'loss';
-            document.getElementById('openTrades').textContent = data.open_trades;
-            document.getElementById('winRate').textContent = data.summary.win_rate.toFixed(1) + '%';
-            document.getElementById('profitFactor').textContent = data.summary.profit_factor.toFixed(2);
-
-            // Update trades table
-            const table = createTradesTable(data.trades);
-            document.getElementById('tradesTable').innerHTML = table;
-        }
-
-        function createTradesTable(trades) {
-            if (trades.length === 0) {
-                return '<div class="card">No trades to display</div>';
-            }
-
-            let html = '<table><thead><tr>';
-            html += '<th>Time</th><th>Symbol</th><th>Action</th><th>Entry</th><th>Current</th>';
-            html += '<th>P&L ($)</th><th>P&L (Pips)</th><th>Status</th><th>TP</th><th>SL</th>';
-            html += '</tr></thead><tbody>';
-
-            trades.forEach(trade => {
-                const pnl = trade.unrealized_pnl || 0;
-                const pnlPips = trade.unrealized_pnl_pips || 0;
-                const pnlClass = pnl >= 0 ? 'profit' : 'loss';
-                
-                let statusClass = 'status-open';
-                let statusText = trade.status;
-                if (trade.status === 'TakeProfitHit') {
-                    statusClass = 'status-tp';
-                    statusText = 'TP Hit';
-                } else if (trade.status === 'StopLossHit') {
-                    statusClass = 'status-sl';
-                    statusText = 'SL Hit';
-                }
-
-                html += '<tr>';
-                html += `<td>${new Date(trade.timestamp).toLocaleTimeString()}</td>`;
-                html += `<td>${trade.symbol}</td>`;
-                html += `<td>${trade.action}</td>`;
-                html += `<td>${trade.entry_price.toFixed(5)}</td>`;
-                html += `<td>${trade.current_price ? trade.current_price.toFixed(5) : 'N/A'}</td>`;
-                html += `<td class="${pnlClass}">${pnl.toFixed(2)}</td>`;
-                html += `<td class="${pnlClass}">${pnlPips.toFixed(1)}</td>`;
-                html += `<td><span class="${statusClass}">${statusText}</span></td>`;
-                html += `<td>${trade.take_profit ? trade.take_profit.toFixed(5) : 'N/A'}</td>`;
-                html += `<td>${trade.stop_loss ? trade.stop_loss.toFixed(5) : 'N/A'}</td>`;
-                html += '</tr>';
-            });
-
-            html += '</tbody></table>';
-            return html;
-        }
-
-        function showMessage(message, type) {
-            const div = document.getElementById('messages');
-            div.innerHTML = `<div class="${type}">${message}</div>`;
-            setTimeout(() => div.innerHTML = '', 5000);
-        }
-
-        function startAutoRefresh() {
-            if (refreshInterval) clearInterval(refreshInterval);
-            refreshInterval = setInterval(refreshStatus, 5000); // Refresh every 5 seconds
-        }
-
-        // Auto-load on page load if trades exist
-        window.onload = () => refreshStatus();
-    </script>
-</body>
-</html>
-    "#;
-
-    HttpResponse::Ok()
-        .content_type("text/html")
-        .body(html)
+    }
 }
 
 // --- Cache Setup Function ---
@@ -740,48 +372,56 @@ async fn setup_cache_system() -> Result<
     (
         Arc<Mutex<MinimalZoneCache>>,
         Option<Arc<NewRealTimeZoneMonitor>>,
+        Option<Arc<tokio::sync::Mutex<TradeDecisionEngine>>>,
         Option<Arc<tokio::sync::Mutex<TradeEventLogger>>>,
+        Arc<NotificationManager>, 
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    info!("🚀 [MAIN] Setting up zone cache system...");
+    info!("Setting up trading system...");
 
     let cache = match get_minimal_cache().await {
         Ok(cache) => {
             let (total, supply, demand) = cache.get_stats();
-            info!(
-                "✅ [MAIN] Initial cache load complete: {} total zones ({} supply, {} demand)",
-                total, supply, demand
-            );
+            info!("Cache loaded: {} zones ({} supply, {} demand)", total, supply, demand);
             Arc::new(Mutex::new(cache))
         }
         Err(e) => {
-            error!("❌ [MAIN] Initial cache load failed: {}", e);
+            error!("Cache load failed: {}", e);
             return Err(e);
         }
     };
 
-    // Initialize trade logger
+    // Initialize notification manager
+    let notification_manager = Arc::new(NotificationManager::new());
+    set_global_notification_manager(Arc::clone(&notification_manager));
+    info!("📢 Notification manager initialized");
+
+    // Test notifications on startup (optional)
+    tokio::spawn({
+        let manager = Arc::clone(&notification_manager);
+        async move {
+            // Wait a bit for everything to initialize
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            manager.notify_startup().await;
+        }
+    });
+
+    // Initialize trade event logger for real-time logging
     let trade_logger = match TradeEventLogger::new() {
         Ok(logger) => {
-            info!("✅ [MAIN] Trade event logger initialized");
+            info!("Trade logger initialized");
             let logger_arc = Arc::new(tokio::sync::Mutex::new(logger));
-            
             *GLOBAL_TRADE_LOGGER.lock().unwrap() = Some(Arc::clone(&logger_arc));
             Some(logger_arc)
         }
         Err(e) => {
-            error!("❌ [MAIN] Failed to initialize trade logger: {}", e);
+            error!("Trade logger initialization failed: {}", e);
             None
         }
     };
 
-    // Initialize trade tracker
-    let trade_tracker = Arc::new(tokio::sync::Mutex::new(TradeTracker::new()));
-    *GLOBAL_TRADE_TRACKER.lock().unwrap() = Some(Arc::clone(&trade_tracker));
-    info!("✅ [MAIN] Trade tracker initialized");
-
-    // Set up real-time zone monitor if enabled
+    // Set up real-time zone monitor
     let enable_realtime_monitor = env::var("ENABLE_REALTIME_MONITOR")
         .unwrap_or_else(|_| "true".to_string())
         .trim()
@@ -800,45 +440,34 @@ async fn setup_cache_system() -> Result<
         let monitor = Arc::new(monitor);
 
         if let Err(e) = monitor.sync_with_cache().await {
-            error!("❌ [MAIN] Initial zone monitor sync failed: {}", e);
+            error!("Zone monitor sync failed: {}", e);
         } else {
-            info!("✅ [MAIN] Real-time zone monitor initialized and synced");
+            info!("Zone monitor initialized");
         }
 
         Some(monitor)
     } else {
-        info!("⏸️ [MAIN] Real-time zone monitor disabled via ENABLE_REALTIME_MONITOR");
+        warn!("Zone monitor disabled");
         None
     };
 
-    // Perform historical trade analysis
-    if let Some(ref logger_arc) = trade_logger {
-        let enable_historical_analysis = env::var("ENABLE_HISTORICAL_ANALYSIS")
-            .unwrap_or_else(|_| "true".to_string())
-            .trim()
-            .to_lowercase()
-            == "true";
+    // Initialize trade decision engine (fix the constructor call)
+    let trading_enabled = env::var("TRADING_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
+        .trim()
+        .to_lowercase()
+        == "true";
 
-        if enable_historical_analysis {
-            info!("📊 [MAIN] Starting historical trade analysis...");
-            let mut logger_guard = logger_arc.lock().await;
-            
-            match logger_guard.analyze_historical_trades(Arc::clone(&cache)).await {
-                Ok(analysis) => {
-                    info!(
-                        "✅ [MAIN] Historical analysis complete: {} zones analyzed, {} validated signals",
-                        analysis.total_zones_analyzed, analysis.total_validated_signals
-                    );
-                }
-                Err(e) => {
-                    error!("❌ [MAIN] Historical analysis failed: {}", e);
-                }
-            }
-            drop(logger_guard);
-        } else {
-            info!("⏸️ [MAIN] Historical analysis disabled via ENABLE_HISTORICAL_ANALYSIS");
-        }
-    }
+    let trade_engine = if trading_enabled {
+        let engine = TradeDecisionEngine::new_with_cache(Arc::clone(&cache));
+        info!("Trade engine initialized");
+        let engine_arc = Arc::new(tokio::sync::Mutex::new(engine));
+        *GLOBAL_TRADE_ENGINE.lock().unwrap() = Some(Arc::clone(&engine_arc));
+        Some(engine_arc)
+    } else {
+        info!("Trading disabled");
+        None
+    };
 
     // Start real-time cache updates
     let enable_realtime_cache = env::var("ENABLE_REALTIME_CACHE")
@@ -853,30 +482,21 @@ async fn setup_cache_system() -> Result<
             .parse::<u64>()
             .unwrap_or(60);
 
-        info!(
-            "🔄 [MAIN] Starting real-time cache updater (interval: {}s)",
-            cache_update_interval
-        );
-
         let mut cache_updater =
             RealtimeCacheUpdater::new(Arc::clone(&cache)).with_interval(cache_update_interval);
 
         if let Some(ref monitor) = zone_monitor {
             cache_updater = cache_updater.with_zone_monitor(Arc::clone(monitor));
-            info!("🔗 [MAIN] Cache updater linked with zone monitor");
         }
 
         if let Err(e) = cache_updater.start().await {
-            error!("❌ [MAIN] Failed to start real-time cache updater: {}", e);
-            info!("⚠️ [MAIN] Continuing with static cache only");
+            error!("Cache updater failed: {}", e);
         } else {
-            info!("✅ [MAIN] Real-time cache updater started successfully");
+            info!("Cache updater started");
         }
-    } else {
-        info!("⏸️ [MAIN] Real-time cache updates disabled via ENABLE_REALTIME_CACHE");
     }
 
-    Ok((cache, zone_monitor, trade_logger))
+    Ok((cache, zone_monitor, trade_engine, trade_logger, notification_manager))
 }
 
 // --- Main Application ---
@@ -886,11 +506,11 @@ async fn main() -> std::io::Result<()> {
     log4rs::init_file("log4rs.yaml", Default::default())
         .expect("Failed to initialize log4rs logging");
 
-    log::info!("Starting Pattern Detector Application...");
+    info!("Starting Trading Application...");
 
     let shared_http_client = Arc::new(HttpClient::new());
 
-    // Simple price WebSocket setup
+    // Price WebSocket setup
     let enable_simple_price_ws = env::var("ENABLE_SIMPLE_PRICE_WS")
         .unwrap_or_else(|_| "true".to_string())
         .trim()
@@ -909,26 +529,27 @@ async fn main() -> std::io::Result<()> {
 
         tokio::spawn(async move {
             if let Err(e) = ws_server.start(ws_addr).await {
-                log::error!("Simple price WebSocket failed: {}", e);
+                error!("Price WebSocket failed: {}", e);
             }
         });
 
-        log::info!("Simple price WebSocket started on port {}", ws_port);
+        info!("Price WebSocket started on port {}", ws_port);
     }
 
-    // Setup cache system with zone monitor and trade logger
-    let (shared_cache, zone_monitor, _trade_logger) = match setup_cache_system().await {
+    // Setup main trading system
+    // Update this line to capture the notification manager:
+    let (shared_cache, zone_monitor, _trade_engine, _trade_logger, _notification_manager) = match setup_cache_system().await {
         Ok(result) => {
-            log::info!("✅ [MAIN] Cache system initialized successfully");
+            info!("Trading system initialized");
             result
         }
         Err(e) => {
-            log::error!("❌ [MAIN] Failed to setup cache system: {}", e);
+            error!("Trading system setup failed: {}", e);
             return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
         }
     };
 
-    // Start price feed if enabled
+    // Start price feed
     let enable_price_feed = env::var("ENABLE_CTRADER_PRICE_FEED")
         .unwrap_or_else(|_| "true".to_string())
         .trim()
@@ -944,17 +565,18 @@ async fn main() -> std::io::Result<()> {
         let zone_monitor_clone = zone_monitor.clone();
 
         tokio::spawn(async move {
-            log::info!("🚀 [MAIN] Starting cTrader price feed integration with zone monitor");
-
             if let Some(broadcaster) = broadcaster_clone {
                 if let Err(e) = connect_to_ctrader_websocket(&broadcaster, zone_monitor_clone).await {
-                    log::error!("❌ [MAIN] cTrader price feed failed: {}", e);
+                    error!("Price feed failed: {}", e);
                 }
-            } else {
-                log::error!("❌ [MAIN] Price broadcaster not initialized");
             }
         });
     }
+
+    // Start trade notification processing
+    tokio::spawn(async move {
+        process_trade_notifications().await;
+    });
 
     // Start terminal dashboard if enabled
     if let Some(ref monitor) = zone_monitor {
@@ -965,14 +587,11 @@ async fn main() -> std::io::Result<()> {
             == "true";
 
         if enable_terminal_dashboard {
-            info!("🎯 [MAIN] Starting terminal dashboard");
-
             let dashboard = TerminalDashboard::new(Arc::clone(monitor));
             tokio::spawn(async move {
                 dashboard.start().await;
             });
-        } else {
-            info!("📊 [MAIN] Terminal dashboard disabled. Set ENABLE_TERMINAL_DASHBOARD=true to enable");
+            info!("Terminal dashboard started");
         }
     }
 
@@ -981,8 +600,7 @@ async fn main() -> std::io::Result<()> {
     let port_str = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let port = port_str.parse::<u16>().unwrap_or(8080);
 
-    log::info!("Web server starting on http://{}:{}", host, port);
-    print_server_info(&host, port);
+    info!("Server starting on http://{}:{}", host, port);
 
     let http_client_for_app_factory = Arc::clone(&shared_http_client);
     let zone_monitor_for_app = zone_monitor.clone();
@@ -1020,96 +638,96 @@ async fn main() -> std::io::Result<()> {
             .route("/multi-symbol-backtest", web::post().to(multi_backtest_handler::run_multi_symbol_backtest))
             .route("/optimize-parameters", web::post().to(optimize_handler::run_parameter_optimization))
             .route("/portfolio-meta-backtest", web::post().to(optimize_handler::run_portfolio_meta_optimized_backtest))
-            // Test/Debug endpoints
+            // Debug endpoints
             .route("/testDataRequest", web::get().to(influx_fetcher::test_data_request_handler))
             .route("/test-cache", web::get().to(test_cache_endpoint))
             .route("/debug/minimal-cache-zones", web::get().to(get_minimal_cache_zones_debug_with_shared_cache))
-            // Price endpoints
+            // Price endpoints (for dashboard and WebSocket testing)
             .route("/current-prices", web::get().to(get_current_prices_handler))
-            .route("/test-prices", web::get().to(test_prices_handler))
-            // Trade notification endpoints
+            .route("/test-prices", web::get().to(test_prices_handler))  // Keep for WebSocket testing
+            // Trade notification endpoints (for dashboard)
             .route("/trade-notifications", web::get().to(get_trade_notifications_handler))
             .route("/trade-notifications/clear", web::post().to(clear_trade_notifications_handler))
             .route("/validated-signals", web::get().to(get_validated_signals_handler))
             .route("/validated-signals/clear", web::post().to(clear_validated_signals_handler))
-            // Trade logging endpoints
-            .route("/trade-log/info", web::get().to(get_trade_log_info))
-            .route("/trade-log/recent", web::get().to(get_recent_trade_logs))
-            .route("/trade-log/stats", web::get().to(get_trade_log_stats))
-            .route("/trade-log/download", web::get().to(download_trade_log))
-            .route("/trade-log/analyze-historical", web::post().to(trigger_historical_analysis))
-            // Trade tracking endpoints
-            .route("/api/track/load-today", web::post().to(start_tracking_todays_trades))
-            .route("/api/track/custom", web::post().to(track_custom_trades))
-            .route("/api/track/status", web::get().to(get_tracked_trades_status))
-            .route("/trade-dashboard", web::get().to(serve_trade_dashboard))
+            // Real-time trading control endpoints
+            .route("/trading/status", web::get().to(get_trading_status))
+            .route("/trading/validated-signals", web::get().to(get_validated_signals_from_engine))
+            .route("/trading/validated-signals/clear", web::post().to(clear_validated_signals_from_engine))
+            .route("/trading/reload-rules", web::post().to(reload_trading_rules))
+            .route("/trading/test", web::post().to(manual_trade_test))
+            // Add these new routes to your HttpServer::new closure:
+            .route("/notifications/test", web::post().to(test_notifications_handler))
+            .route("/notifications/daily-summary", web::post().to(send_daily_summary_handler))
     })
     .bind((host, port))?
     .run();
 
-    // Wait for server to complete
-    tokio::select! {
-        result = server_handle => {
-            log::info!("HTTP server ended: {:?}", result);
-            result
-        }
+    server_handle.await
+}
+
+async fn reload_trading_rules() -> impl Responder {
+    if let Some(engine_arc) = get_global_trade_engine() {
+        let mut engine_guard = engine_arc.lock().await;
+        engine_guard.reload_rules();
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Trading rules reloaded from environment",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Trade engine not available"
+        }))
     }
 }
 
-// --- Utility Functions ---
-fn print_server_info(host: &str, port: u16) {
-    println!("---> Starting Pattern Detector Web Server <---");
-    println!("---> Listening on: http://{}:{} <---", host, port);
-    println!("Available endpoints:");
-    
-    println!("📊 Core Endpoints:");
-    println!("  GET  /health");
-    println!("  GET  /echo?...");
-    
-    println!("🎯 Zone Endpoints:");
-    println!("  GET  /analyze?symbol=...&timeframe=...&start_time=...&end_time=...&pattern=...");
-    println!("  GET  /active-zones?symbol=...&timeframe=...&start_time=...&end_time=...&pattern=...");
-    println!("  POST /bulk-multi-tf-active-zones");
-    println!("  GET  /zone?zone_id=...");
-    println!("  GET  /latest-formed-zones");
-    println!("  GET  /find-and-verify-zone");
-    
-    println!("📈 Backtest Endpoints:");
-    println!("  POST /backtest");
-    println!("  POST /multi-symbol-backtest");
-    println!("  POST /optimize-parameters");
-    println!("  POST /portfolio-meta-backtest");
-    
-    println!("💰 Price & Trading Endpoints:");
-    println!("  GET  /current-prices");
-    println!("  GET  /test-prices");
-    println!("  GET  /trade-notifications");
-    println!("  POST /trade-notifications/clear");
-    println!("  GET  /validated-signals");
-    println!("  POST /validated-signals/clear");
-    
-    println!("📝 Trade Logging Endpoints:");
-    println!("  GET  /trade-log/info");
-    println!("  GET  /trade-log/recent?lines=100");
-    println!("  GET  /trade-log/stats");
-    println!("  GET  /trade-log/download");
-    println!("  POST /trade-log/analyze-historical");
-    
-    println!("📈 Trade Tracking Endpoints:");
-    println!("  POST /api/track/load-today?tp_pips=50&sl_pips=25");
-    println!("  POST /api/track/custom");
-    println!("  GET  /api/track/status");
-    println!("  GET  /trade-dashboard");
-    
-    println!("🔧 Debug Endpoints:");
-    println!("  GET  /test-cache");
-    println!("  GET  /debug/minimal-cache-zones");
-    println!("  GET  /testDataRequest");
-    
-    println!("--------------------------------------------------");
-    println!("📁 Trade logs will be saved to: ./trades/");
-    println!("🕐 Historical analysis runs automatically on startup");
-    println!("📊 Monitor real-time trading via /trade-log/recent");
-    println!("📈 Live trade dashboard at /trade-dashboard");
-    println!("--------------------------------------------------");
+// Add this new API endpoint for testing notifications:
+async fn test_notifications_handler() -> impl Responder {
+    if let Some(manager) = get_global_notification_manager() {
+        let (telegram_ok, sound_ok) = manager.test_notifications().await;
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "telegram": telegram_ok,
+            "sound": sound_ok,
+            "message": format!("Telegram: {}, Sound: {}", 
+                if telegram_ok { "✅" } else { "❌" },
+                if sound_ok { "✅" } else { "❌" }
+            ),
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Notification manager not available"
+        }))
+    }
+}
+
+// Add this endpoint to send daily summary:
+async fn send_daily_summary_handler() -> impl Responder {
+    if let (Some(manager), Some(engine_arc)) = (get_global_notification_manager(), get_global_trade_engine()) {
+        let engine_guard = engine_arc.lock().await;
+        let signals_today = engine_guard.get_daily_signal_count();
+        let max_signals = engine_guard.get_rules().max_daily_signals;
+        drop(engine_guard);
+        
+        manager.send_daily_summary(signals_today, max_signals).await;
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Daily summary sent",
+            "signals_today": signals_today,
+            "max_signals": max_signals,
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }))
+    } else {
+        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "status": "error",
+            "error": "Notification manager or trade engine not available"
+        }))
+    }
 }
