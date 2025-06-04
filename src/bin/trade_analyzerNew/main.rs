@@ -6,6 +6,7 @@ mod price_fetcher;
 mod types;
 mod zone_fetcher;
 mod trade_validation;
+mod zone_proximity_analyzer;
 
 use analyzer::TradeAnalyzer;
 use chrono::Utc;

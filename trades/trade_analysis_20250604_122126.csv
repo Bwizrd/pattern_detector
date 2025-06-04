@@ -1,2 +1,0 @@
-entry_time,symbol,timeframe,zone_id,action,entry_price,exit_time,exit_price,exit_reason,pnl_pips,duration_minutes,zone_strength,validation_reason
-2025-06-04T08:12:00+00:00,AUDCAD,30m,52120f228ebc2d3a,BUY,0.88661,,,VALIDATION_FAILED,,,90.0,Symbol AUDCAD not in allowed list

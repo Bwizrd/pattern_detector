@@ -1,6 +1,0 @@
-timestamp,symbol,timeframe,action,price,zone_type,strength,zone_id,touch_count,validation_reason,event_type
-2025-06-02T20:12:01.665867+00:00,USDCHF,1h,SELL,0.8270145640000001,validated,100,505bdc631a989cb1,0,Validated: all criteria passed,HistoricalValidated
-2025-06-02T20:12:01.666524+00:00,USDCHF,1h,BUY,0.81521301,validated,100,5d13da84503a4988,0,Validated: all criteria passed,HistoricalValidated
-2025-06-02T20:12:01.667167+00:00,USDCHF,1h,SELL,0.875084948,validated,100,5c5a5b90d7a5bb37,0,Validated: all criteria passed,HistoricalValidated
-2025-06-02T20:12:01.667881+00:00,USDCHF,1h,SELL,0.89402116,validated,100,4f27752d59b46e33,0,Validated: all criteria passed,HistoricalValidated
-2025-06-02T20:12:01.668600+00:00,EURUSD,30m,BUY,1.124854926,validated,100,ea293dedd4b66ac3,0,Validated: all criteria passed,HistoricalValidated
