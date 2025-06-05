@@ -1,8 +1,8 @@
 // src/notification_manager.rs
 use log::{error, info};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use crate::trade_decision_engine::ValidatedTradeSignal;
+use crate::minimal_zone_cache::TradeNotification;
 use crate::telegram_notifier::TelegramNotifier;
 use crate::sound_notifier::SoundNotifier;
 
@@ -95,7 +95,7 @@ impl NotificationManager {
             signal.action, signal.symbol, signal.price
         );
 
-        // Send notifications concurrently
+        // Use the enhanced telegram method but keep this function name
         let telegram_task = self.telegram.send_trade_signal(signal);
         let sound_task = self.sound.play_trade_signal(signal);
 
@@ -109,6 +109,36 @@ impl NotificationManager {
 
         if let Err(e) = sound_result {
             error!("🔊 Sound notification failed: {}", e);
+        }
+    }
+
+    /// Send notifications for blocked trade signals
+    pub async fn notify_blocked_trade_signal(
+        &self,
+        notification: &TradeNotification,
+        rejection_reason: &str,
+    ) {
+        info!(
+            "📢 Sending BLOCKED TRADE notifications for {} {} @ {:.5} - Reason: {}", 
+            notification.action, notification.symbol, notification.price, rejection_reason
+        );
+
+        // Send telegram notification for blocked trade
+        let telegram_task = self.telegram.send_blocked_trade_signal(notification, rejection_reason);
+        
+        // Play a different sound for blocked trades
+        let sound_task = self.sound.play_blocked_trade_alert(&notification.action, &notification.symbol);
+
+        // Wait for both to complete
+        let (telegram_result, sound_result) = tokio::join!(telegram_task, sound_task);
+
+        // Log any errors but don't fail
+        if let Err(e) = telegram_result {
+            error!("📱 Blocked trade Telegram notification failed: {}", e);
+        }
+
+        if let Err(e) = sound_result {
+            error!("🔊 Blocked trade sound notification failed: {}", e);
         }
     }
 
@@ -159,22 +189,6 @@ impl NotificationManager {
         // Optionally send a startup message to Telegram
         // self.telegram.send_startup_message().await;
     }
-
-    pub async fn notify_blocked_trade_signal(
-    &self,
-    notification: &crate::minimal_zone_cache::TradeNotification,
-    rejection_reason: &str,
-) {
-    info!(
-        "📢 Sending BLOCKED TRADE notifications for {} {} @ {:.5} - Reason: {}", 
-        notification.action, notification.symbol, notification.price, rejection_reason
-    );
-
-    // For now, just send to Telegram using your existing method
-    if let Err(e) = self.telegram.send_blocked_trade_signal(notification, rejection_reason).await {
-        error!("📱 Blocked trade Telegram notification failed: {}", e);
-    }
-}
 }
 
 // Global notification manager instance

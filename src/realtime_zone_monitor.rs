@@ -503,7 +503,7 @@ impl NewRealTimeZoneMonitor {
             .collect()
     }
 
-   pub async fn update_price_with_cache_notifications(
+  pub async fn update_price_with_cache_notifications(
     &self,
     symbol: &str,
     price: f64,
@@ -520,16 +520,46 @@ impl NewRealTimeZoneMonitor {
         cache_guard.update_price_and_check_triggers(symbol, price)
     };
 
+    // Skip if no notifications
+    if cache_notifications.is_empty() {
+        return Ok(());
+    }
+
+    // Block repeated notifications for same zone until unblocked
+    use std::sync::LazyLock;
+    static BLOCKED_ZONES: LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+    let mut unique_notifications = Vec::new();
+    {
+        let mut blocked_set = BLOCKED_ZONES.lock().unwrap();
+        
+        for notification in cache_notifications {
+            let zone_key = format!("{}_{}", notification.zone_id, notification.action);
+            
+            // If this zone+action is already blocked, skip it
+            if blocked_set.contains(&zone_key) {
+                continue;
+            }
+            
+            unique_notifications.push(notification);
+        }
+    }
+
     // *** ENHANCED DEBUGGING: Log notification count ***
-    info!(
-        "📊 [DEBUG_NOTIFICATIONS] Received {} cache notifications for {} @ {:.5}",
-        cache_notifications.len(),
+    debug!(
+        "📊 [DEBUG_NOTIFICATIONS] Received {} cache notifications for {} @ {:.5} ({} unique)",
+        unique_notifications.len() + {
+            let blocked_set = BLOCKED_ZONES.lock().unwrap();
+            blocked_set.len()
+        },
         symbol,
-        price
+        price,
+        unique_notifications.len()
     );
 
     // Get trade logger from global state
-    use std::sync::LazyLock;
+    // use std::sync::LazyLock;
     static GLOBAL_TRADE_LOGGER: LazyLock<
         std::sync::Mutex<
             Option<Arc<tokio::sync::Mutex<crate::trade_event_logger::TradeEventLogger>>>,
@@ -539,7 +569,7 @@ impl NewRealTimeZoneMonitor {
     let trade_logger = GLOBAL_TRADE_LOGGER.lock().unwrap().clone();
 
     // *** ENHANCED DEBUGGING: Log each notification in detail ***
-    for (index, notification) in cache_notifications.iter().enumerate() {
+    for (index, notification) in unique_notifications.iter().enumerate() {
         info!(
             "🔔 [DEBUG_NOTIFICATION_{}] Cache notification: {} {} {}/{} @ {:.5} (timestamp: {})",
             index + 1,
@@ -729,32 +759,18 @@ impl NewRealTimeZoneMonitor {
                 info!(
                     "📢 [DEBUG_BLOCKED_TRADE_NOTIFICATION] Sending blocked trade alert to Telegram..."
                 );
-
-
-                // notification_manager.notify_blocked_trade_signal(
-                //     &notification,
-                //     &rejection_reason
-                // ).await;
-                if let Some(notification_manager) = get_global_notification_manager() {
-                    info!(
-                        "📢 [DEBUG_BLOCKED_TRADE_NOTIFICATION] Sending blocked trade alert to Telegram..."
-                    );
-                    notification_manager.notify_blocked_trade_signal(
-                        &notification,
-                        &rejection_reason
-                    ).await;
-                    info!(
-                        "✅ [DEBUG_BLOCKED_TRADE_SENT] Blocked trade notification sent to Telegram!"
-                    );
-                } else {
-                    warn!(
-                        "⚠️ [DEBUG_BLOCKED_TRADE_ERROR] Notification manager not available for blocked trade alert"
-                    );
+                notification_manager.notify_blocked_trade_signal(
+                    &notification,
+                    &rejection_reason
+                ).await;
+                
+                // Mark this zone+action as blocked to prevent repeated notifications
+                {
+                    let mut blocked_set = BLOCKED_ZONES.lock().unwrap();
+                    let zone_key = format!("{}_{}", notification.zone_id, notification.action);
+                    blocked_set.insert(zone_key);
                 }
-
-
-
-
+                
                 info!(
                     "✅ [DEBUG_BLOCKED_TRADE_SENT] Blocked trade notification sent to Telegram!"
                 );
@@ -805,9 +821,9 @@ impl NewRealTimeZoneMonitor {
         }
     }
 
-    info!(
+    debug!(
         "🏁 [DEBUG_PROCESSING_COMPLETE] Finished processing {} notifications for {} @ {:.5}",
-        cache_notifications.len(),
+        unique_notifications.len(),
         symbol,
         price
     );
