@@ -38,35 +38,51 @@ impl TelegramNotifier {
             return Ok(());
         }
 
-        let bot_token = self.bot_token.as_ref().unwrap();
+       let bot_token = self.bot_token.as_ref().unwrap();
         let chat_id = self.chat_id.as_ref().unwrap();
 
-        // Format the message with trading details
-        let emoji = if signal.action == "BUY" { "🟢" } else { "🔴" };
-        let strength_stars = "★".repeat(signal.zone_strength.min(5.0) as usize);
-        
+        let action_emoji = match signal.action.as_str() {
+            "BUY" => "🟢",
+            "SELL" => "🔴", 
+            _ => "⚪",
+        };
+
+        let strength_emoji = if signal.zone_strength >= 90.0 {
+            "🔥"
+        } else if signal.zone_strength >= 80.0 {
+            "💪"
+        } else if signal.zone_strength >= 70.0 {
+            "✅"
+        } else {
+            "⚠️"
+        };
+
         let message = format!(
-            "{} *TRADE SIGNAL VALIDATED* {}\n\
+            "🚨 *TRADE SIGNAL VALIDATED* 🚨\n\
             \n\
-            📊 *Symbol:* `{}`\n\
-            📈 *Action:* `{}`\n\
-            💰 *Price:* `{:.5}`\n\
-            ⏰ *Timeframe:* `{}`\n\
-            🎯 *Zone ID:* `{}`\n\
-            💪 *Strength:* `{}` {}\n\
-            📅 *Time:* `{}`\n\
+            {} *{}* `{}`\n\
+            💰 *Entry:* `{:.5}`\n\
+            ⏰ *Time:* `{}`\n\
+            🔧 *Timeframe:* `{}`\n\
+            🆔 *Zone:* `{}`\n\
             \n\
-            ⚡ *Ready to place trade!*",
-            emoji,
-            emoji,
-            signal.symbol,
+            {} *Strength:* `{:.1}%`\n\
+            👆 *Touches:* `{}`\n\
+            📋 *Reason:* `{}`\n\
+            \n\
+            ✅ *All trading rules passed - Ready to execute!*\n\
+            🚀 *BOOK THE TRADE NOW!*",
+            action_emoji,
             signal.action,
+            signal.symbol,
             signal.price,
+            signal.validation_timestamp.format("%H:%M:%S UTC"),
             signal.timeframe,
-            signal.zone_id,
+            &signal.zone_id[..8], // First 8 chars of zone ID
+            strength_emoji,
             signal.zone_strength,
-            strength_stars,
-            signal.validation_timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+            signal.touch_count,
+            signal.validation_reason
         );
 
         let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
@@ -85,14 +101,41 @@ impl TelegramNotifier {
             .await?;
 
         if response.status().is_success() {
-            info!("📱 Telegram notification sent for {} {} @ {:.5}", 
+            info!("📱 Enhanced trade signal notification sent for {} {} @ {:.5}", 
                   signal.action, signal.symbol, signal.price);
         } else {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            error!("📱 Failed to send Telegram notification: {}", error_text);
+            error!("📱 Failed to send enhanced trade signal notification: {}", error_text);
         }
 
         Ok(())
+    }
+
+    /// Categorize blocking rules for better user experience
+    fn categorize_blocking_rule(&self, rejection_reason: &str) -> (&'static str, &'static str) {
+        let reason_lower = rejection_reason.to_lowercase();
+        
+        if reason_lower.contains("trading disabled") || reason_lower.contains("trading is disabled") {
+            ("Trading Disabled", "🔒")
+        } else if reason_lower.contains("daily limit") {
+            ("Daily Limit Reached", "📊")
+        } else if reason_lower.contains("symbol") && reason_lower.contains("not in allowed") {
+            ("Symbol Not Allowed", "🎯")
+        } else if reason_lower.contains("timeframe") && reason_lower.contains("not in allowed") {
+            ("Timeframe Not Allowed", "⏱️")
+        } else if reason_lower.contains("trading not allowed on") || reason_lower.contains("weekday") {
+            ("Day Restriction", "📅")
+        } else if reason_lower.contains("outside trading hours") || reason_lower.contains("trading hours") {
+            ("Outside Trading Hours", "🕐")
+        } else if reason_lower.contains("zone strength") || reason_lower.contains("strength") {
+            ("Zone Strength Too Low", "💪")
+        } else if reason_lower.contains("touch count") {
+            ("Touch Count Invalid", "👆")
+        } else if reason_lower.contains("cooldown") || reason_lower.contains("zone in cooldown") {
+            ("Zone Cooldown Active", "⏰")
+        } else {
+            ("Other Validation Rule", "❓")
+        }
     }
 
     pub async fn send_test_message(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -339,6 +382,80 @@ impl TelegramNotifier {
             info!("📱 Daily summary sent to Telegram");
         } else {
             error!("📱 Failed to send daily summary");
+        }
+
+        Ok(())
+    }
+
+    pub async fn send_blocked_trade_signal(
+        &self,
+        notification: &crate::minimal_zone_cache::TradeNotification,
+        rejection_reason: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let bot_token = self.bot_token.as_ref().unwrap();
+        let chat_id = self.chat_id.as_ref().unwrap();
+
+        let action_emoji = match notification.action.as_str() {
+            "BUY" => "🟢",
+            "SELL" => "🔴",
+            _ => "⚪",
+        };
+
+        // Categorize the blocking rule for better display
+        let (blocking_category, blocking_emoji) = self.categorize_blocking_rule(rejection_reason);
+
+        let message = format!(
+            "🚫 *TRADE BLOCKED* 🚫\n\
+            \n\
+            {} *{}* `{}`\n\
+            💰 *Price:* `{:.5}`\n\
+            ⏰ *Time:* `{}`\n\
+            🔧 *Timeframe:* `{}`\n\
+            🆔 *Zone:* `{}`\n\
+            💪 *Strength:* `{:.1}%`\n\
+            \n\
+            {} *Blocked by:* `{}`\n\
+            📋 *Details:* `{}`\n\
+            \n\
+            💡 *Zone criteria met but trading rules blocked execution*",
+            action_emoji,
+            notification.action,
+            notification.symbol,
+            notification.price,
+            notification.timestamp.format("%H:%M:%S UTC"),
+            notification.timeframe,
+            &notification.zone_id[..8], // First 8 chars of zone ID
+            notification.strength,
+            blocking_emoji,
+            blocking_category,
+            rejection_reason
+        );
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+        
+        let payload = json!({
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": true
+        });
+
+        let response = self.client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            info!("📱 Blocked trade notification sent for {} {} @ {:.5} - {}", 
+                  notification.action, notification.symbol, notification.price, blocking_category);
+        } else {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            error!("📱 Failed to send blocked trade notification: {}", error_text);
         }
 
         Ok(())

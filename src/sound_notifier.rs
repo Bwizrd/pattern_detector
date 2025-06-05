@@ -298,6 +298,32 @@ impl SoundNotifier {
         info!("🔊 Trading bot startup sound played");
         Ok(())
     }
+
+   pub async fn play_blocked_trade_alert(
+    &self,
+    action: &str,
+    symbol: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !self.enabled {
+        return Ok(());
+    }
+
+    info!("🔊 Playing blocked trade alert for {} {}", action, symbol);
+
+    // Use existing system sounds instead of play_tone
+    let blocked_sound = if cfg!(target_os = "windows") {
+        "SystemHand" // Windows error sound
+    } else if cfg!(target_os = "macos") {
+        "/System/Library/Sounds/Basso.aiff" // macOS error sound
+    } else {
+        &self.buy_sound // Fallback to buy sound on Linux
+    };
+
+    self.play_sound(blocked_sound).await?;
+    info!("🔊 Blocked trade alert completed for {} {}", action, symbol);
+    Ok(())
+}
+
 }
 
 // Helper function to check if a command exists on the system

@@ -477,4 +477,125 @@ impl TradeDecisionEngine {
             Err(reason) => Err(reason),
         }
     }
+    pub async fn debug_validate_notification(&self, notification: &TradeNotification) -> String {
+        let mut debug_info = Vec::new();
+        
+        // Check trading enabled
+        debug_info.push(format!("✅ Trading Enabled: {}", self.rules.trading_enabled));
+        if !self.rules.trading_enabled {
+            debug_info.push("❌ REJECTION: Trading is disabled".to_string());
+            return debug_info.join("\n");
+        }
+
+        // Check daily limit
+        debug_info.push(format!("✅ Daily Signals: {}/{}", self.daily_signal_count, self.rules.max_daily_signals));
+        if self.daily_signal_count >= self.rules.max_daily_signals {
+            debug_info.push("❌ REJECTION: Daily limit reached".to_string());
+            return debug_info.join("\n");
+        }
+
+        // Check symbol
+        let symbol_upper = notification.symbol.to_uppercase();
+        debug_info.push(format!("🔍 Symbol Check: '{}' in {:?}", symbol_upper, self.rules.allowed_symbols));
+        if !self.rules.allowed_symbols.contains(&symbol_upper) {
+            debug_info.push(format!("❌ REJECTION: Symbol '{}' not in allowed list", symbol_upper));
+            return debug_info.join("\n");
+        }
+        debug_info.push("✅ Symbol: Allowed".to_string());
+
+        // Check timeframe
+        let timeframe_lower = notification.timeframe.to_lowercase();
+        debug_info.push(format!("🔍 Timeframe Check: '{}' in {:?}", timeframe_lower, self.rules.allowed_timeframes));
+        if !self.rules.allowed_timeframes.contains(&timeframe_lower) {
+            debug_info.push(format!("❌ REJECTION: Timeframe '{}' not in allowed list", timeframe_lower));
+            return debug_info.join("\n");
+        }
+        debug_info.push("✅ Timeframe: Allowed".to_string());
+
+        // Check weekday
+        let current_weekday = Utc::now().weekday();
+        let weekday_num = match current_weekday {
+            chrono::Weekday::Mon => 1,
+            chrono::Weekday::Tue => 2,
+            chrono::Weekday::Wed => 3,
+            chrono::Weekday::Thu => 4,
+            chrono::Weekday::Fri => 5,
+            chrono::Weekday::Sat => 6,
+            chrono::Weekday::Sun => 7,
+        };
+        debug_info.push(format!("🔍 Weekday Check: {} ({}) in {:?}", current_weekday, weekday_num, self.rules.allowed_weekdays));
+        if !self.rules.allowed_weekdays.contains(&weekday_num) {
+            debug_info.push(format!("❌ REJECTION: Trading not allowed on {}", current_weekday));
+            return debug_info.join("\n");
+        }
+        debug_info.push("✅ Weekday: Allowed".to_string());
+
+        // Check trading hours
+        let current_hour = Utc::now().hour() as u8;
+        if let (Some(start_hour), Some(end_hour)) = (self.rules.trading_start_hour_utc, self.rules.trading_end_hour_utc) {
+            debug_info.push(format!("🔍 Trading Hours: {} (allowed: {}-{})", current_hour, start_hour, end_hour));
+            if current_hour < start_hour || current_hour > end_hour {
+                debug_info.push(format!("❌ REJECTION: Outside trading hours: {} (allowed: {}-{})", current_hour, start_hour, end_hour));
+                return debug_info.join("\n");
+            }
+            debug_info.push("✅ Trading Hours: Within allowed time".to_string());
+        } else {
+            debug_info.push("✅ Trading Hours: No restrictions".to_string());
+        }
+
+        // Check zone strength
+        debug_info.push(format!("🔍 Zone Strength: {:.1} >= {:.1}", notification.strength, self.rules.min_zone_strength));
+        if notification.strength < self.rules.min_zone_strength {
+            debug_info.push(format!("❌ REJECTION: Zone strength {:.1} below minimum {:.1}", notification.strength, self.rules.min_zone_strength));
+            return debug_info.join("\n");
+        }
+        debug_info.push("✅ Zone Strength: Sufficient".to_string());
+
+        // Check touch count
+        let touch_count = self.get_zone_touch_count(&notification.zone_id).await;
+        debug_info.push(format!("🔍 Touch Count: {} (min: {}, max: {:?})", touch_count, self.rules.min_touch_count, self.rules.max_touch_count));
+        if touch_count < self.rules.min_touch_count {
+            debug_info.push(format!("❌ REJECTION: Touch count {} below minimum {}", touch_count, self.rules.min_touch_count));
+            return debug_info.join("\n");
+        }
+        if let Some(max_touches) = self.rules.max_touch_count {
+            if touch_count > max_touches {
+                debug_info.push(format!("❌ REJECTION: Touch count {} above maximum {}", touch_count, max_touches));
+                return debug_info.join("\n");
+            }
+        }
+        debug_info.push("✅ Touch Count: Within range".to_string());
+
+        // Check zone cooldown
+        if let Some(last_trigger_time) = self.triggered_zones.get(&notification.zone_id) {
+            let minutes_since_trigger = (Utc::now() - *last_trigger_time).num_minutes() as u64;
+            debug_info.push(format!("🔍 Zone Cooldown: {} minutes since last trigger (cooldown: {} min)", minutes_since_trigger, self.rules.zone_cooldown_minutes));
+            if minutes_since_trigger < self.rules.zone_cooldown_minutes {
+                debug_info.push(format!("❌ REJECTION: Zone in cooldown: {} minutes left", self.rules.zone_cooldown_minutes - minutes_since_trigger));
+                return debug_info.join("\n");
+            }
+            debug_info.push("✅ Zone Cooldown: Expired".to_string());
+        } else {
+            debug_info.push("✅ Zone Cooldown: No previous triggers".to_string());
+        }
+
+        debug_info.push("🎉 ALL VALIDATION CHECKS PASSED!".to_string());
+        debug_info.join("\n")
+    }
+
+    /// Enhanced process_notification with detailed logging
+    pub async fn process_notification_enhanced(
+        &mut self,
+        notification: TradeNotification,
+    ) -> Option<ValidatedTradeSignal> {
+        info!("🔍 [ENGINE_DEBUG] Starting validation for: {} {} @ {:.5}", 
+              notification.action, notification.symbol, notification.price);
+
+        // Get detailed debug info
+        let debug_result = self.debug_validate_notification(&notification).await;
+        info!("📋 [ENGINE_DEBUG] Validation details:\n{}", debug_result);
+
+        // Now process normally
+        self.process_notification(notification).await
+    }
 }

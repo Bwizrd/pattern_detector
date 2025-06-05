@@ -1,6 +1,6 @@
 // src/realtime_zone_monitor.rs - Fixed implementation
 use chrono::{DateTime, Utc};
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -503,137 +503,187 @@ impl NewRealTimeZoneMonitor {
             .collect()
     }
 
-    pub async fn update_price_with_cache_notifications(
-        &self,
-        symbol: &str,
-        price: f64,
-        timeframe: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Do your existing price update logic first
-        self.update_price(symbol, price, timeframe).await?;
-        self.check_proximity_for_price_update(symbol, price, timeframe)
-            .await;
+   pub async fn update_price_with_cache_notifications(
+    &self,
+    symbol: &str,
+    price: f64,
+    timeframe: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Do your existing price update logic first
+    self.update_price(symbol, price, timeframe).await?;
+    self.check_proximity_for_price_update(symbol, price, timeframe)
+        .await;
 
-        // Get cache notifications
-        let cache_notifications = {
-            let mut cache_guard = self.zone_cache.lock().await;
-            cache_guard.update_price_and_check_triggers(symbol, price)
+    // Get cache notifications
+    let cache_notifications = {
+        let mut cache_guard = self.zone_cache.lock().await;
+        cache_guard.update_price_and_check_triggers(symbol, price)
+    };
+
+    // *** ENHANCED DEBUGGING: Log notification count ***
+    info!(
+        "📊 [DEBUG_NOTIFICATIONS] Received {} cache notifications for {} @ {:.5}",
+        cache_notifications.len(),
+        symbol,
+        price
+    );
+
+    // Get trade logger from global state
+    use std::sync::LazyLock;
+    static GLOBAL_TRADE_LOGGER: LazyLock<
+        std::sync::Mutex<
+            Option<Arc<tokio::sync::Mutex<crate::trade_event_logger::TradeEventLogger>>>,
+        >,
+    > = LazyLock::new(|| std::sync::Mutex::new(None));
+
+    let trade_logger = GLOBAL_TRADE_LOGGER.lock().unwrap().clone();
+
+    // *** ENHANCED DEBUGGING: Log each notification in detail ***
+    for (index, notification) in cache_notifications.iter().enumerate() {
+        info!(
+            "🔔 [DEBUG_NOTIFICATION_{}] Cache notification: {} {} {}/{} @ {:.5} (timestamp: {})",
+            index + 1,
+            notification.action,
+            notification.symbol,
+            notification.timeframe,
+            notification.zone_id,
+            notification.price,
+            notification.timestamp.format("%H:%M:%S%.3f")
+        );
+
+        // Log the notification received
+        if let Some(logger_arc) = &trade_logger {
+            let logger_guard = logger_arc.lock().await;
+            logger_guard.log_notification_received(&notification).await;
+            drop(logger_guard);
+        }
+
+        // *** ENHANCED DEBUGGING: Pre-validation logging ***
+        info!(
+            "🔍 [DEBUG_PRE_VALIDATION] About to process notification through trade engine..."
+        );
+
+        // Process through trade decision engine with ENHANCED DEBUGGING
+        let validated_signal = {
+            let mut engine_guard = self.trade_engine.lock().await;
+            
+            // *** ENHANCED DEBUGGING: Log engine state before processing ***
+            let daily_count = engine_guard.get_daily_signal_count();
+            let max_daily = engine_guard.get_rules().max_daily_signals;
+            info!(
+                "📈 [DEBUG_ENGINE_STATE] Daily signal count before processing: {}/{}",
+                daily_count, max_daily
+            );
+            
+            // *** LOG TRADING RULES STATUS ***
+            let rules = engine_guard.get_rules();
+            info!(
+                "⚙️ [DEBUG_TRADING_RULES] Enabled: {}, Symbols: {:?}, Timeframes: {:?}",
+                rules.trading_enabled,
+                rules.allowed_symbols,
+                rules.allowed_timeframes
+            );
+            
+            // *** DETAILED DEBUG VALIDATION FIRST ***
+            info!(
+                "🔍 [DEBUG_DETAILED_VALIDATION] Running detailed validation check..."
+            );
+            let debug_result = engine_guard.debug_validate_notification(&notification).await;
+            info!("📋 [DEBUG_VALIDATION_DETAILS]\n{}", debug_result);
+            
+            // *** NOW PROCESS NORMALLY ***
+            info!(
+                "⚙️ [DEBUG_ENGINE_PROCESSING] Calling engine.process_notification() for {}/{} action: {}",
+                notification.symbol,
+                notification.zone_id,
+                notification.action
+            );
+            
+            let result = engine_guard
+                .process_notification(notification.clone())
+                .await;
+                
+            // *** ENHANCED DEBUGGING: Log immediate result ***
+            match &result {
+                Some(signal) => {
+                    info!(
+                        "✅ [DEBUG_ENGINE_RESULT] Validation SUCCESS - Signal produced: {} {} @ {:.5}",
+                        signal.action,
+                        signal.symbol,
+                        signal.price
+                    );
+                }
+                None => {
+                    error!(
+                        "❌ [DEBUG_ENGINE_RESULT] Validation FAILED - No signal produced for {}/{} action: {}",
+                        notification.symbol,
+                        notification.zone_id,
+                        notification.action
+                    );
+                    
+                    // *** ADD DETAILED FAILURE ANALYSIS ***
+                    let current_daily_count = engine_guard.get_daily_signal_count();
+                    let max_allowed = engine_guard.get_rules().max_daily_signals;
+                    error!(
+                        "📊 [DEBUG_FAILURE_ANALYSIS] Daily count after: {}/{}, Trading enabled: {}",
+                        current_daily_count,
+                        max_allowed,
+                        engine_guard.get_rules().trading_enabled
+                    );
+                }
+            }
+            
+            result
         };
 
-        // Get trade logger from global state
-        use std::sync::LazyLock;
-        static GLOBAL_TRADE_LOGGER: LazyLock<
-            std::sync::Mutex<
-                Option<Arc<tokio::sync::Mutex<crate::trade_event_logger::TradeEventLogger>>>,
-            >,
-        > = LazyLock::new(|| std::sync::Mutex::new(None));
-
-        let trade_logger = GLOBAL_TRADE_LOGGER.lock().unwrap().clone();
-
-        // Process each notification through the trade decision engine
-        for notification in cache_notifications {
+        if let Some(signal) = validated_signal {
+            // This is a VALIDATED trade signal!
             info!(
-                "🔔 [ZONE_MONITOR] Cache notification: {} {} {}/{} @ {:.5}",
-                notification.action,
-                notification.symbol,
-                notification.timeframe,
-                notification.zone_id,
-                notification.price
+                "🚨 [VALIDATED_SIGNAL] CONFIRMED TRADE SIGNAL: {} {} {}/{} @ {:.5} (validation_time: {})",
+                signal.action, 
+                signal.symbol, 
+                signal.timeframe, 
+                signal.zone_id, 
+                signal.price,
+                signal.validation_timestamp.format("%H:%M:%S%.3f")
             );
 
-            // Log the notification received
+            // Log the validated signal
             if let Some(logger_arc) = &trade_logger {
                 let logger_guard = logger_arc.lock().await;
-                logger_guard.log_notification_received(&notification).await;
+                logger_guard.log_signal_validated(&signal).await;
                 drop(logger_guard);
             }
 
-            // Process through trade decision engine
-            let validated_signal = {
-                let mut engine_guard = self.trade_engine.lock().await;
-                engine_guard
-                    .process_notification(notification.clone())
-                    .await
-            };
+            // *** ENHANCED DEBUGGING: Pre-notification logging ***
+            info!(
+                "📢 [DEBUG_PRE_NOTIFICATION] About to send notification for validated signal..."
+            );
 
-            if let Some(signal) = validated_signal {
-                // This is a VALIDATED trade signal!
+            // Send notifications for validated trade signal
+            if let Some(notification_manager) = get_global_notification_manager() {
                 info!(
-                    "🚨 [ZONE_MONITOR] VALIDATED TRADE SIGNAL: {} {} {}/{} @ {:.5}",
-                    signal.action, signal.symbol, signal.timeframe, signal.zone_id, signal.price
+                    "📲 [DEBUG_NOTIFICATION_MANAGER] Notification manager found - sending signal notification..."
                 );
-
-                // Log the validated signal
-                if let Some(logger_arc) = &trade_logger {
-                    let logger_guard = logger_arc.lock().await;
-                    logger_guard.log_signal_validated(&signal).await;
-                    drop(logger_guard);
-                }
-
-                // *** ADD THIS NEW SECTION FOR NOTIFICATIONS ***
-                // Send notifications for validated trade signal
-                if let Some(notification_manager) = get_global_notification_manager() {
-                    notification_manager.notify_trade_signal(&signal).await;
-                } else {
-                    warn!("📢 Notification manager not available for signal notification");
-                }
-
-                // TODO: Here you would:
-                // 1. Send to your cTrader API bridge for actual trading
-                // 2. Send notification to dashboard
-                // 3. Maybe send email/SMS alert
-
-                // For now, just broadcast as a special event
-                let trade_event = NewZoneEvent {
-                    zone_id: signal.zone_id.clone(),
-                    symbol: signal.symbol.clone(),
-                    timeframe: signal.timeframe.clone(),
-                    event_type: NewZoneEventType::Touch,
-                    price: signal.price,
-                    timestamp: signal.validation_timestamp,
-                    zone_type: if signal.action == "SELL" {
-                        "supply".to_string()
-                    } else {
-                        "demand".to_string()
-                    },
-                    confirmed: true,
-                };
-
-                if let Err(e) = self.event_sender.send(trade_event) {
-                    warn!(
-                        "⚠️ [ZONE_MONITOR] Failed to send validated signal event: {}",
-                        e
-                    );
-                }
+                notification_manager.notify_trade_signal(&signal).await;
+                info!(
+                    "✅ [DEBUG_NOTIFICATION_SENT] Trade signal notification sent successfully!"
+                );
             } else {
-                // Signal was rejected
-                debug!(
-                    "❌ [ZONE_MONITOR] Signal rejected for {}/{}",
-                    notification.symbol, notification.zone_id
+                error!(
+                    "❌ [DEBUG_NOTIFICATION_ERROR] Notification manager NOT AVAILABLE for signal notification!"
                 );
-
-                // Log the rejection
-                if let Some(logger_arc) = &trade_logger {
-                    let logger_guard = logger_arc.lock().await;
-                    logger_guard
-                        .log_signal_rejected(
-                            &notification,
-                            "Failed validation criteria".to_string(),
-                        )
-                        .await;
-                    drop(logger_guard);
-                }
             }
 
-            // Always broadcast the original cache notification too
-            let zone_event = NewZoneEvent {
-                zone_id: notification.zone_id.clone(),
-                symbol: notification.symbol.clone(),
-                timeframe: notification.timeframe.clone(),
+            // Broadcast as a special event
+            let trade_event = NewZoneEvent {
+                zone_id: signal.zone_id.clone(),
+                symbol: signal.symbol.clone(),
+                timeframe: signal.timeframe.clone(),
                 event_type: NewZoneEventType::Touch,
-                price: notification.price,
-                timestamp: notification.timestamp,
-                zone_type: if notification.action == "SELL" {
+                price: signal.price,
+                timestamp: signal.validation_timestamp,
+                zone_type: if signal.action == "SELL" {
                     "supply".to_string()
                 } else {
                     "demand".to_string()
@@ -641,16 +691,129 @@ impl NewRealTimeZoneMonitor {
                 confirmed: true,
             };
 
-            if let Err(e) = self.event_sender.send(zone_event) {
-                debug!(
-                    "⚠️ [ZONE_MONITOR] Failed to send cache notification event: {}",
+            if let Err(e) = self.event_sender.send(trade_event) {
+                warn!(
+                    "⚠️ [DEBUG_EVENT_SEND_ERROR] Failed to send validated signal event: {}",
                     e
                 );
+            } else {
+                info!(
+                    "✅ [DEBUG_EVENT_SENT] Validated signal event broadcasted successfully"
+                );
+            }
+        } else {
+            // Signal was rejected - Enhanced debugging with detailed reason
+            let rejection_reason = {
+                let engine_guard = self.trade_engine.lock().await;
+                let debug_result = engine_guard.debug_validate_notification(&notification).await;
+                
+                // Extract the specific rejection reason from debug output
+                if let Some(rejection_line) = debug_result.lines().find(|line| line.contains("❌ REJECTION:")) {
+                    rejection_line.replace("❌ REJECTION:", "").trim().to_string()
+                } else {
+                    "Unknown validation failure".to_string()
+                }
+            };
+
+            error!(
+                "❌ [DEBUG_SIGNAL_REJECTED] Signal rejected for {}/{} action: {} @ {:.5} - Reason: {}",
+                notification.symbol, 
+                notification.zone_id,
+                notification.action,
+                notification.price,
+                rejection_reason
+            );
+
+            // *** SEND TELEGRAM NOTIFICATION FOR BLOCKED TRADE ***
+            if let Some(notification_manager) = get_global_notification_manager() {
+                info!(
+                    "📢 [DEBUG_BLOCKED_TRADE_NOTIFICATION] Sending blocked trade alert to Telegram..."
+                );
+
+
+                // notification_manager.notify_blocked_trade_signal(
+                //     &notification,
+                //     &rejection_reason
+                // ).await;
+                if let Some(notification_manager) = get_global_notification_manager() {
+                    info!(
+                        "📢 [DEBUG_BLOCKED_TRADE_NOTIFICATION] Sending blocked trade alert to Telegram..."
+                    );
+                    notification_manager.notify_blocked_trade_signal(
+                        &notification,
+                        &rejection_reason
+                    ).await;
+                    info!(
+                        "✅ [DEBUG_BLOCKED_TRADE_SENT] Blocked trade notification sent to Telegram!"
+                    );
+                } else {
+                    warn!(
+                        "⚠️ [DEBUG_BLOCKED_TRADE_ERROR] Notification manager not available for blocked trade alert"
+                    );
+                }
+
+
+
+
+                info!(
+                    "✅ [DEBUG_BLOCKED_TRADE_SENT] Blocked trade notification sent to Telegram!"
+                );
+            } else {
+                warn!(
+                    "⚠️ [DEBUG_BLOCKED_TRADE_ERROR] Notification manager not available for blocked trade alert"
+                );
+            }
+
+            // Log the rejection
+            if let Some(logger_arc) = &trade_logger {
+                let logger_guard = logger_arc.lock().await;
+                logger_guard
+                    .log_signal_rejected(
+                        &notification,
+                        rejection_reason.clone(),
+                    )
+                    .await;
+                drop(logger_guard);
             }
         }
 
-        Ok(())
+        // Always broadcast the original cache notification too
+        let zone_event = NewZoneEvent {
+            zone_id: notification.zone_id.clone(),
+            symbol: notification.symbol.clone(),
+            timeframe: notification.timeframe.clone(),
+            event_type: NewZoneEventType::Touch,
+            price: notification.price,
+            timestamp: notification.timestamp,
+            zone_type: if notification.action == "SELL" {
+                "supply".to_string()
+            } else {
+                "demand".to_string()
+            },
+            confirmed: true,
+        };
+
+        if let Err(e) = self.event_sender.send(zone_event) {
+            debug!(
+                "⚠️ [DEBUG_ZONE_EVENT_ERROR] Failed to send cache notification event: {}",
+                e
+            );
+        } else {
+            debug!(
+                "✅ [DEBUG_ZONE_EVENT_SENT] Cache notification event broadcasted"
+            );
+        }
     }
+
+    info!(
+        "🏁 [DEBUG_PROCESSING_COMPLETE] Finished processing {} notifications for {} @ {:.5}",
+        cache_notifications.len(),
+        symbol,
+        price
+    );
+
+    Ok(())
+}
 
     // Helper method to get notifications from cache
     pub async fn get_trade_notifications_from_cache(&self) -> Vec<TradeNotification> {
