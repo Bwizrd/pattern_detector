@@ -12,8 +12,7 @@ use dashmap::DashMap;
 use log::{info, warn, error, debug};
 use tokio::sync::Mutex;
 
-use crate::realtime_monitor::ZoneEvent;
-use crate::realtime_monitor::RealTimeZoneMonitor;
+use crate::realtime_zone_monitor::{NewZoneEvent, NewRealTimeZoneMonitor};
 
 #[derive(Debug, Clone)]
 pub struct ClientConnection {
@@ -24,14 +23,14 @@ pub struct ClientConnection {
 
 pub struct WebSocketServer {
     clients: Arc<DashMap<String, ClientConnection>>,
-    zone_event_receiver: broadcast::Receiver<ZoneEvent>,
-    zone_monitor: Option<Arc<Mutex<RealTimeZoneMonitor>>>,
+    zone_event_receiver: broadcast::Receiver<NewZoneEvent>,
+    zone_monitor: Option<Arc<Mutex<NewRealTimeZoneMonitor>>>,
 }
 
 impl WebSocketServer {
     pub fn new(
-        zone_event_receiver: broadcast::Receiver<ZoneEvent>,
-        zone_monitor: Option<Arc<Mutex<RealTimeZoneMonitor>>>,
+        zone_event_receiver: broadcast::Receiver<NewZoneEvent>,
+        zone_monitor: Option<Arc<Mutex<NewRealTimeZoneMonitor>>>,
     ) -> Self {
         Self {
             clients: Arc::new(DashMap::new()),
@@ -72,7 +71,7 @@ impl WebSocketServer {
         stream: TcpStream,
         addr: SocketAddr,
         clients: Arc<DashMap<String, ClientConnection>>,
-        zone_monitor: Option<Arc<Mutex<RealTimeZoneMonitor>>>,
+        zone_monitor: Option<Arc<Mutex<NewRealTimeZoneMonitor>>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let ws_stream = accept_async(stream).await?;
         let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -152,7 +151,7 @@ impl WebSocketServer {
         clients: &Arc<DashMap<String, ClientConnection>>,
         client_id: &str,
         message: &str,
-        zone_monitor: &Option<Arc<Mutex<RealTimeZoneMonitor>>>,
+        zone_monitor: &Option<Arc<Mutex<NewRealTimeZoneMonitor>>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         debug!("📨 [WS_SERVER] Received message from client {}: {}", client_id, message);
         
@@ -374,7 +373,7 @@ impl WebSocketServer {
     
     async fn broadcast_zone_event(
         clients: &Arc<DashMap<String, ClientConnection>>,
-        event: &ZoneEvent,
+        event: &NewZoneEvent,
     ) {
         let message = json!({
             "type": "zone_event",

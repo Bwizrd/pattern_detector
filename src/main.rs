@@ -23,12 +23,9 @@ mod minimal_zone_cache;
 mod multi_backtest_handler;
 mod optimize_handler;
 mod patterns;
-mod price_feed;
 mod realtime_cache_updater;
-mod realtime_monitor;
 mod realtime_zone_monitor;
 mod simple_price_websocket;
-mod terminal_dashboard;
 mod trade_decision_engine;
 mod trade_event_logger; // Keep for real-time trade logging
 pub mod trades;
@@ -56,7 +53,6 @@ use crate::minimal_zone_cache::{get_minimal_cache, MinimalZoneCache};
 use crate::realtime_cache_updater::RealtimeCacheUpdater;
 use crate::realtime_zone_monitor::NewRealTimeZoneMonitor;
 use crate::simple_price_websocket::SimplePriceWebSocketServer;
-use crate::terminal_dashboard::TerminalDashboard;
 use crate::trade_decision_engine::TradeDecisionEngine;
 use crate::trade_event_logger::TradeEventLogger;
 
@@ -610,23 +606,6 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         process_trade_notifications().await;
     });
-
-    // Start terminal dashboard if enabled
-    if let Some(ref monitor) = zone_monitor {
-        let enable_terminal_dashboard = env::var("ENABLE_TERMINAL_DASHBOARD")
-            .unwrap_or_else(|_| "false".to_string())
-            .trim()
-            .to_lowercase()
-            == "true";
-
-        if enable_terminal_dashboard {
-            let dashboard = TerminalDashboard::new(Arc::clone(monitor));
-            tokio::spawn(async move {
-                dashboard.start().await;
-            });
-            info!("Terminal dashboard started");
-        }
-    }
 
     // Server configuration
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
