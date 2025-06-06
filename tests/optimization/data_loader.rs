@@ -1,5 +1,5 @@
 // tests/optimization/data_loader.rs
-use pattern_detector::detect::CandleData;
+use pattern_detector::api::detect::CandleData;
 use csv::ReaderBuilder;
 use reqwest;
 use serde_json::json;

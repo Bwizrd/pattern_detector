@@ -3,7 +3,7 @@
 // This test file verifies that the endpoint and zone generator produce identical results
 // by calling the same core logic and comparing the processed zones.
 
-use pattern_detector::detect::{_fetch_and_detect_core, ChartQuery, CandleData};
+use pattern_detector::api::detect::{_fetch_and_detect_core, ChartQuery, CandleData};
 // use reqwest::Client;
 use serde_json::Value;
 use std::env;

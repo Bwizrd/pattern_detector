@@ -1,0 +1,112 @@
+# Trading Zone Detection System - Project Summary & Next Steps
+
+## Project Overview
+I have a Rust-based financial trading system that detects supply and demand zones in forex markets and provides real-time notifications. The project has just completed a major refactor to organize code into a clean modular structure.
+
+## Current Architecture
+
+### Module Structure
+```
+src/
+├── main.rs                    # Main HTTP server with all routes
+├── handlers.rs               # Separated route handlers
+├── api/                      # API endpoints
+│   ├── detect.rs            # Zone detection & analysis
+│   ├── cache_endpoints.rs   # Cache management
+│   ├── get_zone_by_id.rs    # Individual zone retrieval
+│   ├── latest_zones_handler.rs # Recent zones
+│   └── backtest/            # Backtesting functionality
+├── cache/                   # Zone caching system
+│   ├── minimal_zone_cache.rs # In-memory zone storage
+│   └── realtime_cache_updater.rs # Live cache updates
+├── data/                    # Data fetching & integration
+│   ├── influx_fetcher.rs    # InfluxDB integration
+│   └── ctrader_integration.rs # Live price feed
+├── notifications/           # Alert system
+│   ├── notification_manager.rs # Manages all notifications
+│   ├── telegram_notifier.rs # Telegram alerts
+│   └── sound_notifier.rs    # Audio alerts
+├── realtime/               # Real-time monitoring
+│   ├── realtime_zone_monitor.rs # Zone proximity detection
+│   ├── proximity_detector.rs # Price distance calculations
+│   └── simple_price_websocket.rs # WebSocket server
+├── trading/                # Trading logic
+│   ├── trade_decision_engine.rs # Trade validation
+│   ├── trade_event_logger.rs # Trade logging
+│   └── backtest/           # Backtesting engine
+└── zones/                  # Zone detection patterns
+    └── patterns/           # Pattern recognition algorithms
+```
+
+### Key Features
+- **Zone Detection**: Identifies supply/demand zones using multiple patterns (50% retracement, big bar, etc.)
+- **Real-time Monitoring**: Tracks live prices and detects when price approaches zones
+- **Notification System**: Sends alerts via Telegram and sound when zones are touched
+- **Caching System**: Efficient in-memory storage of detected zones
+- **Backtesting**: Historical testing of trading strategies
+- **REST API**: Complete HTTP API for zone analysis and management
+
+### Data Flow
+1. **Price Feed**: cTrader WebSocket → Real-time price updates
+2. **Zone Detection**: Historical data → Pattern recognition → Zone storage
+3. **Proximity Detection**: Live prices + Cached zones → Distance calculations
+4. **Notifications**: Zone proximity triggers → Telegram/Sound alerts
+5. **Trading Engine**: Zone signals → Trade validation → Execution decisions
+
+## Current State (After Refactor)
+✅ **Completed**: Clean modular structure, all imports fixed, compilation successful
+✅ **Working**: Zone detection, caching, basic real-time monitoring
+✅ **API**: All endpoints functional including backtesting and notifications
+
+## Next Objective: Separate Monitoring Binary
+
+I want to create a **separate binary** specifically for real-time zone monitoring and notifications, separate from the main HTTP server. This monitoring service should:
+
+### Goals
+- Run independently from the main API server
+- Focus solely on real-time price monitoring and notifications
+- Be lightweight and efficient for 24/7 operation
+- Share core zone detection and notification code with main binary
+
+### Key Requirements
+1. **Real-time Price Monitoring**: Connect to cTrader WebSocket for live prices
+2. **Zone Proximity Detection**: Calculate distances between current prices and cached zones
+3. **Smart Notifications**: Send alerts when price approaches zones (with cooldowns)
+4. **Zone Cache Integration**: Share zone data with main API server
+5. **Health Monitoring**: Self-monitoring and restart capabilities
+
+## Things to Look Out For
+
+### Code Reuse Opportunities
+- **Notification System**: `notifications/` module is already well-structured for reuse
+- **Cache System**: `cache/minimal_zone_cache.rs` can be shared between binaries
+- **Price Integration**: `data/ctrader_integration.rs` contains WebSocket logic
+- **Proximity Detection**: `realtime/proximity_detector.rs` has distance calculations
+
+### Potential Issues
+1. **Shared State**: Zone cache synchronization between API server and monitor
+2. **Configuration**: Environment variables and settings management
+3. **Error Handling**: Robust reconnection logic for WebSocket failures
+4. **Resource Management**: Memory usage with large zone datasets
+5. **Notification Spam**: Proper cooldown mechanisms to avoid alert fatigue
+
+### Architecture Decisions Needed
+- **Data Sharing**: How to share zone cache between binaries (file, database, IPC?)
+- **Configuration**: Shared config vs separate config files
+- **Logging**: Separate log files or unified logging
+- **Deployment**: Single container vs separate containers
+
+### Current Code to Examine
+- `src/main.rs`: Lines 245-290 show current real-time setup integration
+- `realtime/realtime_zone_monitor.rs`: Core monitoring logic
+- `cache/realtime_cache_updater.rs`: Cache update mechanisms  
+- `notifications/notification_manager.rs`: Alert coordination
+- `data/ctrader_integration.rs`: WebSocket price feed handling
+
+## Recommended Approach
+1. **Start Small**: Create basic monitoring binary that reuses existing modules
+2. **Incremental Migration**: Move monitoring logic from main.rs to new binary
+3. **Shared Libraries**: Extract common code into shared modules
+4. **Testing**: Ensure both binaries can run simultaneously without conflicts
+
+The codebase is well-structured for this separation - the modular design from our recent refactor makes it ideal for creating focused binaries that share core functionality.

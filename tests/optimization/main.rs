@@ -4,11 +4,11 @@ mod html_reporter;
 mod parameter_generator;
 
 use dotenv::dotenv;
-use pattern_detector::detect::CandleData;
-use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
-use pattern_detector::patterns::PatternRecognizer;
-use pattern_detector::trades::{TradeConfig, TradeSummary};
-use pattern_detector::trading::TradeExecutor;
+use pattern_detector::api::detect::CandleData;
+use pattern_detector::zones::patterns::FiftyPercentBeforeBigBarRecognizer;
+use pattern_detector::zones::patterns::PatternRecognizer;
+use pattern_detector::trading::trades::{TradeConfig, TradeSummary};
+use pattern_detector::trading::trading::TradeExecutor;
 use chrono::{DateTime, Utc};
 use tokio::sync::Mutex as TokioMutex;
 use std::sync::Arc;

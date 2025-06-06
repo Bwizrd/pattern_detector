@@ -5,10 +5,9 @@ use super::parameter_generator;
 
 use super::html_reporter_advanced;
 
-use pattern_detector::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
-use pattern_detector::trades::{TradeConfig, Trade}; 
-use pattern_detector::trading::TradeExecutor;
-use pattern_detector::types::CandleData; 
+use pattern_detector::zones::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
+use pattern_detector::trading::trades::{TradeConfig, Trade}; 
+use pattern_detector::trading::trading::TradeExecutor;
 
 use chrono::{DateTime, Utc, Weekday, Timelike, Datelike}; 
 use dotenv::dotenv;

@@ -1,11 +1,11 @@
 // tests/backtest.rs
 use dotenv::dotenv;
-use pattern_detector::detect::CandleData;
-use pattern_detector::patterns::FiftyPercentBeforeBigBarRecognizer;
-use pattern_detector::patterns::PatternRecognizer;
-use pattern_detector::trades::TradeConfig;
-use pattern_detector::trading::TradeExecutor;
-use chrono::{DateTime, Duration, Utc};
+use pattern_detector::api::detect::CandleData;
+use pattern_detector::zones::patterns::FiftyPercentBeforeBigBarRecognizer;
+use pattern_detector::zones::patterns::PatternRecognizer;
+use pattern_detector::trading::trades::TradeConfig;
+use pattern_detector::trading::trading::TradeExecutor;
+use chrono::{DateTime, Utc};
 
 #[tokio::test]
 async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
@@ -121,7 +121,7 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Calculate summary from trades
-    let summary = pattern_detector::trades::TradeSummary::from_trades(&trades);
+    let summary = pattern_detector::trading::trades::TradeSummary::from_trades(&trades);
 
     // Calculate total pips directly
     let mut total_winning_pips = 0.0;
@@ -186,10 +186,10 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
             // Debug info for stops and targets
             let pip_size = 0.0001;
             let stop_distance = match trade.direction {
-                pattern_detector::trades::TradeDirection::Long => {
+                pattern_detector::trading::trades::TradeDirection::Long => {
                     (trade.entry_price - trade.stop_loss) / pip_size
                 }
-                pattern_detector::trades::TradeDirection::Short => {
+                pattern_detector::trading::trades::TradeDirection::Short => {
                     (trade.stop_loss - trade.entry_price) / pip_size
                 }
             };
@@ -202,9 +202,9 @@ async fn run_backtest() -> Result<(), Box<dyn std::error::Error>> {
                 "      Take Profit: {} ({:.1} pips from entry)",
                 trade.take_profit,
                 match trade.direction {
-                    pattern_detector::trades::TradeDirection::Long =>
+                    pattern_detector::trading::trades::TradeDirection::Long =>
                         (trade.take_profit - trade.entry_price) / pip_size,
-                    pattern_detector::trades::TradeDirection::Short =>
+                    pattern_detector::trading::trades::TradeDirection::Short =>
                         (trade.entry_price - trade.take_profit) / pip_size,
                 }
             );

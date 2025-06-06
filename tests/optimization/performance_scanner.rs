@@ -3,9 +3,9 @@
 use super::data_loader; // Assuming data_loader.rs is in tests/optimization/
 use super::html_reporter_scanner; // Assuming html_reporter_scanner.rs is in tests/optimization/
 
-use pattern_detector::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
-use pattern_detector::trades::{TradeConfig, Trade}; // Trade comes from pattern_detector::trades
-use pattern_detector::trading::TradeExecutor;
+use pattern_detector::zones::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
+use pattern_detector::trading::trades::{TradeConfig, Trade}; // Trade comes from pattern_detector::trading::trades
+use pattern_detector::trading::trading::TradeExecutor;
 use pattern_detector::types::CandleData; // Assuming CandleData from pattern_detector::types
 
 use chrono::{DateTime, Utc, Weekday, Timelike, Datelike}; // Add all chrono traits used

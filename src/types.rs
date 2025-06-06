@@ -1,7 +1,7 @@
 // src/types.rs
 // Contains shared data structures used by both the web server handlers and potentially the generator.
 
-pub use crate::detect::{CandleData, ChartQuery}; // Imports from detect.rs
+pub use crate::api::detect::{CandleData, ChartQuery}; // Ensure CandleData and ChartQuery are imported correctly
 use log::{warn, debug};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,10 +17,10 @@ pub struct BulkSymbolTimeframesRequestItem {
 // --- Core Data Structures ---
 
 // Note: Ensure CandleData is defined correctly, usually in detect.rs or here.
-// If it's in detect.rs, the import `use crate::detect::CandleData;` at the top is correct.
+// If it's in detect.rs, the import `use crate::api::detect::CandleData;` at the top is correct.
 // If you define it here, remove the import and ensure it has necessary derives.
 // Example (assuming it's imported from detect.rs):
-// pub use crate::detect::CandleData; // Re-export if needed elsewhere easily
+// pub use crate::api::detect::CandleData; // Re-export if needed elsewhere easily
 
 // *** NEW: Struct for touch point data ***
 #[derive(Serialize, Deserialize, Debug, Clone)]
