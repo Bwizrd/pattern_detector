@@ -1,5 +1,5 @@
 // src/cache/zone_cache_writer.rs
-// Simple helper to write zones to JSON file for the monitor to read
+// Simple fix to include existing timeframe and touch_count fields
 
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,8 @@ pub struct SimpleZone {
     pub high: f64,
     pub low: f64,
     pub strength: f64,
+    pub timeframe: String,        // Now using actual field
+    pub touch_count: i32,         // Now using actual field
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -44,7 +46,9 @@ impl ZoneCacheWriter {
             high: zone.zone_high.unwrap_or(0.0),
             low: zone.zone_low.unwrap_or(0.0),
             strength: zone.strength_score.unwrap_or(0.0),
-            created_at: chrono::Utc::now(), // Use current time since we don't have detection_timestamp
+            timeframe: zone.timeframe.clone().unwrap_or_else(|| "unknown".to_string()),  // Use actual field
+            touch_count: zone.touch_count.unwrap_or(0) as i32,  // Use actual field
+            created_at: chrono::Utc::now(),
         }
     }
 

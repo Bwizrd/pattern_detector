@@ -12,6 +12,8 @@ pub struct Zone {
     pub high: f64,
     pub low: f64,
     pub strength: f64,
+    pub timeframe: String, // e.g., "H1", "D1"
+    pub touch_count: i32,  // Number of touches within the zone
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -50,5 +52,7 @@ pub struct ZoneAlert {
     pub zone_low: f64,
     pub distance_pips: f64,
     pub strength: f64,
+    pub timeframe: String, // Add this line
+    pub touch_count: i32,  // Add this line
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }

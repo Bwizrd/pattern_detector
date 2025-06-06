@@ -1,5 +1,5 @@
 // src/bin/zone_monitor/state.rs
-// Core state management with zone state tracking and trading
+// Core state management with zone state tracking, trading, and CSV logging
 
 use crate::proximity::ProximityDetector;
 use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
@@ -7,6 +7,8 @@ use crate::websocket::WebSocketClient;
 use crate::notifications::NotificationManager;
 use crate::zone_state_manager::ZoneStateManager;
 use crate::trading_engine::TradingEngine;
+use crate::csv_logger::CsvLogger;
+use crate::telegram_notifier::TelegramNotifier;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +25,8 @@ pub struct MonitorState {
     pub notification_manager: Arc<NotificationManager>,
     pub zone_state_manager: Arc<ZoneStateManager>,
     pub trading_engine: Arc<TradingEngine>,
+    pub csv_logger: Arc<CsvLogger>,
+    pub telegram_notifier: Arc<TelegramNotifier>,
     pub cache_file_path: String,
     pub websocket_url: String,
 }
@@ -47,6 +51,8 @@ impl MonitorState {
             notification_manager: Arc::new(NotificationManager::new()),
             zone_state_manager: Arc::new(ZoneStateManager::new()),
             trading_engine: Arc::new(TradingEngine::new()),
+            csv_logger: Arc::new(CsvLogger::new()),
+            telegram_notifier: Arc::new(TelegramNotifier::new()),
             cache_file_path,
             websocket_url,
         }
@@ -60,6 +66,7 @@ impl MonitorState {
         self.start_cache_refresh_task().await;
         self.start_websocket_task().await;
         self.start_notification_cleanup_task().await;
+        self.start_zone_reset_task().await;
 
         // Test notifications if configured
         if self.notification_manager.is_configured() {
@@ -73,6 +80,16 @@ impl MonitorState {
                 info!("✅ Notification system test successful");
             } else {
                 warn!("⚠️ Notification system test failed");
+            }
+        }
+
+        // Test Telegram if configured
+        if self.telegram_notifier.is_enabled() {
+            info!("🧪 Testing Telegram notifications...");
+            if let Err(e) = self.telegram_notifier.send_test_message().await {
+                warn!("⚠️ Telegram test failed: {}", e);
+            } else {
+                info!("✅ Telegram test successful");
             }
         }
 
@@ -107,6 +124,19 @@ impl MonitorState {
                 if let Err(e) = state.load_zones_from_file().await {
                     error!("❌ Failed to refresh zone cache: {}", e);
                 }
+            }
+        });
+    }
+
+    async fn start_zone_reset_task(&self) {
+        let zone_state_manager = Arc::clone(&self.zone_state_manager);
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // Check every 5 minutes
+            
+            loop {
+                interval.tick().await;
+                zone_state_manager.check_and_reset_expired_zones().await;
             }
         });
     }
@@ -181,6 +211,14 @@ impl MonitorState {
                     }
                 }
 
+                // Log to CSV
+                self.csv_logger.log_proximity_alert(&alert).await;
+
+                // Send to Telegram
+                if let Err(e) = self.telegram_notifier.send_proximity_alert(&alert).await {
+                    error!("Failed to send Telegram proximity alert: {}", e);
+                }
+
                 // Send proximity notification (sound)
                 self.notification_manager.notify_zone_proximity(&alert).await;
             }
@@ -190,12 +228,39 @@ impl MonitorState {
                 info!("🎯 TRADING SIGNAL: {} {} zone @ {:.1} pips - READY TO TRADE!", 
                       signal.symbol, signal.zone_type, signal.distance_pips);
                 
+                // Log to CSV before attempting trade
+                self.csv_logger.log_trading_signal(&signal, "SIGNAL_GENERATED").await;
+                
+                // Send to Telegram
+                if let Err(e) = self.telegram_notifier.send_trading_signal(&signal, "SIGNAL_GENERATED").await {
+                    error!("Failed to send Telegram trading signal: {}", e);
+                }
+                
                 // Execute trade through trading engine
                 if let Some(trade) = self.trading_engine.evaluate_and_execute_trade(&signal, &price_update).await {
                     info!("💰 Trade executed: {} {} {:.2} lots @ {:.5}", 
                           trade.symbol, trade.trade_type.to_uppercase(), trade.lot_size, trade.entry_price);
                     
-                    // TODO: Send trade notification sound/alert
+                    // Log successful execution
+                    self.csv_logger.log_trading_signal(&signal, "TRADE_EXECUTED").await;
+                    
+                    // Send to Telegram
+                    if let Err(e) = self.telegram_notifier.send_trading_signal(&signal, "TRADE_EXECUTED").await {
+                        error!("Failed to send Telegram trade execution: {}", e);
+                    }
+                    
+                    // IMPORTANT: Only mark zone as traded AFTER successful execution
+                    self.zone_state_manager.mark_zone_as_traded(&signal.zone_id, &signal.symbol).await;
+                } else {
+                    info!("🚫 Trade rejected for zone {} - zone remains in ProximityAlerted state", signal.zone_id);
+                    
+                    // Log rejection
+                    self.csv_logger.log_trading_signal(&signal, "TRADE_REJECTED").await;
+                    
+                    // Send to Telegram
+                    if let Err(e) = self.telegram_notifier.send_trading_signal(&signal, "TRADE_REJECTED").await {
+                        error!("Failed to send Telegram trade rejection: {}", e);
+                    }
                 }
                 
                 // Store the trading signal as an alert too

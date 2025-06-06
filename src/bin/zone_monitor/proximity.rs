@@ -42,6 +42,8 @@ impl ProximityDetector {
                     zone_low: zone.low,
                     distance_pips,
                     strength: zone.strength,
+                    timeframe: zone.timeframe.clone(),    // Include timeframe
+                    touch_count: zone.touch_count,        // Include touch count
                     timestamp: chrono::Utc::now(),
                 };
 

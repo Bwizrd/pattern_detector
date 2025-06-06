@@ -1,5 +1,5 @@
 // src/bin/zone_monitor/main.rs
-// Clean, organized zone monitor entry point with notifications
+// Clean, organized zone monitor entry point with notifications and CSV logging
 
 mod html;
 mod notifications;
@@ -10,6 +10,8 @@ mod trading_engine;
 mod types;
 mod websocket;
 mod zone_state_manager;
+mod csv_logger;
+mod telegram_notifier;
 
 use axum::{extract::State, http::StatusCode, routing::get, routing::post, Json, Router};
 use state::MonitorState;
@@ -133,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_level(true)
         .init();
 
-    info!("🚀 Starting Zone Monitor Dashboard with Notifications...");
+    info!("🚀 Starting Zone Monitor Dashboard with Notifications and CSV Logging...");
 
     // Configuration
     let cache_file_path =
@@ -151,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
           std::env::var("NOTIFICATIONS_ENABLED").unwrap_or_else(|_| "false".to_string()));
     info!("   🔗 Webhook URL: {}", 
           std::env::var("WEBHOOK_URL").unwrap_or_else(|_| "Not configured".to_string()));
+    info!("   📊 CSV logging: logs/proximity_YYYY-MM-DD.csv & logs/trading_signal_YYYY-MM-DD.csv");
 
     // Initialize monitor state
     let state = MonitorState::new(cache_file_path);
@@ -187,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   💰 Trading Stats: http://localhost:{}/api/trading/stats", monitor_port);
     info!("   📈 Trade History: http://localhost:{}/api/trading/history", monitor_port);
     info!("   ❤️  Health Check: http://localhost:{}/health", monitor_port);
-    info!("✅ Zone Monitor with Notifications ready!");
+    info!("✅ Zone Monitor with Notifications and CSV Logging ready!");
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", monitor_port)).await?;
     axum::serve(listener, app).await?;
