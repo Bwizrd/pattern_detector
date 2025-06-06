@@ -1,4 +1,4 @@
-// src/main.rs - Simplified version for cache and API only
+// src/main.rs - Clean version with backtest and debug endpoints only
 
 // Module declarations
 mod api;
@@ -14,7 +14,7 @@ mod zones;
 
 // Standard library imports
 use std::env;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 // External crate imports
 use actix_cors::Cors;
@@ -74,6 +74,125 @@ async fn echo(query: web::Query<QueryParams>) -> impl Responder {
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("OK, Rust server is running on port 8080")
+}
+
+// --- Backtest Handlers ---
+
+async fn run_multi_symbol_backtest(
+    request_body: web::Json<serde_json::Value>,
+) -> impl Responder {
+    let backtest_params = request_body.into_inner();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "message": "Multi-symbol backtest endpoint - needs implementation",
+        "received_params": backtest_params,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "note": "Connect this to your multi-symbol backtest logic"
+    }))
+}
+
+async fn run_parameter_optimization(
+    request_body: web::Json<serde_json::Value>,
+) -> impl Responder {
+    let optimization_params = request_body.into_inner();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success", 
+        "message": "Parameter optimization endpoint - needs implementation",
+        "received_params": optimization_params,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "note": "Connect this to your optimization logic"
+    }))
+}
+
+async fn run_portfolio_meta_optimized_backtest(
+    request_body: web::Json<serde_json::Value>,
+) -> impl Responder {
+    let portfolio_params = request_body.into_inner();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "message": "Portfolio meta backtest endpoint - needs implementation", 
+        "received_params": portfolio_params,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "note": "Connect this to your portfolio backtest logic"
+    }))
+}
+
+// --- Debug Handlers ---
+
+async fn test_data_request_handler(
+    query: web::Query<std::collections::HashMap<String, String>>,
+) -> impl Responder {
+    let params = query.into_inner();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "message": "Test data request endpoint",
+        "received_params": params,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "note": "Connect this to your data fetching logic (InfluxDB, etc.)"
+    }))
+}
+
+async fn debug_cache_stats(
+    shared_cache: web::Data<Arc<Mutex<MinimalZoneCache>>>,
+) -> impl Responder {
+    let cache = shared_cache.lock().await;
+    let (total, supply, demand) = cache.get_stats();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "cache_stats": {
+            "total_zones": total,
+            "supply_zones": supply,
+            "demand_zones": demand
+        },
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+async fn debug_cache_symbols(
+    shared_cache: web::Data<Arc<Mutex<MinimalZoneCache>>>,
+) -> impl Responder {
+    let cache = shared_cache.lock().await;
+    let all_zones = cache.get_all_zones();
+    
+    let mut symbol_counts = std::collections::HashMap::new();
+    for zone in all_zones {
+        if let Some(symbol) = &zone.symbol {
+            *symbol_counts.entry(symbol.clone()).or_insert(0) += 1;
+        }
+    }
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "symbols": symbol_counts,
+        "total_symbols": symbol_counts.len(),
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+async fn debug_cache_timeframes(
+    shared_cache: web::Data<Arc<Mutex<MinimalZoneCache>>>,
+) -> impl Responder {
+    let cache = shared_cache.lock().await;
+    let all_zones = cache.get_all_zones();
+    
+    let mut timeframe_counts = std::collections::HashMap::new();
+    for zone in all_zones {
+        if let Some(timeframe) = &zone.timeframe {
+            *timeframe_counts.entry(timeframe.clone()).or_insert(0) += 1;
+        }
+    }
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "timeframes": timeframe_counts,
+        "total_timeframes": timeframe_counts.len(),
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
 }
 
 // --- Cache Setup Function ---
@@ -141,7 +260,7 @@ async fn main() -> std::io::Result<()> {
     log4rs::init_file("log4rs.yaml", Default::default())
         .expect("Failed to initialize log4rs logging");
 
-    info!("Starting Trading API Server...");
+    info!("Starting Trading API Server (Clean Version)...");
 
     // Setup the cache system
     let shared_cache = match setup_cache_system().await {
@@ -160,6 +279,7 @@ async fn main() -> std::io::Result<()> {
     let port = port_str.parse::<u16>().unwrap_or(8080);
 
     info!("API Server starting on http://{}:{}", host, port);
+    info!("📊 Endpoints: Core, Zone Analysis, Backtest, Debug");
 
     let http_client_for_app_factory = Arc::clone(&shared_http_client);
 
@@ -180,10 +300,12 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(Arc::clone(&http_client_for_app_factory)))
             .app_data(web::Data::new(Arc::clone(&shared_cache)))
-            // Core endpoints
+            
+            // === CORE ENDPOINTS ===
             .route("/echo", web::get().to(echo))
             .route("/health", web::get().to(health_check))
-            // Zone endpoints
+            
+            // === ZONE ANALYSIS ENDPOINTS ===
             .route("/analyze", web::get().to(detect_patterns))
             .route("/active-zones", web::get().to(get_active_zones_handler))
             .route(
@@ -202,15 +324,33 @@ async fn main() -> std::io::Result<()> {
                 "/find-and-verify-zone",
                 web::get().to(find_and_verify_zone_handler),
             )
-            // Backtest endpoints
+            
+            // === BACKTEST ENDPOINTS ===
             .route("/backtest", web::post().to(run_backtest))
-            // Debug endpoints
-            .route("/test-cache", web::get().to(test_cache_endpoint))
             .route(
-                "/debug/minimal-cache-zones",
-                web::get().to(get_minimal_cache_zones_debug_with_shared_cache),
+                "/multi-symbol-backtest",
+                web::post().to(run_multi_symbol_backtest),
             )
-            // Basic handlers for compatibility (these can return simple responses now)
+            .route(
+                "/optimize-parameters",
+                web::post().to(run_parameter_optimization),
+            )
+            .route(
+                "/portfolio-meta-backtest",
+                web::post().to(run_portfolio_meta_optimized_backtest),
+            )
+            
+            // === DEBUG ENDPOINTS ===
+            .route("/debug/cache-stats", web::get().to(debug_cache_stats))
+            .route("/debug/cache-symbols", web::get().to(debug_cache_symbols))
+            .route("/debug/cache-timeframes", web::get().to(debug_cache_timeframes))
+            .route("/debug/test-data", web::get().to(test_data_request_handler))
+            .route("/debug/minimal-cache-zones", web::get().to(get_minimal_cache_zones_debug_with_shared_cache))
+            
+            // === CACHE ENDPOINTS ===
+            .route("/test-cache", web::get().to(test_cache_endpoint))
+            
+            // === BASIC HANDLERS (for compatibility) ===
             .route("/current-prices", web::get().to(get_current_prices_handler))
             .route("/test-prices", web::get().to(test_prices_handler))
     })
