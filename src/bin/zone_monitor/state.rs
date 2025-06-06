@@ -23,8 +23,8 @@ pub struct MonitorState {
 
 impl MonitorState {
     pub fn new(cache_file_path: String) -> Self {
-        let websocket_url = std::env::var("PRICE_WS_URL")
-            .unwrap_or_else(|_| "ws://localhost:8083".to_string());
+        let websocket_url = std::env::var("CTRADER_WS_URL")
+            .unwrap_or_else(|_| "ws://localhost:8081".to_string());
 
         Self {
             zone_cache: Arc::new(RwLock::new(ZoneCache::default())),

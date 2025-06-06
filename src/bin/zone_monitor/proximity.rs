@@ -2,7 +2,7 @@
 // Zone proximity detection logic
 
 use crate::types::{PriceUpdate, Zone, ZoneAlert};
-use tracing::info;
+use tracing::{info, debug};
 
 #[derive(Debug)]
 pub struct ProximityDetector {
@@ -43,7 +43,7 @@ impl ProximityDetector {
                 };
 
                 // Log the proximity alert
-                info!(
+                debug!(
                     "🎯 ZONE PROXIMITY: {} price {:.5} is {:.1} pips from {} zone at {:.5}-{:.5} (strength: {:.2})",
                     price_update.symbol,
                     current_price,

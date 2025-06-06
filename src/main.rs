@@ -35,8 +35,6 @@ use crate::api::cache_endpoints::{
 use crate::cache::minimal_zone_cache::{get_minimal_cache, MinimalZoneCache};
 use crate::cache::realtime_cache_updater::RealtimeCacheUpdater;
 use crate::cache::zone_cache_writer::ZoneCacheWriter;
-use crate::data::ctrader_integration::connect_to_ctrader_websocket;
-use crate::realtime::simple_price_websocket::SimplePriceWebSocketServer;
 
 // Import API handlers
 use crate::api::detect::{
@@ -47,11 +45,6 @@ use crate::trading::backtest::backtest::run_backtest;
 
 // Import handlers from the separate file
 use crate::handlers::*;
-
-// --- Global State ---
-static GLOBAL_PRICE_BROADCASTER: LazyLock<
-    std::sync::Mutex<Option<tokio::sync::broadcast::Sender<String>>>,
-> = LazyLock::new(|| std::sync::Mutex::new(None));
 
 #[derive(serde::Serialize)]
 struct EchoResponse {
@@ -160,54 +153,6 @@ async fn main() -> std::io::Result<()> {
     };
 
     let shared_http_client = Arc::new(HttpClient::new());
-
-    let enable_simple_price_ws = env::var("ENABLE_SIMPLE_PRICE_WS")
-        .unwrap_or_else(|_| "true".to_string())
-        .trim()
-        .to_lowercase()
-        == "true";
-
-    if enable_simple_price_ws {
-        let (ws_server, price_broadcaster) = SimplePriceWebSocketServer::new();
-        let ws_port = env::var("PRICE_WS_PORT")
-            .unwrap_or_else(|_| "8083".to_string())
-            .parse::<u16>()
-            .unwrap_or(8083);
-        let ws_addr = format!("127.0.0.1:{}", ws_port);
-
-        *GLOBAL_PRICE_BROADCASTER.lock().unwrap() = Some(price_broadcaster);
-
-        tokio::spawn(async move {
-            if let Err(e) = ws_server.start(ws_addr).await {
-                error!("Price WebSocket failed: {}", e);
-            }
-        });
-
-        info!("Price WebSocket started on port {}", ws_port);
-    }
-
-    // // Start price feed connection
-    let enable_price_feed = env::var("ENABLE_CTRADER_PRICE_FEED")
-        .unwrap_or_else(|_| "true".to_string())
-        .trim()
-        .to_lowercase()
-        == "true";
-
-    if enable_price_feed {
-        let broadcaster_clone = {
-            let guard = GLOBAL_PRICE_BROADCASTER.lock().unwrap();
-            guard.as_ref().cloned()
-        };
-
-        tokio::spawn(async move {
-            if let Some(broadcaster) = broadcaster_clone {
-                if let Err(e) = connect_to_ctrader_websocket(&broadcaster, None).await {
-                    error!("Price feed failed: {}", e);
-                }
-            }
-        });
-        info!("Price feed connection started");
-    }
 
     // Server configuration
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
