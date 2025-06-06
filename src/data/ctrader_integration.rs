@@ -1,4 +1,4 @@
-// src/ctrader_integration.rs - cTrader WebSocket integration with zone monitor
+// src/data/ctrader_integration.rs - cTrader WebSocket integration with zone monitor
 use std::env;
 use log;
 use serde_json::json;
@@ -55,7 +55,7 @@ pub async fn connect_to_ctrader_websocket(
         }
     }
 
-    log::info!("📡 [CTRADER] Sent all subscription requests to dummy server");
+    log::info!("📡 [CTRADER] Sent all subscription requests to server");
 
     // Process incoming messages
     let mut message_count = 0;
@@ -131,7 +131,7 @@ async fn process_ctrader_message(
             }
         }
         Some("CONNECTED") => {
-            log::info!("🔌 [CTRADER] Connected to dummy cTrader WebSocket");
+            log::info!("🔌 [CTRADER] Connected to cTrader WebSocket");
         }
         Some("ERROR") => {
             log::error!("❌ [CTRADER] Server error: {:?}", data);

@@ -1,12 +1,13 @@
 // src/realtime_cache_updater.rs - Fixed version with zone monitor integration
+use log::{error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::interval;
-use log::{info, warn, error};
 
 use crate::cache::minimal_zone_cache::MinimalZoneCache;
 use crate::realtime::realtime_zone_monitor::NewRealTimeZoneMonitor;
+use crate::cache::zone_cache_writer::ZoneCacheWriter;
 
 pub struct RealtimeCacheUpdater {
     cache: Arc<Mutex<MinimalZoneCache>>,
@@ -45,7 +46,10 @@ impl RealtimeCacheUpdater {
         *is_running = true;
         drop(is_running);
 
-        info!("🚀 [CACHE_UPDATER] Starting real-time cache updates every {:?}", self.update_interval);
+        info!(
+            "🚀 [CACHE_UPDATER] Starting real-time cache updates every {:?}",
+            self.update_interval
+        );
 
         let cache_clone = Arc::clone(&self.cache);
         let zone_monitor_clone = self.zone_monitor.clone();
@@ -79,17 +83,32 @@ impl RealtimeCacheUpdater {
                             Ok(()) => {
                                 let duration = start_time.elapsed();
                                 let (total, supply, demand) = cache_guard.get_stats();
-                                
+
+                                // ADD THIS: Write updated zones to JSON file
+                                let cache_writer =
+                                    ZoneCacheWriter::new("shared_zones.json".to_string());
+                                if let Err(e) =
+                                    cache_writer.write_zones_from_cache(&*cache_guard).await
+                                {
+                                    error!(
+                                        "❌ [CACHE_UPDATER] Failed to write zones to JSON: {}",
+                                        e
+                                    );
+                                }
+
                                 // Release cache lock before zone monitor sync
                                 drop(cache_guard);
-                                
+
                                 // Sync zone monitor if available
                                 if let Some(monitor) = &zone_monitor_clone {
                                     if let Err(e) = monitor.sync_with_cache().await {
-                                        error!("❌ [CACHE_UPDATER] Zone monitor sync failed: {}", e);
+                                        error!(
+                                            "❌ [CACHE_UPDATER] Zone monitor sync failed: {}",
+                                            e
+                                        );
                                     }
                                 }
-                                
+
                                 info!(
                                     "✅ [CACHE_UPDATER] Update #{} completed in {:.2}s: {} zones ({} supply, {} demand)",
                                     update_count,
@@ -105,12 +124,18 @@ impl RealtimeCacheUpdater {
                         }
                     }
                     Err(_) => {
-                        error!("⏰ [CACHE_UPDATER] Update #{} timeout - cache lock unavailable", update_count);
+                        error!(
+                            "⏰ [CACHE_UPDATER] Update #{} timeout - cache lock unavailable",
+                            update_count
+                        );
                     }
                 }
             }
 
-            info!("🏁 [CACHE_UPDATER] Update loop ended after {} updates", update_count);
+            info!(
+                "🏁 [CACHE_UPDATER] Update loop ended after {} updates",
+                update_count
+            );
         });
 
         Ok(())
@@ -138,17 +163,20 @@ impl RealtimeCacheUpdater {
                 cache_guard.refresh_zones().await?;
                 let duration = start_time.elapsed();
                 let (total, supply, demand) = cache_guard.get_stats();
-                
+
                 // Release cache lock before zone monitor sync
                 drop(cache_guard);
-                
+
                 // Sync zone monitor if available
                 if let Some(monitor) = &self.zone_monitor {
                     if let Err(e) = monitor.sync_with_cache().await {
-                        error!("❌ [CACHE_UPDATER] Manual update zone monitor sync failed: {}", e);
+                        error!(
+                            "❌ [CACHE_UPDATER] Manual update zone monitor sync failed: {}",
+                            e
+                        );
                     }
                 }
-                
+
                 info!(
                     "✅ [CACHE_UPDATER] Manual update completed in {:.2}s: {} zones ({} supply, {} demand)",
                     duration.as_secs_f64(),

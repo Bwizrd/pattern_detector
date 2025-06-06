@@ -220,7 +220,7 @@ impl NewRealTimeZoneMonitor {
                     }
                     None => {
                         // New zone detected
-                        info!("🆕 [NEW_ZONE_MONITOR] New zone detected: {}", zone_id);
+                        debug!("🆕 [NEW_ZONE_MONITOR] New zone detected: {}", zone_id);
 
                         let live_zone = LiveZoneStatus {
                             zone: cache_zone.clone(),
