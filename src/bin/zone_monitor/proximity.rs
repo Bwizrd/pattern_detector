@@ -1,8 +1,8 @@
 // src/bin/zone_monitor/proximity.rs
-// Zone proximity detection logic
+// Simplified proximity detection - state management moved to ZoneStateManager
 
 use crate::types::{PriceUpdate, Zone, ZoneAlert};
-use tracing::{info, debug};
+use tracing::info;
 
 #[derive(Debug)]
 pub struct ProximityDetector {
@@ -11,11 +11,14 @@ pub struct ProximityDetector {
 
 impl ProximityDetector {
     pub fn new(alert_threshold_pips: f64) -> Self {
+        info!("🎯 Proximity detector initialized with {:.1} pip threshold", alert_threshold_pips);
         Self {
             alert_threshold_pips,
         }
     }
 
+    // This is now mainly for backwards compatibility
+    // The real logic is in ZoneStateManager
     pub async fn check_zone_proximity(
         &self,
         price_update: &PriceUpdate,
@@ -41,18 +44,6 @@ impl ProximityDetector {
                     strength: zone.strength,
                     timestamp: chrono::Utc::now(),
                 };
-
-                // Log the proximity alert
-                debug!(
-                    "🎯 ZONE PROXIMITY: {} price {:.5} is {:.1} pips from {} zone at {:.5}-{:.5} (strength: {:.2})",
-                    price_update.symbol,
-                    current_price,
-                    distance_pips,
-                    zone.zone_type,
-                    zone.low,
-                    zone.high,
-                    zone.strength
-                );
 
                 alerts.push(alert);
             }
