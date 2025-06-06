@@ -1,8 +1,10 @@
 // src/bin/zone_monitor/trading_engine.rs
-// Trading execution system for zone-based signals
+// Trading execution system for zone-based signals with real API integration
 
 use crate::types::{PriceUpdate, ZoneAlert};
 use chrono::{Datelike, Timelike};
+use reqwest;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -25,6 +27,7 @@ pub struct Trade {
     pub profit_loss: Option<f64>,
     pub risk_reward_ratio: f64,
     pub timeframe: String,
+    pub ctrader_order_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -40,13 +43,14 @@ pub struct TradingConfig {
     pub min_risk_reward: f64,
     pub trading_start_hour: u8,
     pub trading_end_hour: u8,
+    pub api_bridge_url: String,
 }
 
 impl Default for TradingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            lot_size: 0.01,
+            lot_size: 1000.0,
             stop_loss_pips: 20.0,
             take_profit_pips: 40.0,
             max_daily_trades: 10,
@@ -56,6 +60,7 @@ impl Default for TradingConfig {
             min_risk_reward: 1.5,
             trading_start_hour: 8,
             trading_end_hour: 17,
+            api_bridge_url: "http://localhost:8000".to_string(),
         }
     }
 }
@@ -89,6 +94,30 @@ impl Default for TradingStats {
     }
 }
 
+// API Request/Response structures
+#[derive(Debug, Serialize)]
+struct PlaceOrderRequest {
+    #[serde(rename = "symbolId")]
+    symbol_id: u32,
+    #[serde(rename = "tradeSide")]
+    trade_side: u32, // 1 for buy, 2 for sell
+    volume: f64,
+    #[serde(rename = "stopLoss")]
+    stop_loss: f64,
+    #[serde(rename = "takeProfit")]
+    take_profit: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlaceOrderResponse {
+    success: bool,
+    #[serde(rename = "orderId")]
+    order_id: Option<String>,
+    message: Option<String>,
+    #[serde(rename = "errorCode")]
+    error_code: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct TradingEngine {
     config: Arc<RwLock<TradingConfig>>,
@@ -96,6 +125,8 @@ pub struct TradingEngine {
     trade_history: Arc<RwLock<Vec<Trade>>>,
     stats: Arc<RwLock<TradingStats>>,
     last_reset_day: Arc<RwLock<u32>>,
+    http_client: reqwest::Client,
+    symbol_mappings: HashMap<String, u32>,
 }
 
 impl Clone for TradingEngine {
@@ -106,6 +137,8 @@ impl Clone for TradingEngine {
             trade_history: Arc::clone(&self.trade_history),
             stats: Arc::clone(&self.stats),
             last_reset_day: Arc::clone(&self.last_reset_day),
+            http_client: self.http_client.clone(),
+            symbol_mappings: self.symbol_mappings.clone(),
         }
     }
 }
@@ -118,9 +151,9 @@ impl TradingEngine {
                 .parse()
                 .unwrap_or(false),
             lot_size: std::env::var("TRADING_LOT_SIZE")
-                .unwrap_or_else(|_| "0.01".to_string())
+                .unwrap_or_else(|_| "1000".to_string())
                 .parse()
-                .unwrap_or(0.01),
+                .unwrap_or(1000.0),
             stop_loss_pips: std::env::var("TRADING_STOP_LOSS_PIPS")
                 .unwrap_or_else(|_| "20.0".to_string())
                 .parse()
@@ -138,7 +171,7 @@ impl TradingEngine {
                 .parse()
                 .unwrap_or(2),
             allowed_symbols: std::env::var("TRADING_ALLOWED_SYMBOLS")
-                .unwrap_or_else(|_| "EURUSD,GBPUSD,AUDUSD,USDCAD".to_string())
+                .unwrap_or_else(|_| "EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD,NZDUSD,EURGBP,EURJPY,EURCHF,EURAUD,EURCAD,EURNZD,GBPJPY,GBPCHF,GBPAUD,GBPCAD,GBPNZD,AUDJPY,AUDNZD,AUDCAD,NZDJPY,CADJPY,CHFJPY".to_string())
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect(),
@@ -159,16 +192,47 @@ impl TradingEngine {
                 .unwrap_or_else(|_| "17".to_string())
                 .parse()
                 .unwrap_or(17),
+            api_bridge_url: std::env::var("CTRADER_API_BRIDGE_URL")
+                .unwrap_or_else(|_| "http://localhost:8000".to_string()),
         };
+
+        // Your symbol mappings
+        let mut symbol_mappings = HashMap::new();
+        symbol_mappings.insert("EURUSD_SB".to_string(), 185);
+        symbol_mappings.insert("GBPUSD_SB".to_string(), 199);
+        symbol_mappings.insert("USDJPY_SB".to_string(), 226);
+        symbol_mappings.insert("USDCHF_SB".to_string(), 222);
+        symbol_mappings.insert("AUDUSD_SB".to_string(), 158);
+        symbol_mappings.insert("USDCAD_SB".to_string(), 221);
+        symbol_mappings.insert("NZDUSD_SB".to_string(), 211);
+        symbol_mappings.insert("EURGBP_SB".to_string(), 175);
+        symbol_mappings.insert("EURJPY_SB".to_string(), 177);
+        symbol_mappings.insert("EURCHF_SB".to_string(), 173);
+        symbol_mappings.insert("EURAUD_SB".to_string(), 171);
+        symbol_mappings.insert("EURCAD_SB".to_string(), 172);
+        symbol_mappings.insert("EURNZD_SB".to_string(), 180);
+        symbol_mappings.insert("GBPJPY_SB".to_string(), 192);
+        symbol_mappings.insert("GBPCHF_SB".to_string(), 191);
+        symbol_mappings.insert("GBPAUD_SB".to_string(), 189);
+        symbol_mappings.insert("GBPCAD_SB".to_string(), 190);
+        symbol_mappings.insert("GBPNZD_SB".to_string(), 195);
+        symbol_mappings.insert("AUDJPY_SB".to_string(), 155);
+        symbol_mappings.insert("AUDNZD_SB".to_string(), 156);
+        symbol_mappings.insert("AUDCAD_SB".to_string(), 153);
+        symbol_mappings.insert("NZDJPY_SB".to_string(), 210);
+        symbol_mappings.insert("CADJPY_SB".to_string(), 162);
+        symbol_mappings.insert("CHFJPY_SB".to_string(), 163);
+        symbol_mappings.insert("NAS100_SB".to_string(), 205);
+        symbol_mappings.insert("US500_SB".to_string(), 220);
 
         info!("💰 Trading Engine initialized:");
         info!("   Enabled: {}", config.enabled);
-        info!("   Lot size: {:.2}", config.lot_size);
+        info!("   Lot size: {:.0}", config.lot_size);
         info!("   Stop loss: {:.1} pips", config.stop_loss_pips);
         info!("   Take profit: {:.1} pips", config.take_profit_pips);
         info!("   Max daily trades: {}", config.max_daily_trades);
-        info!("   Allowed symbols: {:?}", config.allowed_symbols);
-        info!("   Allowed timeframes: {:?}", config.allowed_timeframes);
+        info!("   API Bridge: {}", config.api_bridge_url);
+        info!("   Symbols available: {}", symbol_mappings.len());
 
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -176,6 +240,25 @@ impl TradingEngine {
             trade_history: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(TradingStats::default())),
             last_reset_day: Arc::new(RwLock::new(chrono::Utc::now().day())),
+            http_client: reqwest::Client::new(),
+            symbol_mappings,
+        }
+    }
+
+    // Calculate lot size based on symbol type
+    fn get_lot_size_for_symbol(&self, base_symbol: &str, default_lot_size: f64) -> f64 {
+        if base_symbol.contains("JPY") {
+            std::env::var("TRADING_JPY_LOT_SIZE")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100.0)
+        } else if base_symbol.contains("NAS100") || base_symbol.contains("US500") {
+            std::env::var("TRADING_INDEX_LOT_SIZE")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .unwrap_or(10.0)
+        } else {
+            default_lot_size
         }
     }
 
@@ -205,10 +288,13 @@ impl TradingEngine {
             .generate_trade_from_signal(signal, current_price_data, &config)
             .await?;
 
-        // Execute the trade
-        match self.execute_trade(trade).await {
+        drop(config);
+
+        // Execute the trade via API
+        match self.execute_trade_via_api(trade).await {
             Ok(executed_trade) => {
-                info!("✅ Trade executed successfully: {}", executed_trade.id);
+                info!("✅ Trade executed successfully: {} (Order ID: {:?})", 
+                      executed_trade.id, executed_trade.ctrader_order_id);
                 Some(executed_trade)
             }
             Err(e) => {
@@ -220,14 +306,18 @@ impl TradingEngine {
 
     // Check if we can trade based on constraints
     async fn can_trade(&self, signal: &ZoneAlert, config: &TradingConfig) -> bool {
-        // Check symbol allowlist
+        // Check symbol allowlist (signal comes without _SB, config has without _SB)
         if !config.allowed_symbols.contains(&signal.symbol) {
             info!("🚫 Symbol {} not in allowed list", signal.symbol);
             return false;
         }
 
-        // Check timeframe allowlist (when available)
-        // For now, assume all signals are valid since timeframe is "unknown"
+        // Check symbol mapping (need _SB version for mapping)
+        let sb_symbol = format!("{}_SB", signal.symbol);
+        if !self.symbol_mappings.contains_key(&sb_symbol) {
+            warn!("🚫 No symbol mapping found for {}", sb_symbol);
+            return false;
+        }
 
         // Check trading hours
         let now = chrono::Utc::now();
@@ -276,21 +366,21 @@ impl TradingEngine {
         config: &TradingConfig,
     ) -> Option<Trade> {
         let current_price = (price_data.bid + price_data.ask) / 2.0;
+        let sb_symbol = format!("{}_SB", signal.symbol);
+        let symbol_id = *self.symbol_mappings.get(&sb_symbol)?;
 
         // Determine trade direction based on zone type
         let (trade_type, entry_price, stop_loss, take_profit) = match signal.zone_type.as_str() {
             "demand_zone" => {
-                // Price at demand zone - expect bounce up (BUY)
                 let entry = current_price;
-                let sl = entry - (config.stop_loss_pips / 10000.0); // Fixed 20 pips below entry
-                let tp = entry + (config.take_profit_pips / 10000.0); // Fixed 40 pips above entry
+                let sl = entry - (config.stop_loss_pips / 10000.0);
+                let tp = entry + (config.take_profit_pips / 10000.0);
                 ("buy".to_string(), entry, sl, tp)
             }
             "supply_zone" => {
-                // Price at supply zone - expect bounce down (SELL)
                 let entry = current_price;
-                let sl = entry + (config.stop_loss_pips / 10000.0); // Fixed 20 pips above entry
-                let tp = entry - (config.take_profit_pips / 10000.0); // Fixed 40 pips below entry
+                let sl = entry + (config.stop_loss_pips / 10000.0);
+                let tp = entry - (config.take_profit_pips / 10000.0);
                 ("sell".to_string(), entry, sl, tp)
             }
             _ => {
@@ -299,8 +389,10 @@ impl TradingEngine {
             }
         };
 
+        // Calculate lot size for this symbol
+        let lot_size = self.get_lot_size_for_symbol(&signal.symbol, config.lot_size);
+
         // Calculate risk/reward ratio
-        // Calculate risk/reward ratio (should always be 2.0 now)
         let risk = (entry_price - stop_loss).abs() * 10000.0;
         let reward = (take_profit - entry_price).abs() * 10000.0;
         let risk_reward_ratio = if risk > 0.0 { reward / risk } else { 0.0 };
@@ -321,20 +413,23 @@ impl TradingEngine {
             entry_price,
             stop_loss,
             take_profit,
-            lot_size: config.lot_size,
+            lot_size,
             status: "pending".to_string(),
             opened_at: chrono::Utc::now(),
             closed_at: None,
             profit_loss: None,
             risk_reward_ratio,
-            timeframe: "unknown".to_string(), // Will be updated when zone JSON includes timeframes
+            timeframe: "unknown".to_string(),
+            ctrader_order_id: None,
         })
     }
 
-    // Execute trade (simulate for now)
-    async fn execute_trade(&self, mut trade: Trade) -> Result<Trade, String> {
+    // Execute trade via cTrader API
+    async fn execute_trade_via_api(&self, mut trade: Trade) -> Result<Trade, String> {
+        let config = self.config.read().await;
+        
         info!(
-            "🎯 Executing {} trade: {} @ {:.5} (SL: {:.5}, TP: {:.5})",
+            "🚀 Executing {} trade: {} @ {:.5} (SL: {:.5}, TP: {:.5})",
             trade.trade_type.to_uppercase(),
             trade.symbol,
             trade.entry_price,
@@ -342,33 +437,83 @@ impl TradingEngine {
             trade.take_profit
         );
 
-        // Simulate trade execution
-        trade.status = "open".to_string();
+        let trade_side = match trade.trade_type.as_str() {
+            "buy" => 1u32,
+            "sell" => 2u32,
+            _ => return Err("Invalid trade type".to_string()),
+        };
 
-        // Store in active trades
-        {
-            let mut active_trades = self.active_trades.write().await;
-            active_trades.insert(trade.id.clone(), trade.clone());
+        let sb_symbol = format!("{}_SB", trade.symbol);
+        let symbol_id = *self.symbol_mappings.get(&sb_symbol)
+            .ok_or("Symbol mapping not found")?;
+
+        let request = PlaceOrderRequest {
+            symbol_id,
+            trade_side,
+            volume: trade.lot_size,
+            stop_loss: trade.stop_loss,
+            take_profit: trade.take_profit,
+        };
+
+        let url = format!("{}/placeOrder", config.api_bridge_url);
+        
+        info!("🌐 API call: {} with symbol_id={}, trade_side={}, volume={}, SL={:.5}, TP={:.5}", 
+              url, request.symbol_id, request.trade_side, request.volume, request.stop_loss, request.take_profit);
+
+        drop(config);
+
+        // Make API call
+        let response = self.http_client
+            .post(&url)
+            .json(&request)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| format!("API request failed: {}", e))?;
+
+        let response_text = response.text().await
+            .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        info!("📄 API response: {}", response_text);
+
+        let api_response: PlaceOrderResponse = serde_json::from_str(&response_text)
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        if api_response.success {
+            trade.status = "open".to_string();
+            trade.ctrader_order_id = api_response.order_id;
+
+            // Store in active trades
+            {
+                let mut active_trades = self.active_trades.write().await;
+                active_trades.insert(trade.id.clone(), trade.clone());
+            }
+
+            // Update stats
+            {
+                let mut stats = self.stats.write().await;
+                stats.total_trades += 1;
+                stats.open_trades += 1;
+                stats.daily_trades += 1;
+                stats.last_updated = chrono::Utc::now();
+            }
+
+            info!(
+                "✅ Trade opened: {} {} {:.0} lots @ {:.5} (Order ID: {:?})",
+                trade.symbol,
+                trade.trade_type.to_uppercase(),
+                trade.lot_size,
+                trade.entry_price,
+                trade.ctrader_order_id
+            );
+
+            Ok(trade)
+        } else {
+            let error_msg = api_response.message
+                .or(api_response.error_code)
+                .unwrap_or_else(|| "Unknown API error".to_string());
+            Err(error_msg)
         }
-
-        // Update stats
-        {
-            let mut stats = self.stats.write().await;
-            stats.total_trades += 1;
-            stats.open_trades += 1;
-            stats.daily_trades += 1;
-            stats.last_updated = chrono::Utc::now();
-        }
-
-        info!(
-            "✅ Trade opened: {} {} {:.2} lots @ {:.5}",
-            trade.symbol,
-            trade.trade_type.to_uppercase(),
-            trade.lot_size,
-            trade.entry_price
-        );
-
-        Ok(trade)
     }
 
     // Reset daily counter if new day
@@ -401,7 +546,7 @@ impl TradingEngine {
         self.config.read().await.clone()
     }
 
-    // Close trade manually (for testing or SL/TP hit)
+    // Close trade manually
     pub async fn close_trade(
         &self,
         trade_id: &str,
@@ -420,7 +565,6 @@ impl TradingEngine {
             _ => 0.0,
         };
 
-        // Simple P&L calculation (not accounting for lot size multiplier)
         let profit_loss = price_diff * 10000.0; // Convert to pips
 
         trade.status = "closed".to_string();
