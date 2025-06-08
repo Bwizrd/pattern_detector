@@ -11,22 +11,41 @@ use ratatui::{
     Terminal,
 };
 
+use std::{env};
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+
 mod types;
 mod app;
 mod ui;
+#[path = "../zone_monitor/websocket.rs"]
+mod websocket;
 
 use app::App;
-use types::AppPage;
+use types::{AppPage, PriceUpdate}; // Add PriceUpdate
+use websocket::WebSocketClient; // Add this
 use ui::ui;
 
-async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app: App) -> io::Result<()> {
+async fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    price_rx: &mut mpsc::UnboundedReceiver<PriceUpdate>,
+) -> io::Result<()> {
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(1000);
 
     loop {
-        terminal.draw(|f| ui(f, &app))?;
+        // CRITICAL: Process WebSocket price updates FIRST
+        while let Ok(price_update) = price_rx.try_recv() {
+            app.update_price_from_websocket(price_update);
+        }
 
-        let timeout = tick_rate.checked_sub(last_tick.elapsed()).unwrap_or_else(|| Duration::from_secs(0));
+        // Render UI
+        terminal.draw(|f| ui(f, app))?;
+
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or_else(|| Duration::from_secs(0));
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
@@ -64,61 +83,80 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app:
                         KeyCode::Char('n') => {
                             app.switch_page(AppPage::NotificationMonitor);
                         }
-                        // Navigation keys - work on both pages but for different content
-                        KeyCode::Up => {
-                            match app.current_page {
-                                AppPage::Dashboard => {
-                                    app.select_previous_zone();
-                                }
-                                AppPage::NotificationMonitor => {
-                                    app.select_previous_notification();
-                                }
-                            }
+                        // NEW: Add 'p' key for Prices page
+                        KeyCode::Char('p') => {
+                            app.switch_to_prices_page();
                         }
-                        KeyCode::Down => {
-                            match app.current_page {
-                                AppPage::Dashboard => {
-                                    app.select_next_zone();
-                                }
-                                AppPage::NotificationMonitor => {
-                                    app.select_next_notification();
-                                }
+                        // Navigation keys - work on all pages but for different content
+                        KeyCode::Up => match app.current_page {
+                            AppPage::Dashboard => {
+                                app.select_previous_zone();
                             }
-                        }
-                        KeyCode::Char('y') => {
-                            match app.current_page {
-                                AppPage::Dashboard => {
-                                    app.copy_selected_dashboard_zone_id();
-                                }
-                                AppPage::NotificationMonitor => {
-                                    app.copy_selected_zone_id();
-                                }
+                            AppPage::NotificationMonitor => {
+                                app.select_previous_notification();
                             }
-                        }
+                            AppPage::Prices => {
+                                // Could add price selection later
+                            }
+                        },
+                        KeyCode::Down => match app.current_page {
+                            AppPage::Dashboard => {
+                                app.select_next_zone();
+                            }
+                            AppPage::NotificationMonitor => {
+                                app.select_next_notification();
+                            }
+                            AppPage::Prices => {
+                                // Could add price selection later
+                            }
+                        },
+                        KeyCode::Char('y') => match app.current_page {
+                            AppPage::Dashboard => {
+                                app.copy_selected_dashboard_zone_id();
+                            }
+                            AppPage::NotificationMonitor => {
+                                app.copy_selected_zone_id();
+                            }
+                            AppPage::Prices => {
+                                // Could add price copying later
+                            }
+                        },
                         // Strength filter toggle (only on dashboard)
                         KeyCode::Char('s') => {
                             if app.current_page == AppPage::Dashboard {
                                 app.toggle_strength_input_mode();
                             }
                         }
-                        // Timeframe toggles work on both pages
+                        // Timeframe toggles work on dashboard and notifications
                         KeyCode::Char('1') => {
-                            app.toggle_timeframe("5m");
+                            if app.current_page != AppPage::Prices {
+                                app.toggle_timeframe("5m");
+                            }
                         }
                         KeyCode::Char('2') => {
-                            app.toggle_timeframe("15m");
+                            if app.current_page != AppPage::Prices {
+                                app.toggle_timeframe("15m");
+                            }
                         }
                         KeyCode::Char('3') => {
-                            app.toggle_timeframe("30m");
+                            if app.current_page != AppPage::Prices {
+                                app.toggle_timeframe("30m");
+                            }
                         }
                         KeyCode::Char('4') => {
-                            app.toggle_timeframe("1h");
+                            if app.current_page != AppPage::Prices {
+                                app.toggle_timeframe("1h");
+                            }
                         }
                         KeyCode::Char('5') => {
-                            app.toggle_timeframe("4h");
+                            if app.current_page != AppPage::Prices {
+                                app.toggle_timeframe("4h");
+                            }
                         }
                         KeyCode::Char('6') => {
-                            app.toggle_timeframe("1d");
+                            if app.current_page != AppPage::Prices {
+                                app.toggle_timeframe("1d");
+                            }
                         }
                         // Breached toggle only works on dashboard
                         KeyCode::Char('b') => {
@@ -143,6 +181,25 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, mut app:
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
+    // Set up WebSocket connection for live prices
+    let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:8081".to_string());
+    let (price_tx, mut price_rx) = mpsc::unbounded_channel::<PriceUpdate>();
+
+    // Start WebSocket client in background
+    let ws_client = WebSocketClient::new();
+    let ws_url_clone = ws_url.clone();
+    let price_tx_clone = price_tx.clone();
+    
+    tokio::spawn(async move {
+        ws_client.start_connection_loop(ws_url_clone, move |price_update| {
+            if let Err(e) = price_tx_clone.send(price_update) {
+                warn!("Failed to send price update: {}", e);
+            }
+        }).await;
+    });
+
+    info!("🚀 Starting Dashboard with WebSocket connection to {}", ws_url);
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -152,7 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     app.update_data().await;
 
-    let res = run_app(&mut terminal, app).await;
+    let res = run_app(&mut terminal, &mut app, &mut price_rx).await;
 
     disable_raw_mode()?;
     execute!(

@@ -6,6 +6,16 @@ use ratatui::style::Color;
 pub enum AppPage {
     Dashboard,
     NotificationMonitor,
+    Prices,
+}
+
+// Add this struct for WebSocket price updates
+#[derive(Debug, Clone)]
+pub struct PriceUpdate {
+    pub symbol: String,
+    pub bid: f64,
+    pub ask: f64,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
