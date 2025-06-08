@@ -39,6 +39,7 @@ clap = { version = "4.0", features = ["derive"] }
 axum = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+dotenvy = "0.15"
 
 
 [[bin]]

@@ -18,6 +18,7 @@ mod types;
 mod ui;
 #[path = "../zone_monitor/websocket.rs"]
 mod websocket;
+use dotenvy::dotenv;
 
 use app::App;
 use types::{AppPage, PriceUpdate}; // Add PriceUpdate
@@ -190,6 +191,7 @@ async fn run_app<B: ratatui::backend::Backend>(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
+    dotenv().ok();
 
     // Set up WebSocket connection for live prices
     let ws_url = env::var("WS_URL").unwrap_or_else(|_| "ws://127.0.0.1:8081".to_string());
