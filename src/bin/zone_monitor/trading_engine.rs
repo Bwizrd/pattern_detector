@@ -46,6 +46,12 @@ pub struct TradingConfig {
     pub api_bridge_url: String,
 }
 
+#[derive(Debug)]
+pub struct TradeEvaluationResult {
+    pub can_trade: bool,
+    pub rejection_reason: Option<String>,
+}
+
 impl Default for TradingConfig {
     fn default() -> Self {
         Self {
@@ -90,6 +96,43 @@ impl Default for TradingStats {
             win_rate: 0.0,
             daily_trades: 0,
             last_updated: chrono::Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TradeResult {
+    pub trade: Option<Trade>,
+    pub success: bool,
+    pub rejection_reason: Option<String>,
+    pub execution_result: String, // "success", "rejected", "failed"
+}
+
+impl TradeResult {
+    pub fn success(trade: Trade) -> Self {
+        Self {
+            trade: Some(trade),
+            success: true,
+            rejection_reason: None,
+            execution_result: "success".to_string(),
+        }
+    }
+
+    pub fn rejected(reason: String) -> Self {
+        Self {
+            trade: None,
+            success: false,
+            rejection_reason: Some(reason),
+            execution_result: "rejected".to_string(),
+        }
+    }
+
+    pub fn failed(reason: String) -> Self {
+        Self {
+            trade: None,
+            success: false,
+            rejection_reason: Some(reason),
+            execution_result: "failed".to_string(),
         }
     }
 }
@@ -267,56 +310,94 @@ impl TradingEngine {
         &self,
         signal: &ZoneAlert,
         current_price_data: &PriceUpdate,
-    ) -> Option<Trade> {
+    ) -> TradeResult {
         let config = self.config.read().await;
 
         if !config.enabled {
             debug!("💰 Trading disabled, skipping signal");
-            return None;
+            return TradeResult::rejected("trading_disabled".to_string());
         }
 
         // Reset daily counter if new day
         self.reset_daily_counter_if_needed().await;
 
-        // Check trading constraints
-        if !self.can_trade(&signal, &config).await {
-            return None;
+        // Check trading constraints with detailed reasons
+        let evaluation = self.can_trade_with_reason(&signal, &config).await;
+        if !evaluation.can_trade {
+            return TradeResult::rejected(
+                evaluation
+                    .rejection_reason
+                    .unwrap_or_else(|| "unknown_constraint".to_string()),
+            );
         }
 
-        // Generate trade from signal
-        let trade = self
+        // Generate trade from signal - now with better error handling
+        let trade = match self
             .generate_trade_from_signal(signal, current_price_data, &config)
-            .await?;
+            .await
+        {
+            Ok(trade) => trade,
+            Err(e) => {
+                return TradeResult::rejected(e);
+            }
+        };
 
         drop(config);
 
         // Execute the trade via API
         match self.execute_trade_via_api(trade).await {
             Ok(executed_trade) => {
-                info!("✅ Trade executed successfully: {} (Order ID: {:?})", 
-                      executed_trade.id, executed_trade.ctrader_order_id);
-                Some(executed_trade)
+                info!(
+                    "✅ Trade executed successfully: {} (Order ID: {:?})",
+                    executed_trade.id, executed_trade.ctrader_order_id
+                );
+                TradeResult::success(executed_trade)
             }
             Err(e) => {
                 error!("❌ Failed to execute trade: {}", e);
-                None
+
+                // Categorize the error for better rejection reasons
+                let rejection_reason = if e.contains("Error connecting to trading service") {
+                    "api_connection_error".to_string()
+                } else if e.contains("timeout") {
+                    "api_timeout".to_string()
+                } else if e.contains("UNKNOWN_ERROR") {
+                    "api_unknown_error".to_string()
+                } else if e.contains("insufficient") {
+                    "insufficient_funds".to_string()
+                } else if e.contains("market closed") || e.contains("trading hours") {
+                    "market_closed".to_string()
+                } else {
+                    format!("api_error_{}", e.replace(" ", "_").to_lowercase())
+                };
+
+                TradeResult::failed(rejection_reason)
             }
         }
     }
-
     // Check if we can trade based on constraints
-    async fn can_trade(&self, signal: &ZoneAlert, config: &TradingConfig) -> bool {
+    async fn can_trade_with_reason(
+        &self,
+        signal: &ZoneAlert,
+        config: &TradingConfig,
+    ) -> TradeEvaluationResult {
         // Check symbol allowlist (signal comes without _SB, config has without _SB)
         if !config.allowed_symbols.contains(&signal.symbol) {
             info!("🚫 Symbol {} not in allowed list", signal.symbol);
-            return false;
+            return TradeEvaluationResult {
+                can_trade: false,
+                rejection_reason: Some(format!("symbol_not_allowed_{}", signal.symbol)),
+            };
         }
 
         // Check symbol mapping (need _SB version for mapping)
         let sb_symbol = format!("{}_SB", signal.symbol);
         if !self.symbol_mappings.contains_key(&sb_symbol) {
             warn!("🚫 No symbol mapping found for {}", sb_symbol);
-            return false;
+            return TradeEvaluationResult {
+                can_trade: false,
+                rejection_reason: Some(format!("symbol_mapping_missing_{}", signal.symbol)),
+            };
         }
 
         // Check trading hours
@@ -327,7 +408,10 @@ impl TradingEngine {
                 "🚫 Outside trading hours: {} (allowed: {}:00-{}:00)",
                 hour, config.trading_start_hour, config.trading_end_hour
             );
-            return false;
+            return TradeEvaluationResult {
+                can_trade: false,
+                rejection_reason: Some(format!("outside_trading_hours_{}h", hour)),
+            };
         }
 
         // Check daily limits
@@ -337,7 +421,13 @@ impl TradingEngine {
                 "🚫 Daily trade limit reached: {}/{}",
                 stats.daily_trades, config.max_daily_trades
             );
-            return false;
+            return TradeEvaluationResult {
+                can_trade: false,
+                rejection_reason: Some(format!(
+                    "daily_limit_reached_{}_of_{}",
+                    stats.daily_trades, config.max_daily_trades
+                )),
+            };
         }
 
         // Check per-symbol limits
@@ -352,10 +442,19 @@ impl TradingEngine {
                 "🚫 Max trades per symbol reached for {}: {}/{}",
                 signal.symbol, symbol_count, config.max_trades_per_symbol
             );
-            return false;
+            return TradeEvaluationResult {
+                can_trade: false,
+                rejection_reason: Some(format!(
+                    "symbol_limit_reached_{}_{}_of_{}",
+                    signal.symbol, symbol_count, config.max_trades_per_symbol
+                )),
+            };
         }
 
-        true
+        TradeEvaluationResult {
+            can_trade: true,
+            rejection_reason: None,
+        }
     }
 
     // Generate trade from signal
@@ -364,10 +463,13 @@ impl TradingEngine {
         signal: &ZoneAlert,
         price_data: &PriceUpdate,
         config: &TradingConfig,
-    ) -> Option<Trade> {
+    ) -> Result<Trade, String> {
         let current_price = (price_data.bid + price_data.ask) / 2.0;
         let sb_symbol = format!("{}_SB", signal.symbol);
-        let symbol_id = *self.symbol_mappings.get(&sb_symbol)?;
+        let symbol_id = *self
+            .symbol_mappings
+            .get(&sb_symbol)
+            .ok_or_else(|| format!("symbol_mapping_not_found_{}", signal.symbol))?;
 
         // Determine trade direction based on zone type
         let (trade_type, entry_price, stop_loss, take_profit) = match signal.zone_type.as_str() {
@@ -384,8 +486,7 @@ impl TradingEngine {
                 ("sell".to_string(), entry, sl, tp)
             }
             _ => {
-                warn!("🚫 Unknown zone type: {}", signal.zone_type);
-                return None;
+                return Err(format!("unknown_zone_type_{}", signal.zone_type));
             }
         };
 
@@ -398,14 +499,13 @@ impl TradingEngine {
         let risk_reward_ratio = if risk > 0.0 { reward / risk } else { 0.0 };
 
         if risk_reward_ratio < config.min_risk_reward {
-            info!(
-                "🚫 Risk/reward too low: {:.2} < {:.2}",
+            return Err(format!(
+                "risk_reward_too_low_{:.2}_min_{:.2}",
                 risk_reward_ratio, config.min_risk_reward
-            );
-            return None;
+            ));
         }
 
-        Some(Trade {
+        Ok(Trade {
             id: Uuid::new_v4().to_string(),
             zone_id: signal.zone_id.clone(),
             symbol: signal.symbol.clone(),
@@ -427,7 +527,7 @@ impl TradingEngine {
     // Execute trade via cTrader API
     async fn execute_trade_via_api(&self, mut trade: Trade) -> Result<Trade, String> {
         let config = self.config.read().await;
-        
+
         info!(
             "🚀 Executing {} trade: {} @ {:.5} (SL: {:.5}, TP: {:.5})",
             trade.trade_type.to_uppercase(),
@@ -444,7 +544,9 @@ impl TradingEngine {
         };
 
         let sb_symbol = format!("{}_SB", trade.symbol);
-        let symbol_id = *self.symbol_mappings.get(&sb_symbol)
+        let symbol_id = *self
+            .symbol_mappings
+            .get(&sb_symbol)
             .ok_or("Symbol mapping not found")?;
 
         let request = PlaceOrderRequest {
@@ -456,14 +558,22 @@ impl TradingEngine {
         };
 
         let url = format!("{}/placeOrder", config.api_bridge_url);
-        
-        info!("🌐 API call: {} with symbol_id={}, trade_side={}, volume={}, SL={:.5}, TP={:.5}", 
-              url, request.symbol_id, request.trade_side, request.volume, request.stop_loss, request.take_profit);
+
+        info!(
+            "🌐 API call: {} with symbol_id={}, trade_side={}, volume={}, SL={:.5}, TP={:.5}",
+            url,
+            request.symbol_id,
+            request.trade_side,
+            request.volume,
+            request.stop_loss,
+            request.take_profit
+        );
 
         drop(config);
 
         // Make API call
-        let response = self.http_client
+        let response = self
+            .http_client
             .post(&url)
             .json(&request)
             .timeout(std::time::Duration::from_secs(30))
@@ -471,7 +581,9 @@ impl TradingEngine {
             .await
             .map_err(|e| format!("API request failed: {}", e))?;
 
-        let response_text = response.text().await
+        let response_text = response
+            .text()
+            .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
         info!("📄 API response: {}", response_text);
@@ -509,7 +621,8 @@ impl TradingEngine {
 
             Ok(trade)
         } else {
-            let error_msg = api_response.message
+            let error_msg = api_response
+                .message
                 .or(api_response.error_code)
                 .unwrap_or_else(|| "Unknown API error".to_string());
             Err(error_msg)

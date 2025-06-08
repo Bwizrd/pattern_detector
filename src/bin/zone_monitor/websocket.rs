@@ -212,7 +212,7 @@ impl WebSocketClient {
                         };
 
                         if is_new_bar {
-                            info!("🆕 [CTRADER] New bar: {} {} {} @ {:.5}", symbol_id, clean_symbol, timeframe, close);
+                            debug!("🆕 [CTRADER] New bar: {} {} {} @ {:.5}", symbol_id, clean_symbol, timeframe, close);
                         } else {
                             debug!("💹 [CTRADER] Price update: {} {} @ {:.5}", clean_symbol, timeframe, close);
                         }

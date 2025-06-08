@@ -701,27 +701,22 @@ fn render_trading_rules_panel(f: &mut Frame, area: Rect) {
             Span::styled("Quality Filters:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
-            Span::styled("  Max Touch Count: ", Style::default().fg(Color::White)),
+            Span::styled("  Touch: ≤", Style::default().fg(Color::White)),
             Span::styled(format!("{}", config.max_touch_count), Style::default().fg(Color::Gray)),
-            Span::styled(" | Trading Distance: ", Style::default().fg(Color::White)),
-            Span::styled(format!("≤{:.1} pips", config.trading_threshold_pips), Style::default().fg(Color::Magenta)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Proximity Distance: ", Style::default().fg(Color::White)),
-            Span::styled(format!("≤{:.1} pips", config.proximity_threshold_pips), Style::default().fg(Color::Yellow)),
+            Span::styled(" | Trade Dist: ≤", Style::default().fg(Color::White)),
+            Span::styled(format!("{:.1}p", config.trading_threshold_pips), Style::default().fg(Color::Magenta)),
+            Span::styled(" | Prox Dist: ≤", Style::default().fg(Color::White)),
+            Span::styled(format!("{:.1}p", config.proximity_threshold_pips), Style::default().fg(Color::Yellow)),
             if config.min_zone_strength > 0.0 {
-                Span::styled(format!(" | Min Strength: {:.0}", config.min_zone_strength), Style::default().fg(Color::Blue))
+                Span::styled(format!(" | Str: ≥{:.0}", config.min_zone_strength), Style::default().fg(Color::Blue))
             } else {
-                Span::styled(" | Min Strength: Disabled", Style::default().fg(Color::Gray))
+                Span::styled(" | Str: Off", Style::default().fg(Color::Gray))
             },
         ]),
         Line::from(""),
         
         Line::from(vec![
-            Span::styled("Allowed Timeframes:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(vec![
-            Span::styled("  ", Style::default()),
+            Span::styled("Timeframes: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::styled(config.allowed_timeframes.join(", "), Style::default().fg(Color::Yellow)),
         ]),
         Line::from(""),
@@ -732,19 +727,14 @@ fn render_trading_rules_panel(f: &mut Frame, area: Rect) {
         ]),
     ];
 
-    // Show first few symbols to give an idea
-    let symbols_preview = if config.allowed_symbols.len() > 8 {
-        format!("  {}... +{} more", 
-            config.allowed_symbols[..8].join(", "),
-            config.allowed_symbols.len() - 8
-        )
-    } else {
-        format!("  {}", config.allowed_symbols.join(", "))
-    };
-    
-    lines.push(Line::from(vec![
-        Span::styled(symbols_preview, Style::default().fg(Color::Gray)),
-    ]));
+    // Show ALL symbols in a more compact format - more symbols per line
+    let symbols_per_line = 12; // More symbols per line to fit in available space
+    for chunk in config.allowed_symbols.chunks(symbols_per_line) {
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(chunk.join(", "), Style::default().fg(Color::Gray)),
+        ]));
+    }
 
     let rules_text = Text::from(lines);
 

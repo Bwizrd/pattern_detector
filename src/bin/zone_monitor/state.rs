@@ -1,23 +1,26 @@
 // src/bin/zone_monitor/state.rs
 // Core state management with zone state tracking, trading, and CSV logging
 
+use crate::csv_logger::CsvLogger;
+use crate::notifications::NotificationManager;
 use crate::proximity::ProximityDetector;
+use crate::telegram_notifier::TelegramNotifier;
+use crate::trading_engine::TradeResult;
+use crate::trading_engine::TradingEngine;
 use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
 use crate::websocket::WebSocketClient;
-use crate::notifications::NotificationManager;
+use crate::zone_state_manager::ProcessResult;
 use crate::zone_state_manager::ZoneStateManager;
-use crate::trading_engine::TradingEngine;
-use crate::csv_logger::CsvLogger;
-use crate::telegram_notifier::TelegramNotifier;
+use chrono::Timelike;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
-use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
-use tokio::fs;
-use crate::zone_state_manager::ProcessResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedNotification {
@@ -32,6 +35,31 @@ pub struct SharedNotification {
     pub distance_pips: f64,
     pub strength: f64,
     pub touch_count: i32,
+
+    // These are new.
+    pub trade_attempted: Option<bool>, // Was a trade attempt made?
+    pub trade_executed: Option<bool>,  // Was the trade successfully executed?
+    pub execution_result: Option<String>, // "success", "failed", "rejected"
+    pub rejection_reason: Option<String>, // "daily_limit", "symbol_limit", "api_error", "rule_failed"
+    pub ctrader_order_id: Option<String>, // Order ID from cTrader
+    pub attempted_at: Option<DateTime<Utc>>, // When the trade attempt was made
+
+    // NEW: Filtering and notification status fields
+    pub telegram_sent: Option<bool>,     // Was this sent to Telegram?
+    pub telegram_filtered: Option<bool>, // Was this filtered from Telegram?
+    pub telegram_filter_reason: Option<String>, // Why was it filtered?
+    pub telegram_response_code: Option<u16>, // HTTP response code from Telegram
+    pub telegram_error: Option<String>,  // Error message if Telegram failed
+
+    // Trading rule evaluation (for transparency)
+    pub passes_symbol_filter: bool,       // Is symbol allowed?
+    pub passes_timeframe_filter: bool,    // Is timeframe allowed?
+    pub passes_touch_count_filter: bool,  // Touch count within limits?
+    pub passes_trading_hours: bool,       // Within trading hours?
+    pub passes_daily_limit: bool,         // Under daily trade limit?
+    pub passes_symbol_limit: bool,        // Under per-symbol limit?
+    pub risk_reward_ratio: Option<f64>,   // Calculated R:R ratio
+    pub passes_risk_reward: Option<bool>, // Meets minimum R:R?
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,8 +86,8 @@ pub struct MonitorState {
 
 impl MonitorState {
     pub fn new(cache_file_path: String) -> Self {
-        let websocket_url = std::env::var("PRICE_WS_URL")
-            .unwrap_or_else(|_| "ws://localhost:8083".to_string());
+        let websocket_url =
+            std::env::var("PRICE_WS_URL").unwrap_or_else(|_| "ws://localhost:8083".to_string());
 
         // Get proximity threshold for the detector (this will be deprecated)
         let proximity_threshold = std::env::var("PROXIMITY_THRESHOLD_PIPS")
@@ -96,10 +124,10 @@ impl MonitorState {
         // Test notifications if configured
         if self.notification_manager.is_configured() {
             info!("🧪 Testing notification system...");
-            
+
             // Play startup sound
             self.notification_manager.play_startup_sound().await;
-            
+
             let test_result = self.notification_manager.send_test_notification().await;
             if test_result {
                 info!("✅ Notification system test successful");
@@ -155,10 +183,10 @@ impl MonitorState {
 
     async fn start_zone_reset_task(&self) {
         let zone_state_manager = Arc::clone(&self.zone_state_manager);
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(300)); // Check every 5 minutes
-            
+
             loop {
                 interval.tick().await;
                 zone_state_manager.check_and_reset_expired_zones().await;
@@ -187,10 +215,10 @@ impl MonitorState {
 
     async fn start_notification_cleanup_task(&self) {
         let zone_state_manager = Arc::clone(&self.zone_state_manager);
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Clean up every hour
-            
+
             loop {
                 interval.tick().await;
                 zone_state_manager.cleanup_old_states(7).await; // Clean up states older than 7 days
@@ -230,7 +258,7 @@ impl MonitorState {
                 {
                     let mut recent_alerts = self.recent_alerts.write().await;
                     recent_alerts.push(alert.clone());
-                    
+
                     // Keep only the last 50 alerts
                     let len = recent_alerts.len();
                     if len > 50 {
@@ -247,54 +275,225 @@ impl MonitorState {
                 }
 
                 // Send proximity notification (sound)
-                self.notification_manager.notify_zone_proximity(&alert).await;
+                self.notification_manager
+                    .notify_zone_proximity(&alert)
+                    .await;
             }
 
             // Handle trading signals (when price gets close enough to trade)
             for signal in result.trading_signals {
-                info!("🎯 TRADING SIGNAL: {} {} zone @ {:.1} pips - READY TO TRADE!", 
-                      signal.symbol, signal.zone_type, signal.distance_pips);
-                
+                info!(
+                    "🎯 TRADING SIGNAL: {} {} zone @ {:.1} pips - READY TO TRADE!",
+                    signal.symbol, signal.zone_type, signal.distance_pips
+                );
+
                 // Log to CSV before attempting trade
-                self.csv_logger.log_trading_signal(&signal, "SIGNAL_GENERATED").await;
-                
-                // Send to Telegram
-                if let Err(e) = self.telegram_notifier.send_trading_signal(&signal, "SIGNAL_GENERATED").await {
-                    error!("Failed to send Telegram trading signal: {}", e);
-                }
-                
-                // Execute trade through trading engine
-                if let Some(trade) = self.trading_engine.evaluate_and_execute_trade(&signal, &price_update).await {
-                    info!("💰 Trade executed: {} {} {:.2} lots @ {:.5}", 
-                          trade.symbol, trade.trade_type.to_uppercase(), trade.lot_size, trade.entry_price);
-                    
-                    // Log successful execution
-                    self.csv_logger.log_trading_signal(&signal, "TRADE_EXECUTED").await;
-                    
-                    // Send to Telegram
-                    if let Err(e) = self.telegram_notifier.send_trading_signal(&signal, "TRADE_EXECUTED").await {
-                        error!("Failed to send Telegram trade execution: {}", e);
+                self.csv_logger
+                    .log_trading_signal(&signal, "SIGNAL_GENERATED")
+                    .await;
+
+                // PRE-CHECK: Determine if we should even attempt the trade based on basic rules
+                let should_attempt_trade = {
+                    let trading_config = self.trading_engine.get_config().await;
+
+                    // Check basic rules that would prevent trade attempt
+                    let symbol_allowed = trading_config.allowed_symbols.contains(&signal.symbol);
+                    let timeframe_allowed = trading_config
+                        .allowed_timeframes
+                        .contains(&signal.timeframe);
+                    let max_touch_count = std::env::var("MAX_TOUCH_COUNT_FOR_TRADING")
+                        .unwrap_or_else(|_| "3".to_string())
+                        .parse::<i32>()
+                        .unwrap_or(3);
+                    let touch_count_ok = signal.touch_count <= max_touch_count;
+
+                    symbol_allowed && timeframe_allowed && touch_count_ok
+                };
+
+                if should_attempt_trade {
+                    info!(
+                        "✅ All pre-checks passed for {} - attempting trade",
+                        signal.symbol
+                    );
+
+                    // Execute trade through trading engine - get detailed result
+                    let trade_result = self
+                        .trading_engine
+                        .evaluate_and_execute_trade(&signal, &price_update)
+                        .await;
+
+                    if trade_result.success {
+                        if let Some(trade) = trade_result.trade {
+                            info!(
+                                "💰 Trade executed: {} {} {:.2} lots @ {:.5}",
+                                trade.symbol,
+                                trade.trade_type.to_uppercase(),
+                                trade.lot_size,
+                                trade.entry_price
+                            );
+
+                            // Log successful execution
+                            self.csv_logger
+                                .log_trading_signal(&signal, "TRADE_EXECUTED")
+                                .await;
+
+                            // Send to Telegram and track result
+                            let telegram_result = match self
+                                .telegram_notifier
+                                .send_trading_signal(&signal, "TRADE_EXECUTED")
+                                .await
+                            {
+                                Ok(_) => {
+                                    info!("📱 Trading signal sent to Telegram: TRADE_EXECUTED {} {} @ {:.5}", 
+                      signal.symbol, signal.zone_type, signal.current_price);
+                                    "sent"
+                                }
+                                Err(e) => {
+                                    error!("Failed to send Telegram trade execution: {}", e);
+                                    "send_failed"
+                                }
+                            };
+
+                            // Save to JSON with complete status
+                            self.save_trading_signal_with_status(
+                                &signal,
+                                true, // trade_attempted
+                                true, // trade_executed
+                                Some(trade_result.execution_result),
+                                None, // no rejection reason for successful trades
+                                trade.ctrader_order_id,
+                                telegram_result.to_string(),
+                            )
+                            .await;
+
+                            // IMPORTANT: Only mark zone as traded AFTER successful execution
+                            self.zone_state_manager
+                                .mark_zone_as_traded(&signal.zone_id, &signal.symbol)
+                                .await;
+                        }
+                    } else {
+                        // Trade was rejected or failed
+                        let rejection_reason = trade_result
+                            .rejection_reason
+                            .clone() // <-- Add .clone() here
+                            .unwrap_or_else(|| "unknown_error".to_string());
+
+                        info!(
+                            "🚫 Trade {} for zone {} - reason: {}",
+                            trade_result.execution_result, signal.zone_id, rejection_reason
+                        );
+
+                        // Log rejection/failure
+                        self.csv_logger
+                            .log_trading_signal(
+                                &signal,
+                                &trade_result.execution_result.to_uppercase(),
+                            )
+                            .await;
+
+                        // Send to Telegram (for transparency) and track result
+                        let telegram_status_msg = match trade_result.execution_result.as_str() {
+                            "rejected" => "TRADE_REJECTED",
+                            "failed" => "TRADE_FAILED",
+                            _ => "TRADE_ERROR",
+                        };
+
+                        let telegram_result = match self
+                            .telegram_notifier
+                            .send_trading_signal(&signal, telegram_status_msg)
+                            .await
+                        {
+                            Ok(_) => {
+                                info!(
+                                    "📱 Trading signal sent to Telegram: {} {} {} @ {:.5}",
+                                    telegram_status_msg,
+                                    signal.symbol,
+                                    signal.zone_type,
+                                    signal.current_price
+                                );
+                                "sent"
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Failed to send Telegram trade {}: {}",
+                                    trade_result.execution_result, e
+                                );
+                                "send_failed"
+                            }
+                        };
+
+                        // Save to JSON with failure status
+                        self.save_trading_signal_with_status(
+                            &signal,
+                            true,  // trade_attempted
+                            false, // trade_executed
+                            Some(trade_result.execution_result),
+                            trade_result.rejection_reason, // <-- Use the original here (it's moved but that's fine)
+                            None,                          // no order ID for failed trades
+                            telegram_result.to_string(),
+                        )
+                        .await;
                     }
-                    
-                    // IMPORTANT: Only mark zone as traded AFTER successful execution
-                    self.zone_state_manager.mark_zone_as_traded(&signal.zone_id, &signal.symbol).await;
                 } else {
-                    info!("🚫 Trade rejected for zone {} - zone remains in ProximityAlerted state", signal.zone_id);
-                    
-                    // Log rejection
-                    self.csv_logger.log_trading_signal(&signal, "TRADE_REJECTED").await;
-                    
-                    // Send to Telegram
-                    if let Err(e) = self.telegram_notifier.send_trading_signal(&signal, "TRADE_REJECTED").await {
-                        error!("Failed to send Telegram trade rejection: {}", e);
+                    // Trade attempt was not made due to basic rule violations - determine why
+                    let trading_config = self.trading_engine.get_config().await;
+
+                    let mut rejection_reasons = Vec::new();
+
+                    if !trading_config.allowed_symbols.contains(&signal.symbol) {
+                        rejection_reasons.push(format!("symbol_not_allowed_{}", signal.symbol));
                     }
+
+                    if !trading_config
+                        .allowed_timeframes
+                        .contains(&signal.timeframe)
+                    {
+                        rejection_reasons
+                            .push(format!("timeframe_not_allowed_{}", signal.timeframe));
+                    }
+
+                    let max_touch_count = std::env::var("MAX_TOUCH_COUNT_FOR_TRADING")
+                        .unwrap_or_else(|_| "3".to_string())
+                        .parse::<i32>()
+                        .unwrap_or(3);
+
+                    if signal.touch_count > max_touch_count {
+                        rejection_reasons.push(format!(
+                            "touch_count_too_high_{}_{}",
+                            signal.touch_count, max_touch_count
+                        ));
+                    }
+
+                    let rejection_reason = rejection_reasons.join(", ");
+
+                    info!(
+                        "🚫 Trade NOT ATTEMPTED for zone {} - reason: {}",
+                        signal.zone_id, rejection_reason
+                    );
+
+                    // Log that trade was not attempted
+                    self.csv_logger
+                        .log_trading_signal(&signal, "TRADE_NOT_ATTEMPTED")
+                        .await;
+
+                    // Save to JSON with not attempted status
+                    self.save_trading_signal_with_status(
+                        &signal,
+                        false, // trade_attempted
+                        false, // trade_executed
+                        Some("not_attempted".to_string()),
+                        Some(rejection_reason),
+                        None, // no order ID
+                        "filtered".to_string(),
+                    )
+                    .await;
                 }
-                
-                // Store the trading signal as an alert too
+
+                // Store the trading signal as an alert too (for web interface)
                 {
                     let mut recent_alerts = self.recent_alerts.write().await;
                     recent_alerts.push(signal.clone());
-                    
+
                     let len = recent_alerts.len();
                     if len > 50 {
                         recent_alerts.drain(0..len - 50);
@@ -343,7 +542,7 @@ impl MonitorState {
     pub async fn get_cooldown_stats(&self) -> serde_json::Value {
         let zone_stats = self.zone_state_manager.get_zone_stats().await;
         let thresholds = self.zone_state_manager.get_thresholds();
-        
+
         serde_json::json!({
             "zone_stats": zone_stats,
             "proximity_threshold_pips": thresholds.0,
@@ -352,13 +551,19 @@ impl MonitorState {
     }
 
     // Check zone cooldown status - now returns zone state info
-    pub async fn get_zone_cooldown_status(&self, zone_id: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub async fn get_zone_cooldown_status(
+        &self,
+        zone_id: &str,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
         let state_info = self.zone_state_manager.get_zone_state_info(zone_id).await;
         state_info.last_proximity_alert
     }
 
     // Zone state management methods
-    pub async fn get_zone_state_info(&self, zone_id: &str) -> crate::zone_state_manager::ZoneStateInfo {
+    pub async fn get_zone_state_info(
+        &self,
+        zone_id: &str,
+    ) -> crate::zone_state_manager::ZoneStateInfo {
         self.zone_state_manager.get_zone_state_info(zone_id).await
     }
 
@@ -391,57 +596,122 @@ impl MonitorState {
         self.trading_engine.get_config().await
     }
 
-    pub async fn close_trade(&self, trade_id: &str, close_price: f64, reason: &str) -> Result<crate::trading_engine::Trade, String> {
-        self.trading_engine.close_trade(trade_id, close_price, reason).await
+    pub async fn close_trade(
+        &self,
+        trade_id: &str,
+        close_price: f64,
+        reason: &str,
+    ) -> Result<crate::trading_engine::Trade, String> {
+        self.trading_engine
+            .close_trade(trade_id, close_price, reason)
+            .await
     }
 
-     pub async fn save_notifications_to_shared_file(&self, new_notifications: &[ZoneAlert], notification_type: &str) {
+    pub async fn save_notifications_to_shared_file(
+        &self,
+        new_notifications: &[ZoneAlert],
+        notification_type: &str,
+    ) {
         let notifications_file = "shared_notifications.json";
-        const MAX_NOTIFICATIONS: usize = 100; // Keep last 100 notifications
-        
+        const MAX_NOTIFICATIONS: usize = 100;
+
         // Read existing notifications or create new file
         let mut shared_file = match fs::read_to_string(notifications_file).await {
-            Ok(content) => {
-                serde_json::from_str::<SharedNotificationsFile>(&content)
-                    .unwrap_or_else(|_| SharedNotificationsFile {
-                        last_updated: chrono::Utc::now(),
-                        notifications: VecDeque::new(),
-                    })
-            }
+            Ok(content) => serde_json::from_str::<SharedNotificationsFile>(&content)
+                .unwrap_or_else(|_| SharedNotificationsFile {
+                    last_updated: chrono::Utc::now(),
+                    notifications: VecDeque::new(),
+                }),
             Err(_) => SharedNotificationsFile {
                 last_updated: chrono::Utc::now(),
                 notifications: VecDeque::new(),
-            }
+            },
         };
-        
-        // Add new notifications
+
+        // Process each notification with full evaluation
         for alert in new_notifications {
-            let action = if alert.zone_type.contains("supply") { "SELL" } else { "BUY" };
-            
-            let shared_notification = SharedNotification {
-                id: format!("{}_{}", alert.zone_id, alert.timestamp.timestamp_millis()),
-                timestamp: alert.timestamp,
-                symbol: alert.symbol.clone(),
-                timeframe: alert.timeframe.clone(),
-                action: action.to_string(),
-                price: alert.current_price,
-                zone_id: alert.zone_id.clone(),
-                zone_type: notification_type.to_string(),
-                distance_pips: alert.distance_pips,
-                strength: alert.strength,
-                touch_count: alert.touch_count,
+            let mut notification = self
+                .create_comprehensive_notification(alert, notification_type)
+                .await;
+
+            // Determine if this should be sent to Telegram based on type and rules
+            let should_send_to_telegram = match notification_type {
+                "proximity_alert" => {
+                    // For proximity alerts: only send if ALL trading rules pass
+                    // (except daily and symbol limits which user wants to see)
+                    notification.passes_symbol_filter
+                        && notification.passes_timeframe_filter
+                        && notification.passes_touch_count_filter
+                        && notification.passes_trading_hours
+                }
+                "trading_signal" => {
+                    // For trading signals: only send if trade was actually attempted
+                    // (will be updated later when trade is processed)
+                    false // Initially false, will be updated after trade attempt
+                }
+                _ => false,
             };
-            
-            shared_file.notifications.push_front(shared_notification);
+
+            if should_send_to_telegram {
+                // Send to Telegram and capture result
+                match notification_type {
+                    "proximity_alert" => {
+                        match self.telegram_notifier.send_proximity_alert(alert).await {
+                            Ok(_) => {
+                                notification.telegram_sent = Some(true);
+                                notification.telegram_response_code = Some(200);
+                                // Assume success
+                            }
+                            Err(e) => {
+                                notification.telegram_sent = Some(false);
+                                notification.telegram_error = Some(e.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            } else {
+                // Determine why it was filtered
+                notification.telegram_filtered = Some(true);
+                notification.telegram_sent = Some(false);
+
+                let filter_reasons = match notification_type {
+                    "proximity_alert" => {
+                        let mut reasons = Vec::new();
+                        if !notification.passes_symbol_filter {
+                            reasons.push(format!("symbol_not_allowed_{}", notification.symbol));
+                        }
+                        if !notification.passes_timeframe_filter {
+                            reasons
+                                .push(format!("timeframe_not_allowed_{}", notification.timeframe));
+                        }
+                        if !notification.passes_touch_count_filter {
+                            reasons
+                                .push(format!("touch_count_too_high_{}", notification.touch_count));
+                        }
+                        if !notification.passes_trading_hours {
+                            let hour = chrono::Utc::now().hour();
+                            reasons.push(format!("outside_trading_hours_{}h", hour));
+                        }
+                        reasons.join(", ")
+                    }
+                    "trading_signal" => "awaiting_trade_attempt".to_string(),
+                    _ => "unknown".to_string(),
+                };
+
+                notification.telegram_filter_reason = Some(filter_reasons);
+            }
+
+            shared_file.notifications.push_front(notification);
         }
-        
+
         // Keep only the most recent notifications
         while shared_file.notifications.len() > MAX_NOTIFICATIONS {
             shared_file.notifications.pop_back();
         }
-        
+
         shared_file.last_updated = chrono::Utc::now();
-        
+
         // Write to file
         if let Ok(json_content) = serde_json::to_string_pretty(&shared_file) {
             if let Err(e) = fs::write(notifications_file, json_content).await {
@@ -449,15 +719,304 @@ impl MonitorState {
             }
         }
     }
-    
+
+    // New method to update trading execution status for existing notifications
+    pub async fn update_notification_trading_status(
+        &self,
+        zone_id: &str,
+        trade_attempted: bool,
+        trade_executed: bool,
+        execution_result: Option<String>,
+        rejection_reason: Option<String>,
+        ctrader_order_id: Option<String>,
+        telegram_status: Option<String>, // "sent", "filtered", "attempted" for trading signals
+    ) {
+        let notifications_file = "shared_notifications.json";
+
+        // Read existing notifications
+        let mut shared_file = match fs::read_to_string(notifications_file).await {
+            Ok(content) => match serde_json::from_str::<SharedNotificationsFile>(&content) {
+                Ok(file) => file,
+                Err(e) => {
+                    tracing::error!("Failed to parse notifications file: {}", e);
+                    return;
+                }
+            },
+            Err(e) => {
+                tracing::error!("Failed to read notifications file: {}", e);
+                return;
+            }
+        };
+
+        let now = chrono::Utc::now();
+        let mut updated = false;
+
+        // Find and update the most recent trading_signal notification for this zone
+        for notification in shared_file.notifications.iter_mut() {
+            if notification.zone_id == zone_id && notification.zone_type == "trading_signal" {
+                // Update trading fields
+                if trade_attempted && notification.trade_attempted != Some(true) {
+                    notification.trade_attempted = Some(true);
+                    notification.attempted_at = Some(now);
+                    updated = true;
+                }
+
+                if trade_executed {
+                    notification.trade_executed = Some(true);
+                    notification.execution_result = execution_result.clone();
+                    notification.ctrader_order_id = ctrader_order_id.clone();
+                    updated = true;
+                } else if trade_attempted {
+                    notification.trade_executed = Some(false);
+                    notification.execution_result = execution_result.clone();
+                    notification.rejection_reason = rejection_reason.clone();
+                    updated = true;
+                }
+
+                // Handle Telegram status for trading signals
+                if let Some(status) = &telegram_status {
+                    match status.as_str() {
+                        "attempted" => {
+                            // Trade was attempted, now decide if we should send to Telegram
+                            if trade_executed {
+                                // Successful trade - send to Telegram
+                                notification.telegram_filtered = Some(false);
+                                // Will be updated with actual send result separately
+                            } else {
+                                // Failed/rejected trade - still send to Telegram for transparency
+                                notification.telegram_filtered = Some(false);
+                                // Will be updated with actual send result separately
+                            }
+                        }
+                        "sent" => {
+                            notification.telegram_sent = Some(true);
+                            notification.telegram_response_code = Some(200);
+                            updated = true;
+                        }
+                        "send_failed" => {
+                            notification.telegram_sent = Some(false);
+                            notification.telegram_error = Some("send_failed".to_string());
+                            updated = true;
+                        }
+                        "filtered" => {
+                            notification.telegram_filtered = Some(true);
+                            notification.telegram_sent = Some(false);
+                            notification.telegram_filter_reason =
+                                Some("trade_not_attempted".to_string());
+                            updated = true;
+                        }
+                        _ => {}
+                    }
+                }
+
+                break; // Only update the first (most recent) match
+            }
+        }
+
+        if updated {
+            shared_file.last_updated = now;
+
+            // Write updated file
+            if let Ok(json_content) = serde_json::to_string_pretty(&shared_file) {
+                if let Err(e) = fs::write(notifications_file, json_content).await {
+                    tracing::error!("Failed to write updated notifications file: {}", e);
+                } else {
+                    tracing::debug!("Updated trading status for zone {}", zone_id);
+                }
+            }
+        }
+    }
+
     // Call this method whenever you have new proximity alerts or trading signals
     pub async fn handle_new_notifications(&self, process_result: &ProcessResult) {
         if !process_result.proximity_alerts.is_empty() {
-            self.save_notifications_to_shared_file(&process_result.proximity_alerts, "proximity_alert").await;
+            self.save_notifications_to_shared_file(
+                &process_result.proximity_alerts,
+                "proximity_alert",
+            )
+            .await;
         }
-        
-        if !process_result.trading_signals.is_empty() {
-            self.save_notifications_to_shared_file(&process_result.trading_signals, "trading_signal").await;
+    }
+
+    // Enhanced notification creation with full rule evaluation
+    pub async fn create_comprehensive_notification(
+        &self,
+        alert: &ZoneAlert,
+        notification_type: &str,
+    ) -> SharedNotification {
+        let action = if alert.zone_type.contains("supply") {
+            "SELL"
+        } else {
+            "BUY"
+        };
+
+        // Evaluate all trading rules for transparency
+        let trading_config = self.trading_engine.get_config().await;
+        let trading_stats = self.trading_engine.get_trading_stats().await;
+        let active_trades = self.trading_engine.get_active_trades().await;
+
+        let passes_symbol_filter = trading_config.allowed_symbols.contains(&alert.symbol);
+        let passes_timeframe_filter = trading_config.allowed_timeframes.contains(&alert.timeframe);
+        let passes_touch_count_filter = {
+            let max_touch_count = std::env::var("MAX_TOUCH_COUNT_FOR_TRADING")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse::<i32>()
+                .unwrap_or(3);
+            alert.touch_count <= max_touch_count
+        };
+
+        let now = chrono::Utc::now();
+        let hour = now.hour() as u8;
+        let passes_trading_hours =
+            hour >= trading_config.trading_start_hour && hour <= trading_config.trading_end_hour;
+
+        let passes_daily_limit = trading_stats.daily_trades < trading_config.max_daily_trades;
+
+        let symbol_trade_count = active_trades
+            .values()
+            .filter(|t| t.symbol == alert.symbol && t.status == "open")
+            .count() as i32;
+        let passes_symbol_limit = symbol_trade_count < trading_config.max_trades_per_symbol;
+
+        // Calculate R:R ratio if it's a trading signal
+        let (risk_reward_ratio, passes_risk_reward) = if notification_type == "trading_signal" {
+            // Simplified R:R calculation
+            let rr_ratio = trading_config.take_profit_pips / trading_config.stop_loss_pips;
+            (
+                Some(rr_ratio),
+                Some(rr_ratio >= trading_config.min_risk_reward),
+            )
+        } else {
+            (None, None)
+        };
+
+        SharedNotification {
+            id: format!("{}_{}", alert.zone_id, alert.timestamp.timestamp_millis()),
+            timestamp: alert.timestamp,
+            symbol: alert.symbol.clone(),
+            timeframe: alert.timeframe.clone(),
+            action: action.to_string(),
+            price: alert.current_price,
+            zone_id: alert.zone_id.clone(),
+            zone_type: notification_type.to_string(),
+            distance_pips: alert.distance_pips,
+            strength: alert.strength,
+            touch_count: alert.touch_count,
+
+            // Initialize trading fields
+            trade_attempted: match notification_type {
+                "trading_signal" => Some(false),
+                _ => None,
+            },
+            trade_executed: match notification_type {
+                "trading_signal" => Some(false),
+                _ => None,
+            },
+            execution_result: None,
+            rejection_reason: None,
+            ctrader_order_id: None,
+            attempted_at: None,
+
+            // Initialize notification status
+            telegram_sent: None,
+            telegram_filtered: None,
+            telegram_filter_reason: None,
+            telegram_response_code: None,
+            telegram_error: None,
+
+            // Rule evaluation results
+            passes_symbol_filter,
+            passes_timeframe_filter,
+            passes_touch_count_filter,
+            passes_trading_hours,
+            passes_daily_limit,
+            passes_symbol_limit,
+            risk_reward_ratio,
+            passes_risk_reward,
+        }
+    }
+
+    // Add a new method to save trading signals with their execution status:
+    pub async fn save_trading_signal_with_status(
+        &self,
+        signal: &ZoneAlert,
+        trade_attempted: bool,
+        trade_executed: bool,
+        execution_result: Option<String>,
+        rejection_reason: Option<String>,
+        ctrader_order_id: Option<String>,
+        telegram_status: String,
+    ) {
+        let notifications_file = "shared_notifications.json";
+        const MAX_NOTIFICATIONS: usize = 100;
+
+        // Read existing notifications or create new file
+        let mut shared_file = match fs::read_to_string(notifications_file).await {
+            Ok(content) => serde_json::from_str::<SharedNotificationsFile>(&content)
+                .unwrap_or_else(|_| SharedNotificationsFile {
+                    last_updated: chrono::Utc::now(),
+                    notifications: VecDeque::new(),
+                }),
+            Err(_) => SharedNotificationsFile {
+                last_updated: chrono::Utc::now(),
+                notifications: VecDeque::new(),
+            },
+        };
+
+        // Create the comprehensive notification with complete status
+        let mut notification = self
+            .create_comprehensive_notification(signal, "trading_signal")
+            .await;
+
+        // Set the actual execution status
+        notification.trade_attempted = Some(trade_attempted);
+        notification.trade_executed = Some(trade_executed);
+        notification.execution_result = execution_result;
+        notification.rejection_reason = rejection_reason;
+        notification.ctrader_order_id = ctrader_order_id;
+
+        if trade_attempted {
+            notification.attempted_at = Some(chrono::Utc::now());
+        }
+
+        // Set Telegram status based on actual result
+        match telegram_status.as_str() {
+            "sent" => {
+                notification.telegram_sent = Some(true);
+                notification.telegram_filtered = Some(false);
+                notification.telegram_response_code = Some(200);
+            }
+            "send_failed" => {
+                notification.telegram_sent = Some(false);
+                notification.telegram_filtered = Some(false);
+                notification.telegram_error = Some("send_failed".to_string());
+            }
+            "filtered" => {
+                notification.telegram_sent = Some(false);
+                notification.telegram_filtered = Some(true);
+                notification.telegram_filter_reason = Some("trade_not_attempted".to_string());
+            }
+            _ => {
+                notification.telegram_sent = Some(false);
+                notification.telegram_filtered = Some(true);
+                notification.telegram_filter_reason = Some("unknown_status".to_string());
+            }
+        }
+
+        shared_file.notifications.push_front(notification);
+
+        // Keep only the most recent notifications
+        while shared_file.notifications.len() > MAX_NOTIFICATIONS {
+            shared_file.notifications.pop_back();
+        }
+
+        shared_file.last_updated = chrono::Utc::now();
+
+        // Write to file
+        if let Ok(json_content) = serde_json::to_string_pretty(&shared_file) {
+            if let Err(e) = fs::write(notifications_file, json_content).await {
+                tracing::error!("Failed to write notifications file: {}", e);
+            }
         }
     }
 }
