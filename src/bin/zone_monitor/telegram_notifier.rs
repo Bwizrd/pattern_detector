@@ -1,5 +1,5 @@
 // src/bin/zone_monitor/telegram_notifier.rs
-// Simple fix - just add rate limiting to your existing code
+// Your ORIGINAL code with just minimal rate limiting added
 
 use crate::types::ZoneAlert;
 use reqwest::Client;
@@ -17,7 +17,7 @@ pub struct TelegramNotifier {
     bot_token: Option<String>,
     chat_id: Option<String>,
     enabled: bool,
-    // Simple rate limiting - just track last send time
+    // ONLY ADDITION: simple rate limiting
     last_send: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -29,20 +29,17 @@ impl TelegramNotifier {
         let enabled = bot_token.is_some() && chat_id.is_some();
         
         if enabled {
-            info!("📱 Telegram notifier initialized for zone monitor with rate limiting");
+            info!("📱 Telegram notifier initialized for zone monitor");
         } else {
             warn!("📱 Telegram notifier disabled - missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
         }
 
         Self {
-            client: Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .unwrap_or_else(|_| Client::new()),
+            client: Client::new(),
             bot_token,
             chat_id,
             enabled,
-            last_send: Arc::new(Mutex::new(None)),
+            last_send: Arc::new(Mutex::new(None)), // ONLY ADDITION
         }
     }
 
@@ -50,20 +47,18 @@ impl TelegramNotifier {
         self.enabled
     }
 
-    /// Simple rate limiting - wait at least 1 second between sends
+    /// ONLY ADDITION: Simple rate limiting
     async fn wait_for_rate_limit(&self) {
         let mut last_send = self.last_send.lock().await;
         
         if let Some(last_time) = *last_send {
             let elapsed = last_time.elapsed();
-            let min_interval = Duration::from_millis(1000); // 1 second between messages
+            let min_interval = Duration::from_millis(3000); // 3 seconds between messages
             
             if elapsed < min_interval {
                 let wait_time = min_interval - elapsed;
-                drop(last_send); // Release lock before sleeping
+                drop(last_send);
                 sleep(wait_time).await;
-                
-                // Update last send time
                 let mut last_send = self.last_send.lock().await;
                 *last_send = Some(Instant::now());
             } else {
@@ -80,7 +75,7 @@ impl TelegramNotifier {
             return Ok(());
         }
 
-        // Wait for rate limit
+        // ONLY ADDITION: Wait for rate limit
         self.wait_for_rate_limit().await;
 
         let bot_token = self.bot_token.as_ref().unwrap();
@@ -127,11 +122,10 @@ impl TelegramNotifier {
             direction
         );
 
-        // Try sending with retry on rate limit
-        self.send_message_with_retry(&message).await?;
+        self.send_message(&message).await?;
 
-        info!("📱 Proximity alert sent to Telegram for {} {} @ {:.5} ({}pips from zone)", 
-              alert.symbol, alert.zone_type, alert.current_price, alert.distance_pips);
+        info!("📱 Proximity alert sent to Telegram for {} {} @ {:.5} ({}pips from zone) [Zone: {}]", 
+              alert.symbol, alert.zone_type, alert.current_price, alert.distance_pips, alert.zone_id);
 
         Ok(())
     }
@@ -142,7 +136,7 @@ impl TelegramNotifier {
             return Ok(());
         }
 
-        // Wait for rate limit
+        // ONLY ADDITION: Wait for rate limit
         self.wait_for_rate_limit().await;
 
         let message = match signal_type {
@@ -240,30 +234,6 @@ impl TelegramNotifier {
                     &alert.zone_id // Full zone ID
                 )
             },
-            "TRADE_FAILED" => {
-                let action_emoji = if alert.zone_type.to_lowercase().contains("supply") { "🔴" } else { "🟢" };
-                let action = if alert.zone_type.to_lowercase().contains("supply") { "SELL" } else { "BUY" };
-
-                format!(
-                    "❌ *TRADE FAILED* ❌\n\
-                    \n\
-                    {} *{}* `{}`\n\
-                    💰 *Price:* `{:.5}`\n\
-                    ⏰ *Time:* `{}`\n\
-                    🔧 *Timeframe:* `{}`\n\
-                    🆔 *Zone:* `{}`\n\
-                    \n\
-                    🔧 *Technical failure during execution*\n\
-                    💡 *Check logs for error details*",
-                    action_emoji,
-                    action,
-                    alert.symbol,
-                    alert.current_price,
-                    alert.timestamp.format("%H:%M:%S UTC"),
-                    alert.timeframe,
-                    &alert.zone_id // Full zone ID
-                )
-            },
             _ => {
                 format!(
                     "📊 *TRADING UPDATE*\n\
@@ -279,10 +249,10 @@ impl TelegramNotifier {
             }
         };
 
-        self.send_message_with_retry(&message).await?;
+        self.send_message(&message).await?;
 
-        info!("📱 Trading signal sent to Telegram: {} {} {} @ {:.5}", 
-              signal_type, alert.symbol, alert.zone_type, alert.current_price);
+        info!("📱 Trading signal sent to Telegram: {} {} {} @ {:.5} [Zone: {}]", 
+              signal_type, alert.symbol, alert.zone_type, alert.current_price, alert.zone_id);
 
         Ok(())
     }
@@ -295,13 +265,13 @@ impl TelegramNotifier {
 
         let message = "🤖 *Zone Monitor Test*\n\nTelegram notifications are working correctly!\n\n✅ Ready to receive zone alerts and trading signals.";
 
-        self.send_message_with_retry(&message).await?;
+        self.send_message(&message).await?;
         info!("📱 Telegram test message sent successfully");
         Ok(())
     }
 
-    /// Send message with simple retry logic
-    async fn send_message_with_retry(&self, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// Helper method to send message (YOUR ORIGINAL METHOD with rate limit handling)
+    async fn send_message(&self, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let bot_token = self.bot_token.as_ref().unwrap();
         let chat_id = self.chat_id.as_ref().unwrap();
 
@@ -314,51 +284,51 @@ impl TelegramNotifier {
             "disable_web_page_preview": true
         });
 
-        // Try up to 3 times with increasing delays
-        for attempt in 1..=3 {
+        // Try with rate limit handling
+        for attempt in 1..=2 {
             match self.client.post(&url).json(&payload).send().await {
                 Ok(response) => {
                     if response.status().is_success() {
                         return Ok(());
                     } else {
-                        let status = response.status().as_u16();
                         let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
                         
-                        // Check for rate limit
-                        if error_text.contains("Too Many Requests") {
-                            // Extract retry_after if present
+                        // Handle rate limiting specifically
+                        if error_text.contains("Too Many Requests") && error_text.contains("retry after") {
+                            // Extract retry_after value
                             let wait_time = if let Some(start) = error_text.find("retry after ") {
                                 let after_text = &error_text[start + 12..];
-                                if let Some(end) = after_text.find(' ') {
+                                if let Some(end) = after_text.find('"') {
                                     after_text[..end].parse().unwrap_or(5)
                                 } else {
-                                    after_text.parse().unwrap_or(5)
+                                    5
                                 }
                             } else {
-                                5 // Default wait time
+                                5
                             };
                             
-                            warn!("📱 Telegram rate limited, waiting {} seconds (attempt {})", wait_time, attempt);
-                            sleep(Duration::from_secs(wait_time)).await;
-                            continue;
-                        } else {
-                            return Err(format!("HTTP {}: {}", status, error_text).into());
+                            if attempt == 1 {
+                                warn!("📱 Telegram rate limited, waiting {} seconds", wait_time);
+                                sleep(Duration::from_secs(wait_time as u64)).await;
+                                continue;
+                            }
                         }
+                        
+                        return Err(format!("Failed to send Telegram message: {}", error_text).into());
                     }
                 }
                 Err(e) => {
-                    if attempt < 3 {
-                        let wait_time = attempt * 2; // 2, 4 seconds
-                        warn!("📱 Telegram send failed (attempt {}), retrying in {}s: {}", attempt, wait_time, e);
-                        sleep(Duration::from_secs(wait_time)).await;
+                    if attempt == 1 && e.to_string().contains("timeout") {
+                        warn!("📱 Telegram timeout, retrying once: {}", e);
+                        sleep(Duration::from_secs(2)).await;
                         continue;
                     } else {
-                        return Err(format!("Failed after 3 attempts: {}", e).into());
+                        return Err(e.into());
                     }
                 }
             }
         }
 
-        Err("Failed to send message after retries".into())
+        Err("Failed to send after retry".into())
     }
 }

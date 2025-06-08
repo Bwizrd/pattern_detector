@@ -269,11 +269,6 @@ impl MonitorState {
                 // Log to CSV
                 self.csv_logger.log_proximity_alert(&alert).await;
 
-                // Send to Telegram
-                if let Err(e) = self.telegram_notifier.send_proximity_alert(&alert).await {
-                    error!("Failed to send Telegram proximity alert: {}", e);
-                }
-
                 // Send proximity notification (sound)
                 self.notification_manager
                     .notify_zone_proximity(&alert)
@@ -336,25 +331,8 @@ impl MonitorState {
                             self.csv_logger
                                 .log_trading_signal(&signal, "TRADE_EXECUTED")
                                 .await;
-
-                            // Send to Telegram and track result
-                            let telegram_result = match self
-                                .telegram_notifier
-                                .send_trading_signal(&signal, "TRADE_EXECUTED")
-                                .await
-                            {
-                                Ok(_) => {
-                                    info!("📱 Trading signal sent to Telegram: TRADE_EXECUTED {} {} @ {:.5}", 
-                      signal.symbol, signal.zone_type, signal.current_price);
-                                    "sent"
-                                }
-                                Err(e) => {
-                                    error!("Failed to send Telegram trade execution: {}", e);
-                                    "send_failed"
-                                }
-                            };
-
-                            // Save to JSON with complete status
+                            
+                            // Save to JSON with complete status - no Telegram here, JSON system handles it
                             self.save_trading_signal_with_status(
                                 &signal,
                                 true, // trade_attempted
@@ -362,7 +340,7 @@ impl MonitorState {
                                 Some(trade_result.execution_result),
                                 None, // no rejection reason for successful trades
                                 trade.ctrader_order_id,
-                                telegram_result.to_string(),
+                                "sent".to_string(), // Will be handled by JSON notification system
                             )
                             .await;
 
@@ -375,7 +353,7 @@ impl MonitorState {
                         // Trade was rejected or failed
                         let rejection_reason = trade_result
                             .rejection_reason
-                            .clone() // <-- Add .clone() here
+                            .clone()
                             .unwrap_or_else(|| "unknown_error".to_string());
 
                         info!(
@@ -391,46 +369,15 @@ impl MonitorState {
                             )
                             .await;
 
-                        // Send to Telegram (for transparency) and track result
-                        let telegram_status_msg = match trade_result.execution_result.as_str() {
-                            "rejected" => "TRADE_REJECTED",
-                            "failed" => "TRADE_FAILED",
-                            _ => "TRADE_ERROR",
-                        };
-
-                        let telegram_result = match self
-                            .telegram_notifier
-                            .send_trading_signal(&signal, telegram_status_msg)
-                            .await
-                        {
-                            Ok(_) => {
-                                info!(
-                                    "📱 Trading signal sent to Telegram: {} {} {} @ {:.5}",
-                                    telegram_status_msg,
-                                    signal.symbol,
-                                    signal.zone_type,
-                                    signal.current_price
-                                );
-                                "sent"
-                            }
-                            Err(e) => {
-                                error!(
-                                    "Failed to send Telegram trade {}: {}",
-                                    trade_result.execution_result, e
-                                );
-                                "send_failed"
-                            }
-                        };
-
-                        // Save to JSON with failure status
+                        // Save to JSON with failure status - no Telegram here, JSON system handles it
                         self.save_trading_signal_with_status(
                             &signal,
                             true,  // trade_attempted
                             false, // trade_executed
                             Some(trade_result.execution_result),
-                            trade_result.rejection_reason, // <-- Use the original here (it's moved but that's fine)
-                            None,                          // no order ID for failed trades
-                            telegram_result.to_string(),
+                            trade_result.rejection_reason,
+                            None, // no order ID for failed trades
+                            "sent".to_string(), // Will be handled by JSON notification system
                         )
                         .await;
                     }
@@ -979,28 +926,35 @@ impl MonitorState {
             notification.attempted_at = Some(chrono::Utc::now());
         }
 
-        // Set Telegram status based on actual result
-        match telegram_status.as_str() {
-            "sent" => {
-                notification.telegram_sent = Some(true);
-                notification.telegram_filtered = Some(false);
-                notification.telegram_response_code = Some(200);
+        // Send to Telegram if trade was attempted (successful or failed)
+        if trade_attempted {
+            let telegram_status_msg = if trade_executed {
+                "TRADE_EXECUTED"
+            } else {
+                match notification.execution_result.as_deref() {
+                    Some("rejected") => "TRADE_REJECTED",
+                    Some("failed") => "TRADE_FAILED", 
+                    _ => "TRADE_ERROR",
+                }
+            };
+
+            match self.telegram_notifier.send_trading_signal(signal, telegram_status_msg).await {
+                Ok(_) => {
+                    notification.telegram_sent = Some(true);
+                    notification.telegram_filtered = Some(false);
+                    notification.telegram_response_code = Some(200);
+                }
+                Err(e) => {
+                    notification.telegram_sent = Some(false);
+                    notification.telegram_filtered = Some(false);
+                    notification.telegram_error = Some(e.to_string());
+                }
             }
-            "send_failed" => {
-                notification.telegram_sent = Some(false);
-                notification.telegram_filtered = Some(false);
-                notification.telegram_error = Some("send_failed".to_string());
-            }
-            "filtered" => {
-                notification.telegram_sent = Some(false);
-                notification.telegram_filtered = Some(true);
-                notification.telegram_filter_reason = Some("trade_not_attempted".to_string());
-            }
-            _ => {
-                notification.telegram_sent = Some(false);
-                notification.telegram_filtered = Some(true);
-                notification.telegram_filter_reason = Some("unknown_status".to_string());
-            }
+        } else {
+            // Trade not attempted - filtered
+            notification.telegram_sent = Some(false);
+            notification.telegram_filtered = Some(true);
+            notification.telegram_filter_reason = Some("trade_not_attempted".to_string());
         }
 
         shared_file.notifications.push_front(notification);
