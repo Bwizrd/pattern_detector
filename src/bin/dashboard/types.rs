@@ -44,6 +44,9 @@ pub struct TradeNotificationDisplay {
     pub price: f64,
     pub notification_type: String,
     pub signal_id: Option<String>,
+    pub distance_pips: Option<f64>,
+    pub strength: Option<f64>,
+    pub touch_count: Option<i32>,
 }
 
 #[derive(Debug, Clone)]

@@ -62,7 +62,7 @@ pub fn ui_dashboard(f: &mut Frame, app: &App) {
     render_zones_table_improved(f, app, left_chunks[2], size.width);
     render_dashboard_help(f, left_chunks[3]);
     render_placed_trades_panel(f, app, right_chunks[0], right_chunks[1]);
-    render_trade_alert_popup(f, app, size);
+    // render_trade_alert_popup(f, app, size);
 }
 
 pub fn ui_notification_monitor(f: &mut Frame, app: &App) {
@@ -384,7 +384,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 vec![
                     "Symbol/TF",
                     "Type",
-                    "S.Dist",
+                    "Distance",
                     "Status",
                     "Price",
                     "Proximal",
@@ -810,7 +810,7 @@ fn render_all_notifications_panel_enhanced(
         .title_alignment(Alignment::Center)
         .border_style(Style::default().fg(Color::Cyan));
 
-    // Filter notifications by enabled timeframes - THIS IS THE KEY FIX
+    // Filter notifications by enabled timeframes
     let filtered_notifications: Vec<(usize, &TradeNotificationDisplay)> = app
         .all_notifications
         .iter()
@@ -844,14 +844,14 @@ fn render_all_notifications_panel_enhanced(
 
     f.render_widget(left_header, header_area);
 
-    // Content with better layout
+    // Content with enhanced layout
     let notif_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
     if filtered_notifications.is_empty() {
         let empty_text = if app.all_notifications.is_empty() {
-            "No zone notifications yet.\n\nAll zone touches will appear here.\n\nUse ↑↓ arrows to select, 'y' to copy zone ID\n1-6 to toggle timeframes"
+            "No zone notifications yet.\n\nProximity alerts and trading signals will appear here.\n\nUse ↑↓ arrows to select, 'y' to copy zone ID\n1-6 to toggle timeframes"
         } else {
             "No notifications for enabled timeframes.\n\nUse 1-6 keys to toggle timeframes:\n[1]5m [2]15m [3]30m [4]1h [5]4h [6]1d"
         };
@@ -865,37 +865,80 @@ fn render_all_notifications_panel_enhanced(
         f.render_widget(empty_widget, content_area);
     } else {
         // Calculate available width for better layout
-        let available_width = content_area.width.saturating_sub(4); // Account for borders
+        let available_width = content_area.width.saturating_sub(4);
 
-        // Use a table for better alignment and space usage
-        let header_cells = ["Time", "Action", "Pair/TF", "Price", "Zone ID"]
-            .iter()
-            .map(|h| {
-                Cell::from(*h).style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-            });
+        // Enhanced headers with more columns
+        let headers = if available_width > 120 {
+            // Large screens: Show all data
+            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Str", "Touch", "Zone ID"]
+        } else if available_width > 90 {
+            // Medium screens: Essential columns
+            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Zone ID"]
+        } else {
+            // Small screens: Minimal columns
+            vec!["Time", "Type", "Action", "Pair", "Price"]
+        };
+
+        let header_cells = headers.iter().map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+
+        // Enhanced headers with more columns
+        let headers = if available_width > 120 {
+            // Large screens: Show all data
+            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Str", "Touch", "Zone ID"]
+        } else if available_width > 90 {
+            // Medium screens: Essential columns
+            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Zone ID"]
+        } else {
+            // Small screens: Minimal columns
+            vec!["Time", "Type", "Action", "Pair", "Price"]
+        };
+
+        let header_cells = headers.iter().map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
 
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-        // Dynamic column widths based on available space
-        let widths = if available_width > 80 {
+        // Dynamic column widths to use full available space - make ALL columns wider
+        let widths = if available_width > 120 {
             vec![
-                Constraint::Length(10), // Time: HH:MM:SS
-                Constraint::Length(6),  // Action: BUY/SELL
-                Constraint::Length(12), // Pair/TF: USDCHF/15m
-                Constraint::Length(10), // Price: 0.81726
-                Constraint::Min(16),    // Zone ID: Full ID with remaining space
+                Constraint::Percentage(10),  // Time: HH:MM:SS
+                Constraint::Percentage(12),  // Type: PROXIMITY/TRADE
+                Constraint::Percentage(8),   // Action: BUY/SELL
+                Constraint::Percentage(15),  // Pair/TF: GBPUSD/1h
+                Constraint::Percentage(12),  // Price: 1.32250
+                Constraint::Percentage(8),   // Distance: 10.0
+                Constraint::Percentage(8),   // Strength: 100
+                Constraint::Percentage(8),   // Touch: 0
+                Constraint::Percentage(19),  // Zone ID: Remaining space
+            ]
+        } else if available_width > 90 {
+            vec![
+                Constraint::Percentage(12),  // Time
+                Constraint::Percentage(15),  // Type: PROXIMITY/TRADE
+                Constraint::Percentage(8),   // Action
+                Constraint::Percentage(18),  // Pair/TF
+                Constraint::Percentage(15),  // Price
+                Constraint::Percentage(10),  // Distance
+                Constraint::Percentage(22),  // Zone ID: Remaining space
             ]
         } else {
             vec![
-                Constraint::Length(8),  // Time: HH:MM
-                Constraint::Length(4),  // Action: B/S
-                Constraint::Length(10), // Pair/TF
-                Constraint::Length(8),  // Price
-                Constraint::Min(12),    // Zone ID
+                Constraint::Percentage(15),  // Time: HH:MM
+                Constraint::Percentage(20),  // Type: PROXIM
+                Constraint::Percentage(10),  // Action: B/S
+                Constraint::Percentage(25),  // Pair: GBPUSD
+                Constraint::Percentage(30),  // Price: Remaining space
             ]
         };
 
@@ -904,36 +947,55 @@ fn render_all_notifications_panel_enhanced(
             .enumerate()
             .take(30)
             .map(|(_display_index, (original_index, notif))| {
-                let time_str = if available_width > 80 {
+                let time_str = if available_width > 90 {
                     notif.timestamp.format("%H:%M:%S").to_string()
                 } else {
                     notif.timestamp.format("%H:%M").to_string()
                 };
 
-                let action_str = if available_width > 80 {
+                // Determine notification type and colors
+                let (type_str, type_color) = if notif.notification_type == "proximity_alert" {
+                    if available_width > 90 {
+                        ("PROXIMITY", Color::Yellow)
+                    } else {
+                        ("PROXIM", Color::Yellow)
+                    }
+                } else {
+                    ("TRADE", Color::Green)
+                };
+
+                let action_str = if available_width > 90 {
                     notif.action.clone()
                 } else {
-                    if notif.action == "BUY" {
-                        "B".to_string()
-                    } else {
-                        "S".to_string()
-                    }
+                    if notif.action == "BUY" { "B".to_string() } else { "S".to_string() }
                 };
 
-                let pair_tf = format!("{}/{}", notif.symbol, notif.timeframe);
+                let pair_tf = if available_width > 90 {
+                    format!("{}/{}", notif.symbol, notif.timeframe)
+                } else {
+                    notif.symbol.clone()
+                };
+
                 let price_str = format!("{:.5}", notif.price);
 
-                // Show full zone ID or truncated based on space
-                let zone_id = notif.signal_id.as_deref().unwrap_or("N/A");
-                let display_zone_id = if available_width > 100 {
-                    zone_id.to_string() // Show full ID
-                } else if zone_id.len() > 12 {
-                    format!("{}...", &zone_id[..12])
+                // Use actual data from the notification
+                let distance_str = if let Some(dist) = notif.distance_pips {
+                    format!("{:.1}", dist)
                 } else {
-                    zone_id.to_string()
+                    "N/A".to_string()
+                };
+                let strength_str = if let Some(strength) = notif.strength {
+                    format!("{:.0}", strength)
+                } else {
+                    "N/A".to_string()
+                };
+                let touch_str = if let Some(touch) = notif.touch_count {
+                    format!("{}", touch)
+                } else {
+                    "N/A".to_string()
                 };
 
-                // FIXED: Check selection against original index, not display index
+                // Highlight selected row
                 let row_style = if Some(*original_index) == app.selected_notification_index {
                     Style::default().bg(Color::DarkGray)
                 } else {
@@ -946,24 +1008,56 @@ fn render_all_notifications_panel_enhanced(
                     Color::Red
                 };
 
-                Row::new(vec![
+                // Show zone ID (truncated if needed)
+                let zone_id = notif.signal_id.as_deref().unwrap_or("N/A");
+                let display_zone_id = if available_width > 120 && zone_id.len() <= 16 {
+                    zone_id.to_string()
+                } else if zone_id.len() > 12 {
+                    format!("{}...", &zone_id[..9])
+                } else {
+                    zone_id.to_string()
+                };
+
+                // Build row based on screen size
+                let mut cells = vec![
                     Cell::from(time_str).style(row_style.fg(Color::Gray)),
-                    Cell::from(action_str).style(row_style.fg(action_color)),
-                    Cell::from(pair_tf).style(row_style.fg(Color::Cyan)),
-                    Cell::from(price_str).style(row_style.fg(Color::White)),
-                    Cell::from(display_zone_id).style(row_style.fg(Color::Magenta)),
-                ])
+                    Cell::from(type_str).style(row_style.fg(type_color).add_modifier(Modifier::BOLD)),
+                    Cell::from(action_str).style(row_style.fg(action_color).add_modifier(Modifier::BOLD)),
+                ];
+
+                if available_width > 90 {
+                    cells.extend(vec![
+                        Cell::from(pair_tf).style(row_style.fg(Color::Cyan)),
+                        Cell::from(price_str).style(row_style.fg(Color::White)),
+                        Cell::from(distance_str).style(row_style.fg(Color::Magenta)),
+                    ]);
+
+                    if available_width > 120 {
+                        cells.extend(vec![
+                            Cell::from(strength_str).style(row_style.fg(Color::Blue)),
+                            Cell::from(touch_str).style(row_style.fg(Color::Gray)),
+                        ]);
+                    }
+
+                    cells.push(Cell::from(display_zone_id).style(row_style.fg(Color::Magenta)));
+                } else {
+                    cells.extend(vec![
+                        Cell::from(pair_tf).style(row_style.fg(Color::Cyan)),
+                        Cell::from(price_str).style(row_style.fg(Color::White)),
+                    ]);
+                }
+
+                Row::new(cells)
             })
             .collect();
 
-        // Add selection indicator column if there are notifications
+        // Add selection indicator column
         if !rows.is_empty() {
             let indicator_rows: Vec<Row> = filtered_notifications
                 .iter()
                 .enumerate()
                 .take(30)
                 .map(|(_display_index, (original_index, _))| {
-                    // FIXED: Check selection against original index
                     let indicator = if Some(*original_index) == app.selected_notification_index {
                         "►"
                     } else {

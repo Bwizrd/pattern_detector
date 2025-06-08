@@ -14,6 +14,31 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use tokio::fs;
+use crate::zone_state_manager::ProcessResult;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedNotification {
+    pub id: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub symbol: String,
+    pub timeframe: String,
+    pub action: String, // "BUY" or "SELL"
+    pub price: f64,
+    pub zone_id: String,
+    pub zone_type: String, // "proximity_alert" or "trading_signal"
+    pub distance_pips: f64,
+    pub strength: f64,
+    pub touch_count: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SharedNotificationsFile {
+    pub last_updated: chrono::DateTime<chrono::Utc>,
+    pub notifications: VecDeque<SharedNotification>,
+}
 
 #[derive(Debug, Clone)]
 pub struct MonitorState {
@@ -197,6 +222,8 @@ impl MonitorState {
                 .process_price_update(&price_update, &zones)
                 .await;
 
+            self.handle_new_notifications(&result).await;
+
             // Handle proximity alerts (first time in proximity)
             for alert in result.proximity_alerts {
                 // Store alert
@@ -366,5 +393,71 @@ impl MonitorState {
 
     pub async fn close_trade(&self, trade_id: &str, close_price: f64, reason: &str) -> Result<crate::trading_engine::Trade, String> {
         self.trading_engine.close_trade(trade_id, close_price, reason).await
+    }
+
+     pub async fn save_notifications_to_shared_file(&self, new_notifications: &[ZoneAlert], notification_type: &str) {
+        let notifications_file = "shared_notifications.json";
+        const MAX_NOTIFICATIONS: usize = 100; // Keep last 100 notifications
+        
+        // Read existing notifications or create new file
+        let mut shared_file = match fs::read_to_string(notifications_file).await {
+            Ok(content) => {
+                serde_json::from_str::<SharedNotificationsFile>(&content)
+                    .unwrap_or_else(|_| SharedNotificationsFile {
+                        last_updated: chrono::Utc::now(),
+                        notifications: VecDeque::new(),
+                    })
+            }
+            Err(_) => SharedNotificationsFile {
+                last_updated: chrono::Utc::now(),
+                notifications: VecDeque::new(),
+            }
+        };
+        
+        // Add new notifications
+        for alert in new_notifications {
+            let action = if alert.zone_type.contains("supply") { "SELL" } else { "BUY" };
+            
+            let shared_notification = SharedNotification {
+                id: format!("{}_{}", alert.zone_id, alert.timestamp.timestamp_millis()),
+                timestamp: alert.timestamp,
+                symbol: alert.symbol.clone(),
+                timeframe: alert.timeframe.clone(),
+                action: action.to_string(),
+                price: alert.current_price,
+                zone_id: alert.zone_id.clone(),
+                zone_type: notification_type.to_string(),
+                distance_pips: alert.distance_pips,
+                strength: alert.strength,
+                touch_count: alert.touch_count,
+            };
+            
+            shared_file.notifications.push_front(shared_notification);
+        }
+        
+        // Keep only the most recent notifications
+        while shared_file.notifications.len() > MAX_NOTIFICATIONS {
+            shared_file.notifications.pop_back();
+        }
+        
+        shared_file.last_updated = chrono::Utc::now();
+        
+        // Write to file
+        if let Ok(json_content) = serde_json::to_string_pretty(&shared_file) {
+            if let Err(e) = fs::write(notifications_file, json_content).await {
+                tracing::error!("Failed to write notifications file: {}", e);
+            }
+        }
+    }
+    
+    // Call this method whenever you have new proximity alerts or trading signals
+    pub async fn handle_new_notifications(&self, process_result: &ProcessResult) {
+        if !process_result.proximity_alerts.is_empty() {
+            self.save_notifications_to_shared_file(&process_result.proximity_alerts, "proximity_alert").await;
+        }
+        
+        if !process_result.trading_signals.is_empty() {
+            self.save_notifications_to_shared_file(&process_result.trading_signals, "trading_signal").await;
+        }
     }
 }

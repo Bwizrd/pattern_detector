@@ -618,6 +618,31 @@ impl App {
     async fn fetch_trade_notifications_from_api(
         &self,
     ) -> Result<Value, Box<dyn std::error::Error>> {
+        // Try to read from shared notifications file first
+        let notifications_file = "shared_notifications.json";
+
+        match tokio::fs::read_to_string(notifications_file).await {
+            Ok(content) => {
+                let shared_file: Value = serde_json::from_str(&content)?;
+
+                if let Some(notifications) = shared_file.get("notifications") {
+                    // Convert shared format to the format expected by dashboard
+                    Ok(json!({
+                        "notifications": notifications
+                    }))
+                } else {
+                    Ok(json!({"notifications": []}))
+                }
+            }
+            Err(_) => {
+                // Fallback to API if file doesn't exist
+                self.fetch_trade_notifications_from_api_fallback().await
+            }
+        }
+    }
+    async fn fetch_trade_notifications_from_api_fallback(
+        &self,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
         let url = format!("{}/trade-notifications", self.api_base_url);
 
         let response = self
@@ -634,6 +659,7 @@ impl App {
         }
     }
 
+    // Update the processing method to handle the shared format
     fn process_api_notifications_response(
         &self,
         response: Value,
@@ -677,11 +703,22 @@ impl App {
                     .get("price")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0),
-                notification_type: "zone_trigger".to_string(),
+                notification_type: notif_json
+                    .get("zone_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("zone_trigger")
+                    .to_string(),
                 signal_id: notif_json
                     .get("zone_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
+                // Add the new fields:
+                distance_pips: notif_json.get("distance_pips").and_then(|v| v.as_f64()),
+                strength: notif_json.get("strength").and_then(|v| v.as_f64()),
+                touch_count: notif_json
+                    .get("touch_count")
+                    .and_then(|v| v.as_i64())
+                    .map(|i| i as i32),
             };
 
             notifications.push(notification);
