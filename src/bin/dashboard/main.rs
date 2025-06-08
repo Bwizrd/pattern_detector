@@ -1,30 +1,28 @@
 // src/bin/dashboard/main.rs - Complete main entry point with zone navigation
-use std::io;
-use tokio::time::{Duration, Instant};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use std::io;
+use tokio::time::{Duration, Instant};
 
-use std::{env};
+use std::env;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-mod types;
 mod app;
+mod notifications;
+mod types;
 mod ui;
 #[path = "../zone_monitor/websocket.rs"]
 mod websocket;
 
 use app::App;
 use types::{AppPage, PriceUpdate}; // Add PriceUpdate
-use websocket::WebSocketClient; // Add this
 use ui::ui;
+use websocket::WebSocketClient; // Add this
 
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
@@ -73,9 +71,21 @@ async fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Char('r') => {
                             app.update_data().await;
                         }
-                        KeyCode::Char('c') => {
-                            app.clear_notifications_via_api().await;
-                            app.update_data().await;
+                        // KeyCode::Char('c') => {
+                        //     app.clear_notifications_via_api().await;
+                        //     app.update_data().await;
+                        // }
+                        KeyCode::Char(c)
+                            if c.is_ascii_digit()
+                                && app.current_page == AppPage::NotificationMonitor =>
+                        {
+                            let num = c.to_digit(10).unwrap() as usize;
+                            app.select_notification_by_number(num);
+                        }
+
+                        // ADD this case for manual validation trigger:
+                        KeyCode::Enter if app.current_page == AppPage::NotificationMonitor => {
+                            app.validate_selected_notification();
                         }
                         KeyCode::Char('d') => {
                             app.switch_page(AppPage::Dashboard);
@@ -189,16 +199,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ws_client = WebSocketClient::new();
     let ws_url_clone = ws_url.clone();
     let price_tx_clone = price_tx.clone();
-    
+
     tokio::spawn(async move {
-        ws_client.start_connection_loop(ws_url_clone, move |price_update| {
-            if let Err(e) = price_tx_clone.send(price_update) {
-                warn!("Failed to send price update: {}", e);
-            }
-        }).await;
+        ws_client
+            .start_connection_loop(ws_url_clone, move |price_update| {
+                if let Err(e) = price_tx_clone.send(price_update) {
+                    warn!("Failed to send price update: {}", e);
+                }
+            })
+            .await;
     });
 
-    info!("🚀 Starting Dashboard with WebSocket connection to {}", ws_url);
+    info!(
+        "🚀 Starting Dashboard with WebSocket connection to {}",
+        ws_url
+    );
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

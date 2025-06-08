@@ -14,6 +14,8 @@ use crate::types::{
     AppPage, TradeNotificationDisplay, ValidatedTradeDisplay, ZoneDistanceInfo, ZoneStatus,
 };
 
+use crate::notifications::{NotificationRuleValidator, NotificationValidation};
+
 // NEW: Add this struct to track streaming price data
 #[derive(Debug, Clone)]
 pub struct PriceStreamData {
@@ -61,6 +63,9 @@ pub struct App {
     pub min_strength_filter: f64,
     pub strength_input_mode: bool,
     pub strength_input_buffer: String,
+
+    pub selected_notification_validation: Option<NotificationValidation>,
+    pub notification_validator: NotificationRuleValidator,
 }
 
 impl App {
@@ -150,6 +155,8 @@ impl App {
             current_prices: HashMap::new(),
             price_update_count: 0,
             last_price_update: None,
+            selected_notification_validation: None,
+            notification_validator: NotificationRuleValidator::new(),
         }
     }
 
@@ -270,6 +277,37 @@ impl App {
         }
     }
 
+    pub fn validate_selected_notification(&mut self) {
+        if let Some(index) = self.selected_notification_index {
+            if let Some(notification) = self.all_notifications.get(index) {
+                self.selected_notification_validation = Some(
+                    self.notification_validator
+                        .validate_notification(notification, index),
+                );
+            }
+        } else {
+            self.selected_notification_validation = None;
+        }
+    }
+
+    // ADD this new method for direct number selection
+    pub fn select_notification_by_number(&mut self, number: usize) {
+        if number > 0 && number <= self.all_notifications.len() {
+            let filtered_notifications: Vec<_> = self
+                .all_notifications
+                .iter()
+                .enumerate()
+                .filter(|(_, notif)| self.is_timeframe_enabled(&notif.timeframe))
+                .collect();
+
+            if number <= filtered_notifications.len() {
+                let actual_index = filtered_notifications[number - 1].0;
+                self.selected_notification_index = Some(actual_index);
+                self.validate_selected_notification();
+            }
+        }
+    }
+
     pub fn get_price_stats(&self) -> (usize, u64, Option<Duration>) {
         let symbol_count = self.current_prices.len();
         let total_updates = self.price_update_count;
@@ -309,6 +347,7 @@ impl App {
                 }
             }
         }
+        self.validate_selected_notification();
     }
 
     pub fn select_previous_notification(&mut self) {
@@ -345,6 +384,7 @@ impl App {
                 }
             }
         }
+        self.validate_selected_notification();
     }
 
     pub fn copy_selected_zone_id(&mut self) {

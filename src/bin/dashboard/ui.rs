@@ -9,12 +9,24 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::notifications::render_enhanced_notifications_page;
 use crate::types::{AppPage, TradeNotificationDisplay, ZoneStatus};
 
 pub fn ui(f: &mut Frame, app: &App) {
     match app.current_page {
         AppPage::Dashboard => ui_dashboard(f, app),
-        AppPage::NotificationMonitor => ui_notification_monitor(f, app), // ← Keep original name
+        AppPage::NotificationMonitor => {
+            let size = f.size();
+            render_enhanced_notifications_page(
+                f,
+                size, // Use the full screen area
+                &app.all_notifications,
+                &app.validated_trades,
+                app.selected_notification_index,
+                &app.selected_notification_validation,
+                &app.notification_timeframe_filters,
+            );
+        }
         AppPage::Prices => ui_prices(f, app),
     }
 }
@@ -870,10 +882,14 @@ fn render_all_notifications_panel_enhanced(
         // Enhanced headers with more columns
         let headers = if available_width > 120 {
             // Large screens: Show all data
-            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Str", "Touch", "Zone ID"]
+            vec![
+                "Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Str", "Touch", "Zone ID",
+            ]
         } else if available_width > 90 {
             // Medium screens: Essential columns
-            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Zone ID"]
+            vec![
+                "Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Zone ID",
+            ]
         } else {
             // Small screens: Minimal columns
             vec!["Time", "Type", "Action", "Pair", "Price"]
@@ -890,10 +906,14 @@ fn render_all_notifications_panel_enhanced(
         // Enhanced headers with more columns
         let headers = if available_width > 120 {
             // Large screens: Show all data
-            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Str", "Touch", "Zone ID"]
+            vec![
+                "Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Str", "Touch", "Zone ID",
+            ]
         } else if available_width > 90 {
             // Medium screens: Essential columns
-            vec!["Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Zone ID"]
+            vec![
+                "Time", "Type", "Action", "Pair/TF", "Price", "Dist", "Zone ID",
+            ]
         } else {
             // Small screens: Minimal columns
             vec!["Time", "Type", "Action", "Pair", "Price"]
@@ -912,33 +932,33 @@ fn render_all_notifications_panel_enhanced(
         // Dynamic column widths to use full available space - make ALL columns wider
         let widths = if available_width > 120 {
             vec![
-                Constraint::Percentage(10),  // Time: HH:MM:SS
-                Constraint::Percentage(12),  // Type: PROXIMITY/TRADE
-                Constraint::Percentage(8),   // Action: BUY/SELL
-                Constraint::Percentage(15),  // Pair/TF: GBPUSD/1h
-                Constraint::Percentage(12),  // Price: 1.32250
-                Constraint::Percentage(8),   // Distance: 10.0
-                Constraint::Percentage(8),   // Strength: 100
-                Constraint::Percentage(8),   // Touch: 0
-                Constraint::Percentage(19),  // Zone ID: Remaining space
+                Constraint::Percentage(10), // Time: HH:MM:SS
+                Constraint::Percentage(12), // Type: PROXIMITY/TRADE
+                Constraint::Percentage(8),  // Action: BUY/SELL
+                Constraint::Percentage(15), // Pair/TF: GBPUSD/1h
+                Constraint::Percentage(12), // Price: 1.32250
+                Constraint::Percentage(8),  // Distance: 10.0
+                Constraint::Percentage(8),  // Strength: 100
+                Constraint::Percentage(8),  // Touch: 0
+                Constraint::Percentage(19), // Zone ID: Remaining space
             ]
         } else if available_width > 90 {
             vec![
-                Constraint::Percentage(12),  // Time
-                Constraint::Percentage(15),  // Type: PROXIMITY/TRADE
-                Constraint::Percentage(8),   // Action
-                Constraint::Percentage(18),  // Pair/TF
-                Constraint::Percentage(15),  // Price
-                Constraint::Percentage(10),  // Distance
-                Constraint::Percentage(22),  // Zone ID: Remaining space
+                Constraint::Percentage(12), // Time
+                Constraint::Percentage(15), // Type: PROXIMITY/TRADE
+                Constraint::Percentage(8),  // Action
+                Constraint::Percentage(18), // Pair/TF
+                Constraint::Percentage(15), // Price
+                Constraint::Percentage(10), // Distance
+                Constraint::Percentage(22), // Zone ID: Remaining space
             ]
         } else {
             vec![
-                Constraint::Percentage(15),  // Time: HH:MM
-                Constraint::Percentage(20),  // Type: PROXIM
-                Constraint::Percentage(10),  // Action: B/S
-                Constraint::Percentage(25),  // Pair: GBPUSD
-                Constraint::Percentage(30),  // Price: Remaining space
+                Constraint::Percentage(15), // Time: HH:MM
+                Constraint::Percentage(20), // Type: PROXIM
+                Constraint::Percentage(10), // Action: B/S
+                Constraint::Percentage(25), // Pair: GBPUSD
+                Constraint::Percentage(30), // Price: Remaining space
             ]
         };
 
@@ -967,7 +987,11 @@ fn render_all_notifications_panel_enhanced(
                 let action_str = if available_width > 90 {
                     notif.action.clone()
                 } else {
-                    if notif.action == "BUY" { "B".to_string() } else { "S".to_string() }
+                    if notif.action == "BUY" {
+                        "B".to_string()
+                    } else {
+                        "S".to_string()
+                    }
                 };
 
                 let pair_tf = if available_width > 90 {
@@ -1021,8 +1045,10 @@ fn render_all_notifications_panel_enhanced(
                 // Build row based on screen size
                 let mut cells = vec![
                     Cell::from(time_str).style(row_style.fg(Color::Gray)),
-                    Cell::from(type_str).style(row_style.fg(type_color).add_modifier(Modifier::BOLD)),
-                    Cell::from(action_str).style(row_style.fg(action_color).add_modifier(Modifier::BOLD)),
+                    Cell::from(type_str)
+                        .style(row_style.fg(type_color).add_modifier(Modifier::BOLD)),
+                    Cell::from(action_str)
+                        .style(row_style.fg(action_color).add_modifier(Modifier::BOLD)),
                 ];
 
                 if available_width > 90 {
