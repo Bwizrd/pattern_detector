@@ -475,14 +475,14 @@ impl TradingEngine {
         let (trade_type, entry_price, stop_loss, take_profit) = match signal.zone_type.as_str() {
             "demand_zone" => {
                 let entry = current_price;
-                let sl = entry - (config.stop_loss_pips / 10000.0);
-                let tp = entry + (config.take_profit_pips / 10000.0);
+                let sl = config.stop_loss_pips; // Use pip value directly
+                let tp = config.take_profit_pips; // Use pip value directly
                 ("buy".to_string(), entry, sl, tp)
             }
             "supply_zone" => {
                 let entry = current_price;
-                let sl = entry + (config.stop_loss_pips / 10000.0);
-                let tp = entry - (config.take_profit_pips / 10000.0);
+                let sl = config.stop_loss_pips; // Use pip value directly
+                let tp = config.take_profit_pips; // Use pip value directly
                 ("sell".to_string(), entry, sl, tp)
             }
             _ => {
