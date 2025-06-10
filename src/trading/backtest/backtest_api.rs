@@ -1,3 +1,4 @@
+// src/trading/backtest/backtest_api.rs
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize}; // For analytics
 
@@ -18,6 +19,7 @@ pub struct MultiBacktestRequest {
 pub struct IndividualTradeResult {
     pub symbol: String,
     pub timeframe: String, // The timeframe the pattern was detected on
+    pub zone_id: Option<String>,
     pub direction: String, // "Long" or "Short"
     pub entry_time: DateTime<Utc>,
     pub entry_price: f64,

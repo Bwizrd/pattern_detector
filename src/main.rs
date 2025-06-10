@@ -1,4 +1,4 @@
-// src/main.rs - Clean version with backtest and debug endpoints only
+// src/main.rs - Fixed version with proper multi-symbol backtest integration
 
 // Module declarations
 mod api;
@@ -11,6 +11,8 @@ mod realtime;
 mod trading;
 mod types;
 mod zones;
+
+// Module declarations are now in the api module - no need to declare them here
 
 // Standard library imports
 use std::env;
@@ -74,50 +76,6 @@ async fn echo(query: web::Query<QueryParams>) -> impl Responder {
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("OK, Rust server is running on port 8080")
-}
-
-// --- Backtest Handlers ---
-
-async fn run_multi_symbol_backtest(
-    request_body: web::Json<serde_json::Value>,
-) -> impl Responder {
-    let backtest_params = request_body.into_inner();
-    
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "success",
-        "message": "Multi-symbol backtest endpoint - needs implementation",
-        "received_params": backtest_params,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "note": "Connect this to your multi-symbol backtest logic"
-    }))
-}
-
-async fn run_parameter_optimization(
-    request_body: web::Json<serde_json::Value>,
-) -> impl Responder {
-    let optimization_params = request_body.into_inner();
-    
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "success", 
-        "message": "Parameter optimization endpoint - needs implementation",
-        "received_params": optimization_params,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "note": "Connect this to your optimization logic"
-    }))
-}
-
-async fn run_portfolio_meta_optimized_backtest(
-    request_body: web::Json<serde_json::Value>,
-) -> impl Responder {
-    let portfolio_params = request_body.into_inner();
-    
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "success",
-        "message": "Portfolio meta backtest endpoint - needs implementation", 
-        "received_params": portfolio_params,
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "note": "Connect this to your portfolio backtest logic"
-    }))
 }
 
 // --- Debug Handlers ---
@@ -327,17 +285,18 @@ async fn main() -> std::io::Result<()> {
             
             // === BACKTEST ENDPOINTS ===
             .route("/backtest", web::post().to(run_backtest))
+            // FIXED: Use the proper api module handlers
             .route(
                 "/multi-symbol-backtest",
-                web::post().to(run_multi_symbol_backtest),
+                web::post().to(crate::api::multi_backtest_handler::run_multi_symbol_backtest),
             )
             .route(
                 "/optimize-parameters",
-                web::post().to(run_parameter_optimization),
+                web::post().to(crate::api::optimize_handler::run_parameter_optimization),
             )
             .route(
                 "/portfolio-meta-backtest",
-                web::post().to(run_portfolio_meta_optimized_backtest),
+                web::post().to(crate::api::optimize_handler::run_portfolio_meta_optimized_backtest),
             )
             
             // === DEBUG ENDPOINTS ===

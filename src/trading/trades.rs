@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use crate::api::detect::CandleData;
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TradeDirection {
     Long,
     Short,
@@ -49,6 +49,7 @@ pub struct Trade {
     pub symbol: String,
     pub id: String,
     pub pattern_id: String,
+    
     pub pattern_type: String,
     pub direction: TradeDirection,
     pub entry_time: String,
