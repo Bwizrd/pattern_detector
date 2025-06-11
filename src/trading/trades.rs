@@ -1,6 +1,6 @@
 // src/trades.rs
-use serde::{Deserialize, Serialize};
 use crate::api::detect::CandleData;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TradeDirection {
@@ -22,10 +22,9 @@ pub struct TradeConfig {
     pub default_stop_loss_pips: f64,
     pub default_take_profit_pips: f64,
     pub risk_percent: f64,
-    pub max_trades_per_pattern: usize,
-    pub enable_trailing_stop: bool,
-    pub trailing_stop_activation_pips: f64,
-    pub trailing_stop_distance_pips: f64,
+    pub max_trades_per_zone: usize, // ⭐ RENAMED from max_trades_per_pattern
+    pub min_zone_strength: Option<f64>,
+    pub max_touch_count: Option<i64>,
 }
 
 impl Default for TradeConfig {
@@ -36,10 +35,9 @@ impl Default for TradeConfig {
             default_stop_loss_pips: 20.0,
             default_take_profit_pips: 40.0,
             risk_percent: 1.0,
-            max_trades_per_pattern: 1,
-            enable_trailing_stop: false,
-            trailing_stop_activation_pips: 15.0,
-            trailing_stop_distance_pips: 10.0,
+            max_trades_per_zone: 1,
+            min_zone_strength: None, // Optional, can be set later
+            max_touch_count: None, // Optional, can be set later
         }
     }
 }
@@ -49,7 +47,7 @@ pub struct Trade {
     pub symbol: String,
     pub id: String,
     pub pattern_id: String,
-    
+
     pub pattern_type: String,
     pub direction: TradeDirection,
     pub entry_time: String,
@@ -65,6 +63,8 @@ pub struct Trade {
     pub exit_reason: Option<String>,
     pub candlestick_idx_entry: usize,
     pub candlestick_idx_exit: Option<usize>,
+    pub zone_strength: Option<f64>,
+    pub zone_touch_count: Option<i32>,
 }
 
 impl Trade {
@@ -79,10 +79,11 @@ impl Trade {
         stop_loss: f64,
         take_profit: f64,
         candlestick_idx: usize,
+        zone_strength: Option<f64>, // Add this
+        zone_touch_count: Option<i32>,
     ) -> Self {
-        
         let id = format!("{}-{}-{:?}", pattern_type, entry_candle.time, direction);
-        
+
         Self {
             symbol: symbol_arg,
             id,
@@ -102,9 +103,11 @@ impl Trade {
             exit_reason: None,
             candlestick_idx_entry: candlestick_idx,
             candlestick_idx_exit: None,
+            zone_strength,
+            zone_touch_count,
         }
     }
-    
+
     pub fn close(&mut self, exit_candle: &CandleData, exit_reason: &str, candlestick_idx: usize) {
         if self.status == TradeStatus::Closed {
             // println!("Warning: Attempted to close an already closed trade: {}", self.id); // Simple console log for now
@@ -115,7 +118,7 @@ impl Trade {
         self.exit_time = Some(exit_candle.time.clone());
         // self.exit_reason = Some(exit_reason.to_string()); // This will be set at the end
         // self.candlestick_idx_exit = Some(candlestick_idx); // This will be set at the end
-        
+
         let effective_exit_price = if exit_reason == "Stop Loss" {
             self.stop_loss
         } else if exit_reason == "Take Profit" {
@@ -131,13 +134,17 @@ impl Trade {
         // ---- TEMPORARY DEBUG LOG ----
         if identifier_to_check_for_symbol.contains("JPY_SB") {
             println!("[DEBUG Trade::close] JPY PAIR DETECTED for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
-        } else if identifier_to_check_for_symbol.contains("USDJPY_SB") { // Be more specific for testing
-             println!("[DEBUG Trade::close] USDJPY_SB PAIR DETECTED for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
+        } else if identifier_to_check_for_symbol.contains("USDJPY_SB") {
+            // Be more specific for testing
+            println!("[DEBUG Trade::close] USDJPY_SB PAIR DETECTED for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
         } else {
-             println!("[DEBUG Trade::close] NOT JPY PAIR for ID: {}, pattern_id: {}, pattern_type: {}", self.id, self.pattern_id, self.pattern_type);
+            println!(
+                "[DEBUG Trade::close] NOT JPY PAIR for ID: {}, pattern_id: {}, pattern_type: {}",
+                self.id, self.pattern_id, self.pattern_type
+            );
         }
         // ---- END TEMPORARY DEBUG LOG ----
-        
+
         // --- MINIMAL CHANGE TO DETERMINE pip_value ---
         let pip_value: f64;
         // Determine pip_value based on a field that reliably contains the symbol.
@@ -146,16 +153,18 @@ impl Trade {
         let identifier_to_check_for_symbol = &self.pattern_id; // Or self.id / self.pattern_type
 
         if identifier_to_check_for_symbol.contains("JPY_SB") {
-            pip_value = 0.01; 
-        } else if identifier_to_check_for_symbol.contains("NAS100_SB") || 
-                    identifier_to_check_for_symbol.contains("US500_SB") || 
-                    identifier_to_check_for_symbol.contains("XAU_SB") { // Assuming XAU_SB for gold
+            pip_value = 0.01;
+        } else if identifier_to_check_for_symbol.contains("NAS100_SB")
+            || identifier_to_check_for_symbol.contains("US500_SB")
+            || identifier_to_check_for_symbol.contains("XAU_SB")
+        {
+            // Assuming XAU_SB for gold
             pip_value = 1.0; // If SL/TP for these are in points/dollar values, and 1 point = 1.0 price change
         } else {
             pip_value = 0.0001; // Default for standard FX
         }
         // --- END MINIMAL CHANGE TO DETERMINE pip_value ---
-        
+
         let profit_loss_price_diff = match self.direction {
             TradeDirection::Long => effective_exit_price - self.entry_price,
             TradeDirection::Short => self.entry_price - effective_exit_price,
@@ -167,10 +176,10 @@ impl Trade {
         } else {
             // This case should be logged more formally if log crate is used.
             println!("Error: pip_value is zero or too small for trade ID {} (pattern_id: {}). Pips set to 0.", self.id, self.pattern_id);
-            0.0 
+            0.0
         };
-        
-        // Calculate monetary P/L using YOUR ORIGINAL FORMULA, but with the 
+
+        // Calculate monetary P/L using YOUR ORIGINAL FORMULA, but with the
         // *newly calculated (and correctly scaled) pips*.
         // Your original formula: profit_loss_pips * 10.0 * self.lot_size
         // This implies that the "10.0" factor was designed when profit_loss_pips was always
@@ -182,7 +191,7 @@ impl Trade {
         // Number of "0.0001 units" in price_diff = profit_loss_price_diff / 0.0001
         let old_system_equivalent_pips = profit_loss_price_diff / 0.0001;
         let calculated_monetary_profit_loss = old_system_equivalent_pips * 10.0 * self.lot_size;
-        
+
         // Assign all the values as per your original structure
         self.profit_loss = Some(calculated_monetary_profit_loss);
         self.profit_loss_pips = Some(calculated_pnl_pips); // THIS NOW HOLDS CORRECTLY SCALED PIPS
@@ -210,9 +219,9 @@ impl TradeSummary {
             .iter()
             .filter(|t| matches!(t.status, TradeStatus::Closed))
             .collect();
-        
+
         let total_trades = closed_trades.len();
-        
+
         if total_trades == 0 {
             return TradeSummary {
                 total_trades: 0,
@@ -226,71 +235,80 @@ impl TradeSummary {
                 max_drawdown: 0.0,
             };
         }
-        
-        let winning_trades = closed_trades.iter()
+
+        let winning_trades = closed_trades
+            .iter()
             .filter(|t| t.profit_loss.unwrap_or(0.0) > 0.0)
             .count();
-            
-        let losing_trades = closed_trades.iter()
+
+        let losing_trades = closed_trades
+            .iter()
             .filter(|t| t.profit_loss.unwrap_or(0.0) <= 0.0)
             .count();
-            
-        let total_profit_loss = closed_trades.iter()
+
+        let total_profit_loss = closed_trades
+            .iter()
             .map(|t| t.profit_loss.unwrap_or(0.0))
             .sum();
-            
+
         let win_rate = if total_trades > 0 {
             winning_trades as f64 / total_trades as f64 * 100.0
         } else {
             0.0
         };
-        
-        let total_wins: f64 = closed_trades.iter()
+
+        let total_wins: f64 = closed_trades
+            .iter()
             .filter(|t| t.profit_loss.unwrap_or(0.0) > 0.0)
             .map(|t| t.profit_loss.unwrap_or(0.0))
             .sum();
-            
-        let total_losses: f64 = closed_trades.iter()
+
+        let total_losses: f64 = closed_trades
+            .iter()
             .filter(|t| t.profit_loss.unwrap_or(0.0) < 0.0)
             .map(|t| t.profit_loss.unwrap_or(0.0).abs())
             .sum();
-            
+
         let average_win = if winning_trades > 0 {
             total_wins / winning_trades as f64
         } else {
             0.0
         };
-        
+
         let average_loss = if losing_trades > 0 {
             total_losses / losing_trades as f64
         } else {
             0.0
         };
-        
+
         let profit_factor = if total_losses > 0.0 {
             total_wins / total_losses
         } else {
-            if total_wins > 0.0 { f64::INFINITY } else { 0.0 }
+            if total_wins > 0.0 {
+                f64::INFINITY
+            } else {
+                0.0
+            }
         };
-        
+
         // Calculate max drawdown (simplified approach)
         let mut max_drawdown = 0.0;
         let mut peak = 0.0;
         let mut current_balance = 0.0;
-        
+
         for trade in closed_trades {
             current_balance += trade.profit_loss.unwrap_or(0.0);
-            
+
             if current_balance > peak {
                 peak = current_balance;
             }
-            
+
             let drawdown = peak - current_balance;
             if drawdown > max_drawdown {
                 max_drawdown = drawdown;
             }
         }
-        
+
         TradeSummary {
             total_trades,
             winning_trades,

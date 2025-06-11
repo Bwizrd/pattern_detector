@@ -492,7 +492,7 @@ pub async fn run_multi_backtest_internal(
                     default_stop_loss_pips: task_sl_pips,
                     default_take_profit_pips: task_tp_pips,
                     risk_percent: 1.0,
-                    max_trades_per_pattern: 1,
+                    max_trades_per_zone: 1,
                     ..Default::default()
                 };
                 let mut trade_executor = crate::trading::trading::TradeExecutor::new(

@@ -28,6 +28,7 @@ pub struct Trade {
     pub risk_reward_ratio: f64,
     pub timeframe: String,
     pub ctrader_order_id: Option<String>,
+
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -494,9 +495,9 @@ impl TradingEngine {
         let lot_size = self.get_lot_size_for_symbol(&signal.symbol, config.lot_size);
 
         // Calculate risk/reward ratio
-        let risk = (entry_price - stop_loss).abs() * 10000.0;
-        let reward = (take_profit - entry_price).abs() * 10000.0;
-        let risk_reward_ratio = if risk > 0.0 { reward / risk } else { 0.0 };
+        let risk_pips = config.stop_loss_pips;
+        let reward_pips = config.take_profit_pips;
+        let risk_reward_ratio = reward_pips / risk_pips;
 
         if risk_reward_ratio < config.min_risk_reward {
             return Err(format!(

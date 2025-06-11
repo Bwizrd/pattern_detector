@@ -145,7 +145,7 @@ impl TradeExecutor {
 
         // Use the same ZoneDetectionEngine as other endpoints
         let zone_engine = crate::zones::zone_detection::ZoneDetectionEngine::new();
-        
+
         let detection_request = crate::zones::zone_detection::ZoneDetectionRequest {
             symbol: self.symbol.clone(), // Keep symbol as-is (with _SB if present)
             timeframe: self.timeframe.as_deref().unwrap_or("1h").to_string(),
@@ -157,10 +157,7 @@ impl TradeExecutor {
         let detection_result = match zone_engine.detect_zones(detection_request) {
             Ok(result) => result,
             Err(e) => {
-                warn!(
-                    "EXECUTOR ({}): Zone detection failed: {}",
-                    self.symbol, e
-                );
+                warn!("EXECUTOR ({}): Zone detection failed: {}", self.symbol, e);
                 return;
             }
         };
@@ -176,22 +173,22 @@ impl TradeExecutor {
         for zone in &detection_result.supply_zones {
             if zone.is_active {
                 self.generate_trades_from_enriched_zone(
-                    zone, 
+                    zone,
                     true, // is_supply
-                    candles, 
-                    initial_trades
+                    candles,
+                    initial_trades,
                 );
             }
         }
 
-        // Process demand zones  
+        // Process demand zones
         for zone in &detection_result.demand_zones {
             if zone.is_active {
                 self.generate_trades_from_enriched_zone(
-                    zone, 
+                    zone,
                     false, // is_supply
-                    candles, 
-                    initial_trades
+                    candles,
+                    initial_trades,
                 );
             }
         }
@@ -199,145 +196,213 @@ impl TradeExecutor {
 
     // NEW METHOD: Generate trades from enriched zone (consistent with other endpoints)
     fn generate_trades_from_enriched_zone(
-        &self,
-        zone: &crate::types::EnrichedZone,
-        is_supply: bool,
-        candles: &[CandleData],
-        initial_trades: &mut Vec<Trade>,
-    ) {
-        let zone_id = zone.zone_id.as_ref().unwrap_or(&"UNKNOWN_ID".to_string()).clone();
-        let start_idx = zone.start_idx.unwrap_or(0) as usize;
-        
-        // Get zone boundaries
-        let zone_high = zone.zone_high.unwrap_or(0.0);
-        let zone_low = zone.zone_low.unwrap_or(0.0);
-        
-        // Proximal line is where we enter trades
-        let proximal_line = if is_supply { zone_low } else { zone_high };
-        
-        let trade_direction = if is_supply {
-            TradeDirection::Short
-        } else {
-            TradeDirection::Long
-        };
+    &self,
+    zone: &crate::types::EnrichedZone,
+    is_supply: bool,
+    candles: &[CandleData],
+    initial_trades: &mut Vec<Trade>,
+) {
+    let zone_id = zone
+        .zone_id
+        .as_ref()
+        .unwrap_or(&"UNKNOWN_ID".to_string())
+        .clone();
+    
+    info!(
+        "🔍 ZONE FILTER CHECK - Zone ID: {}, Strength: {:?}, Touch Count: {:?}",
+        zone_id, zone.strength_score, zone.touch_count
+    );
+    info!(
+        "🔧 CONFIG FILTERS - Min Strength: {:?}, Max Touch Count: {:?}",
+        self.config.min_zone_strength, self.config.max_touch_count
+    );
 
-        let pattern_type_str = format!(
-            "fifty_percent_{}_zone_engine",
-            if is_supply { "supply" } else { "demand" }
-        );
-
-        let loop_start_index = start_idx + 2; // Start after zone formation
-
-        if loop_start_index >= candles.len() {
-            debug!(
-                "Zone {}: Loop start index {} out of bounds ({} candles) for {}",
-                zone_id, loop_start_index, candles.len(), self.symbol
+    if let Some(min_strength) = self.config.min_zone_strength {
+        if let Some(zone_strength) = zone.strength_score {
+            info!(
+                "🎯 STRENGTH CHECK: Zone {} has strength {:.1}, required >= {:.1}",
+                zone_id, zone_strength, min_strength
             );
-            return;
+            if zone_strength < min_strength {
+                info!(
+                    "❌ Zone {}: Filtered out due to insufficient strength {:.1} < {:.1}",
+                    zone_id, zone_strength, min_strength
+                );
+                return;
+            }
+        } else {
+            warn!("Zone {} has no strength_score value", zone_id);
+        }
+    } else {
+        info!("No minimum strength filter configured");
+    }
+
+    if let Some(max_touches) = self.config.max_touch_count {
+        if let Some(zone_touches) = zone.touch_count {
+            info!(
+                "👆 TOUCH CHECK: Zone {} has {} touches, max allowed: {}",
+                zone_id, zone_touches, max_touches
+            );
+            if zone_touches > max_touches as i64 {
+                info!(
+                    "❌ Zone {}: Filtered out due to too many touches {} > {}",
+                    zone_id, zone_touches, max_touches
+                );
+                return;
+            }
+        } else {
+            warn!("Zone {} has no touch_count value", zone_id);
+        }
+    } else {
+        info!("No maximum touch count filter configured");
+    }
+
+    info!("✅ Zone {} passed all filters, proceeding with trade generation", zone_id);
+    let start_idx = zone.start_idx.unwrap_or(0) as usize;
+
+    // Get zone boundaries
+    let zone_high = zone.zone_high.unwrap_or(0.0);
+    let zone_low = zone.zone_low.unwrap_or(0.0);
+
+    // Proximal line is where we enter trades
+    let proximal_line = if is_supply { zone_low } else { zone_high };
+
+    let trade_direction = if is_supply {
+        TradeDirection::Short
+    } else {
+        TradeDirection::Long
+    };
+
+    let pattern_type_str = format!(
+        "fifty_percent_{}_zone_engine",
+        if is_supply { "supply" } else { "demand" }
+    );
+
+    let loop_start_index = start_idx + 2; // Start after zone formation
+
+    if loop_start_index >= candles.len() {
+        debug!(
+            "Zone {}: Loop start index {} out of bounds ({} candles) for {}",
+            zone_id,
+            loop_start_index,
+            candles.len(),
+            self.symbol
+        );
+        return;
+    }
+
+    let mut zone_trade_count = 0; // ⭐ ADD THIS LINE
+
+    for i in loop_start_index..candles.len() {
+        // ⭐ FIX THE LOGIC HERE
+        if zone_trade_count >= self.config.max_trades_per_zone {
+            break;
         }
 
-        let mut entered_this_zone = false;
+        let current_candle = &candles[i];
 
-        for i in loop_start_index..candles.len() {
-            if entered_this_zone && self.config.max_trades_per_pattern == 1 {
-                break;
-            }
-
-            let current_candle = &candles[i];
-
-            // Time filtering (same as before)
-            if let Ok(entry_candle_dt) = DateTime::parse_from_rfc3339(&current_candle.time)
-                .map(|dt| dt.with_timezone(&Utc))
-            {
-                if let Some(allowed_days) = &self.allowed_trade_days {
-                    if !allowed_days.contains(&entry_candle_dt.weekday()) {
-                        trace!(
-                            "Zone {} on {}: Skipped due to day filter. Entry time: {}",
-                            zone_id, self.symbol, current_candle.time
-                        );
-                        continue;
-                    }
-                }
-                if let Some(end_hour) = self.trade_end_hour_utc {
-                    if entry_candle_dt.hour() >= end_hour {
-                        trace!(
-                            "Zone {} on {}: Skipped due to hour filter. Entry time: {}",
-                            zone_id, self.symbol, current_candle.time
-                        );
-                        continue;
-                    }
-                }
-            } else {
-                warn!(
-                    "Could not parse candle time '{}' for time filtering in symbol {}",
-                    current_candle.time, self.symbol
-                );
-                continue;
-            }
-
-            // Check for entry trigger
-            let mut entry_triggered = false;
-            if trade_direction == TradeDirection::Long && current_candle.low <= proximal_line {
-                entry_triggered = true;
-            } else if trade_direction == TradeDirection::Short && current_candle.high >= proximal_line {
-                entry_triggered = true;
-            }
-
-            if entry_triggered {
-                info!(
-                    "!!! {} ZONE TOUCHED !!! Symbol: {}, Zone ID: {}, Candle Idx: {} ({})",
-                    if is_supply { "SUPPLY" } else { "DEMAND" },
-                    self.symbol,
-                    zone_id,
-                    i,
-                    current_candle.time
-                );
-
-                let entry_price = proximal_line;
-                let stop_loss = match trade_direction {
-                    TradeDirection::Long => {
-                        entry_price - (self.config.default_stop_loss_pips * self.pip_size)
-                    }
-                    TradeDirection::Short => {
-                        entry_price + (self.config.default_stop_loss_pips * self.pip_size)
-                    }
-                };
-                let take_profit = match trade_direction {
-                    TradeDirection::Long => {
-                        entry_price + (self.config.default_take_profit_pips * self.pip_size)
-                    }
-                    TradeDirection::Short => {
-                        entry_price - (self.config.default_take_profit_pips * self.pip_size)
-                    }
-                };
-
-                let trade = Trade::new(
-                    self.symbol.clone(),
-                    zone_id.clone(),
-                    pattern_type_str.clone(),
-                    trade_direction,
-                    current_candle,
-                    entry_price,
-                    self.config.lot_size,
-                    stop_loss,
-                    take_profit,
-                    i,
-                );
-
-                info!(
-                    "EXECUTOR ({} {}): Generated Trade ID {} at index {}, EntryTime: {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
-                    self.symbol, pattern_type_str, trade.id, i, trade.entry_time, trade.entry_price, trade.stop_loss, trade.take_profit
-                );
-
-                initial_trades.push(trade);
-                entered_this_zone = true;
-
-                if self.config.max_trades_per_pattern == 1 {
-                    break; // Only one trade per zone
+        // Time filtering (same as before)
+        if let Ok(entry_candle_dt) =
+            DateTime::parse_from_rfc3339(&current_candle.time).map(|dt| dt.with_timezone(&Utc))
+        {
+            if let Some(allowed_days) = &self.allowed_trade_days {
+                if !allowed_days.contains(&entry_candle_dt.weekday()) {
+                    trace!(
+                        "Zone {} on {}: Skipped due to day filter. Entry time: {}",
+                        zone_id,
+                        self.symbol,
+                        current_candle.time
+                    );
+                    continue;
                 }
             }
+            if let Some(end_hour) = self.trade_end_hour_utc {
+                if entry_candle_dt.hour() >= end_hour {
+                    trace!(
+                        "Zone {} on {}: Skipped due to hour filter. Entry time: {}",
+                        zone_id,
+                        self.symbol,
+                        current_candle.time
+                    );
+                    continue;
+                }
+            }
+        } else {
+            warn!(
+                "Could not parse candle time '{}' for time filtering in symbol {}",
+                current_candle.time, self.symbol
+            );
+            continue;
+        }
+
+        // Check for entry trigger
+        let mut entry_triggered = false;
+        if trade_direction == TradeDirection::Long && current_candle.low <= proximal_line {
+            entry_triggered = true;
+        } else if trade_direction == TradeDirection::Short
+            && current_candle.high >= proximal_line
+        {
+            entry_triggered = true;
+        }
+
+        if entry_triggered {
+            info!(
+                "!!! {} ZONE TOUCHED !!! Symbol: {}, Zone ID: {}, Candle Idx: {} ({})",
+                if is_supply { "SUPPLY" } else { "DEMAND" },
+                self.symbol,
+                zone_id,
+                i,
+                current_candle.time
+            );
+
+            let entry_price = proximal_line;
+            let stop_loss = match trade_direction {
+                TradeDirection::Long => {
+                    entry_price - (self.config.default_stop_loss_pips * self.pip_size)
+                }
+                TradeDirection::Short => {
+                    entry_price + (self.config.default_stop_loss_pips * self.pip_size)
+                }
+            };
+            let take_profit = match trade_direction {
+                TradeDirection::Long => {
+                    entry_price + (self.config.default_take_profit_pips * self.pip_size)
+                }
+                TradeDirection::Short => {
+                    entry_price - (self.config.default_take_profit_pips * self.pip_size)
+                }
+            };
+
+            let trade = Trade::new(
+                self.symbol.clone(),
+                zone_id.clone(),
+                pattern_type_str.clone(),
+                trade_direction,
+                current_candle,
+                entry_price,
+                self.config.lot_size,
+                stop_loss,
+                take_profit,
+                i,
+                zone.strength_score,           // ← Add this
+                zone.touch_count.map(|t| t as i32), 
+            );
+
+            info!(
+                "EXECUTOR ({} {}): Generated Trade ID {} at index {}, EntryTime: {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
+                self.symbol, pattern_type_str, trade.id, i, trade.entry_time, trade.entry_price, trade.stop_loss, trade.take_profit
+            );
+
+            initial_trades.push(trade);
+            zone_trade_count += 1; // ⭐ INCREMENT AFTER ADDING TRADE
+
+            // ⭐ REMOVE THE OLD LOGIC
+            // if self.config.max_trades_per_zone == 1 {
+            //     break; // Only one trade per zone
+            // }
         }
     }
+}
 
     fn process_trades(&self, trades: &mut Vec<Trade>, hourly_candles: &[CandleData]) {
         if let Some(minute_candles) = &self.minute_candles {
@@ -404,7 +469,7 @@ impl TradeExecutor {
 
                             // Generate deterministic zone ID using same function as cache/bulk-multi
                             let zone_id = crate::api::detect::generate_deterministic_zone_id(
-                                 &self.symbol.replace("_SB", ""),
+                                &self.symbol.replace("_SB", ""),
                                 timeframe,
                                 if *is_supply_zone_type {
                                     "supply"
@@ -440,7 +505,7 @@ impl TradeExecutor {
 
                             for i in loop_start_index..candles.len() {
                                 if entered_this_specific_zone_instance
-                                    && self.config.max_trades_per_pattern == 1
+                                    && self.config.max_trades_per_zone == 1
                                 {
                                     break;
                                 }
@@ -529,6 +594,8 @@ impl TradeExecutor {
                                         stop_loss,
                                         take_profit,
                                         i,
+                                        None, // No zone strength available in old method
+                      None, // No touch count available in old method
                                     );
                                     info!(
                                         "EXECUTOR ({} {}): Generated Trade ID {} at index {}, EntryTime: {}, Entry: {:.5}, SL: {:.5}, TP: {:.5}",
@@ -536,7 +603,7 @@ impl TradeExecutor {
                                     );
                                     initial_trades.push(trade);
                                     entered_this_specific_zone_instance = true;
-                                    if self.config.max_trades_per_pattern == 1 {
+                                    if self.config.max_trades_per_zone == 1 {
                                         break;
                                     } // Only one trade per zone instance
                                 }
@@ -671,6 +738,8 @@ impl TradeExecutor {
                         sl_price,
                         tp_price,
                         entry_candle_idx,
+                        None, // No zone strength available in old method
+                        None, 
                     );
                     info!(
                         "EXECUTOR ({} Specific Time): Generated {:?} Trade ID {}",

@@ -231,10 +231,7 @@ async fn run_enhanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                     default_stop_loss_pips: stop_loss_pips,
                     default_take_profit_pips: take_profit_pips,
                     risk_percent: 1.0,
-                    max_trades_per_pattern: 2,
-                    enable_trailing_stop: false,
-                    trailing_stop_activation_pips: 10.0,
-                    trailing_stop_distance_pips: 5.0,
+                    max_trades_per_zone: 2,
                     ..Default::default()
                 };
 

@@ -166,7 +166,7 @@ async fn run_performance_scan() -> Result<(), Box<dyn std::error::Error>> {
                 let trade_config = TradeConfig {
                     enabled: true, lot_size: lot_size_c,
                     default_stop_loss_pips: sl_c, default_take_profit_pips: tp_c,
-                    risk_percent: 1.0, max_trades_per_pattern: 1, 
+                    risk_percent: 1.0, max_trades_per_zone: 1, 
                     ..Default::default()
                 };
 

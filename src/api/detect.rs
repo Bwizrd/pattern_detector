@@ -267,7 +267,6 @@ pub async fn detect_patterns(query: web::Query<ChartQuery>) -> impl Responder {
                     lot_size: query.lot_size.unwrap_or(0.01),
                     default_stop_loss_pips: query.stop_loss_pips.unwrap_or(20.0),
                     default_take_profit_pips: query.take_profit_pips.unwrap_or(40.0),
-                    enable_trailing_stop: query.enable_trailing_stop.unwrap_or(false),
                     ..TradeConfig::default()
                 };
                 // Call requires `recognizer.trade` to be implemented correctly
@@ -1267,24 +1266,44 @@ pub fn generate_deterministic_zone_id(
 ) -> String {
     use sha2::{Digest, Sha256};
 
-    const PRECISION: usize = 6; // Or your desired precision
+    const PRECISION: usize = 8; // Or your desired precision
+
+    // ⭐ CRITICAL FIX: Always standardize symbol by removing _SB suffix
+    let clean_symbol = symbol.replace("_SB", "");
+    
+    // STANDARDIZE TIMEFRAME: Always lowercase
+    let clean_timeframe = timeframe.to_lowercase();
+    
+    // STANDARDIZE ZONE TYPE: Always lowercase
+    let clean_zone_type = zone_type.to_lowercase();
+
     let high_str = zone_high.map_or("0.0".to_string(), |v| {
-        format!("{:.prec$}", v, prec = PRECISION)
+        if v.is_finite() {
+            format!("{:.prec$}", v, prec = PRECISION)
+        } else {
+            "0.0".to_string()
+        }
     });
     let low_str = zone_low.map_or("0.0".to_string(), |v| {
-        format!("{:.prec$}", v, prec = PRECISION)
+        if v.is_finite() {
+            format!("{:.prec$}", v, prec = PRECISION)
+        } else {
+            "0.0".to_string()
+        }
     });
+    let clean_start_time = start_time.unwrap_or("unknown");
 
-    // Create a unique ID based on the zone's key properties
+    // Create deterministic ID input
     let id_input = format!(
         "{}_{}_{}_{}_{}_{}",
-        symbol,
-        timeframe,
-        zone_type,
-        start_time.unwrap_or("unknown"),
-        high_str, // Use formatted float string
-        low_str   // Use formatted float string
+        clean_symbol,      // ⭐ Now always "USDJPY" regardless of input
+        clean_timeframe,   // Always lowercase "1h"
+        clean_zone_type,   // Always lowercase "demand"
+        clean_start_time,
+        high_str,
+        low_str
     );
+
 
     let mut hasher = Sha256::new();
     hasher.update(id_input.as_bytes());
@@ -1292,7 +1311,16 @@ pub fn generate_deterministic_zone_id(
     let hex_id = format!("{:x}", result);
 
     // Use the first 16 chars of the hash for the ID
-    hex_id[..16].to_string()
+     let final_id = hex_id[..16].to_string();
+    
+    #[cfg(debug_assertions)]
+    {
+        crate::api::detect::debug_to_file(&format!(
+            "🔧 [ZONE_ID_STANDARD] Generated ID: '{}'", final_id
+        ));
+    }
+
+    final_id
 }
 
 /// Calculates the number of times a zone was "touched" by candles *after* its formation,
