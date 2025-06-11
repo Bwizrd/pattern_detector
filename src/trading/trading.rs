@@ -28,6 +28,7 @@ pub struct TradeExecutor {
     timeframe: Option<String>,
     allowed_trade_days: Option<Vec<Weekday>>,
     trade_end_hour_utc: Option<u32>,
+    rejected_trades: std::cell::RefCell<Vec<crate::trading::backtest::backtest_api::RejectedTradeResult>>,
 }
 
 impl TradeExecutor {
@@ -46,6 +47,7 @@ impl TradeExecutor {
             timeframe: None,
             allowed_trade_days: allowed_days,
             trade_end_hour_utc: end_hour,
+            rejected_trades: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -61,6 +63,37 @@ impl TradeExecutor {
 
     pub fn set_minute_candles(&mut self, candles: Vec<CandleData>) {
         self.minute_candles = Some(candles);
+    }
+
+    pub fn get_rejected_trades(&self) -> Vec<crate::trading::backtest::backtest_api::RejectedTradeResult> {
+        self.rejected_trades.borrow().clone()
+    }
+
+    pub fn clear_rejected_trades(&self) {
+        self.rejected_trades.borrow_mut().clear();
+    }
+
+    fn record_rejection(&self, 
+        zone_id: &str, 
+        is_supply: bool, 
+        reason: String, 
+        zone_strength: Option<f64>, 
+        touch_count: Option<i32>, 
+        zone_price: Option<f64>
+    ) {
+        let rejection = crate::trading::backtest::backtest_api::RejectedTradeResult {
+            symbol: self.symbol.clone(),
+            timeframe: self.timeframe.as_deref().unwrap_or("1h").to_string(),
+            zone_id: zone_id.to_string(),
+            direction: if is_supply { "Short".to_string() } else { "Long".to_string() },
+            rejection_time: chrono::Utc::now(),
+            rejection_reason: reason,
+            zone_strength,
+            touch_count,
+            zone_price,
+            entry_candle_index: None,
+        };
+        self.rejected_trades.borrow_mut().push(rejection);
     }
 
     pub fn execute_trades_for_pattern(
@@ -228,6 +261,16 @@ impl TradeExecutor {
                     "❌ Zone {}: Filtered out due to insufficient strength {:.1} < {:.1}",
                     zone_id, zone_strength, min_strength
                 );
+                
+                // Record rejection
+                self.record_rejection(
+                    &zone_id,
+                    is_supply,
+                    format!("insufficient_zone_strength_{:.1}_min_{:.1}", zone_strength, min_strength),
+                    Some(zone_strength),
+                    zone.touch_count.map(|t| t as i32),
+                    if is_supply { zone.zone_low } else { zone.zone_high }
+                );
                 return;
             }
         } else {
@@ -247,6 +290,16 @@ impl TradeExecutor {
                 info!(
                     "❌ Zone {}: Filtered out due to too many touches {} > {}",
                     zone_id, zone_touches, max_touches
+                );
+                
+                // Record rejection
+                self.record_rejection(
+                    &zone_id,
+                    is_supply,
+                    format!("too_many_touches_{}_max_{}", zone_touches, max_touches),
+                    zone.strength_score,
+                    Some(zone_touches as i32),
+                    if is_supply { zone.zone_low } else { zone.zone_high }
                 );
                 return;
             }

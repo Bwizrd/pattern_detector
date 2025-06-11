@@ -27,6 +27,9 @@ pub struct MultiBacktestRequest {
     pub allowed_timeframes: Option<Vec<String>>,
     pub trade_start_hour_utc: Option<u32>,
     pub trade_end_hour_utc: Option<u32>,
+
+    // Rejected trades tracking
+    pub show_rejected_trades: Option<bool>,
 }
 
 impl MultiBacktestRequest {
@@ -156,6 +159,11 @@ impl MultiBacktestRequest {
                 .and_then(|s| s.parse().ok())
         })
     }
+
+    /// Get show rejected trades with default fallback
+    pub fn get_show_rejected_trades(&self) -> bool {
+        self.show_rejected_trades.unwrap_or(false)
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -175,6 +183,20 @@ pub struct IndividualTradeResult {
     // For analytics
     pub entry_day_of_week: Option<String>, // e.g., "Monday"
     pub entry_hour_of_day: Option<u32>,    // 0-23
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct RejectedTradeResult {
+    pub symbol: String,
+    pub timeframe: String,
+    pub zone_id: String,
+    pub direction: String,
+    pub rejection_time: DateTime<Utc>,
+    pub rejection_reason: String,
+    pub zone_strength: Option<f64>,
+    pub touch_count: Option<i32>,
+    pub zone_price: Option<f64>,
+    pub entry_candle_index: Option<usize>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -206,6 +228,13 @@ pub struct OverallBacktestSummary {
     pub trades_by_hour_of_day_percent: std::collections::HashMap<u32, f64>, // {9: 15.0 (for 9 AM)}
     pub pnl_by_hour_of_day_pips: std::collections::HashMap<u32, f64>,
     // Add more aggregated stats as needed
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct RejectionSummary {
+    pub total_rejections: usize,
+    pub rejections_by_reason: std::collections::HashMap<String, usize>,
+    pub rejections_by_symbol: std::collections::HashMap<String, usize>,
 }
 
 // ⭐ NEW: Trading rules and environment tracking structs
@@ -274,6 +303,12 @@ pub struct MultiBacktestResponse {
     pub overall_summary: OverallBacktestSummary,
     pub detailed_summaries: Vec<SymbolTimeframeSummary>,
     pub all_trades: Vec<IndividualTradeResult>, // Important for granular analysis
+    
+    // Rejected trades tracking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejected_trades: Option<Vec<RejectedTradeResult>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejection_summary: Option<RejectionSummary>,
     
     // ⭐ NEW: Complete trading rules transparency
     pub trading_rules_applied: TradingRulesSnapshot,

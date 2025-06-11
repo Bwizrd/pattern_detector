@@ -6,6 +6,7 @@ use crate::trading::backtest::backtest_api::{
     IndividualTradeResult, SymbolTimeframeSummary,
     // ⭐ ADD THESE NEW IMPORTS:
     TradingRulesSnapshot, EnvironmentVariablesSnapshot, RequestParametersSnapshot,
+    RejectedTradeResult, RejectionSummary,
 };
 use crate::zones::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
 use crate::trading::trades::TradeConfig;
@@ -295,6 +296,7 @@ pub async fn run_multi_symbol_backtest(
     let take_profit_pips = req.0.get_take_profit_pips();
     let lot_size = req.0.get_lot_size();
     let max_trades_per_zone = req.0.get_max_trades_per_zone();
+    let show_rejected_trades = req.0.get_show_rejected_trades();
     
     // Parse allowed days using the request helper method
     let parsed_allowed_days: Option<Vec<Weekday>> = parse_allowed_days(req.0.get_allowed_trade_days());
@@ -356,6 +358,7 @@ pub async fn run_multi_symbol_backtest(
             // ⭐ ADD THESE LINES:
             let task_min_zone_strength = req.0.get_min_zone_strength();
             let task_max_touch_count = req.0.get_max_touch_count_for_trading();
+            let task_show_rejected_trades = req.0.get_show_rejected_trades();
             let host_clone = host.clone();
             let org_clone = org.clone();
             let token_clone = token.clone();
@@ -366,23 +369,23 @@ pub async fn run_multi_symbol_backtest(
 
                 let pattern_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &task_symbol, &task_pattern_tf, &task_start_time, &task_end_time ).await {
                     Ok(candles) => candles,
-                    Err(e) => { error!("Task Error: loading pattern candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
+                    Err(e) => { error!("Task Error: loading pattern candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 };
-                if pattern_candles.is_empty() { warn!("Task Info: No pattern candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
+                if pattern_candles.is_empty() { warn!("Task Info: No pattern candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 debug!("Task Info: Loaded {} pattern candles for {}/{}", pattern_candles.len(), task_symbol, task_pattern_tf);
 
                 let execution_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &task_symbol, &task_execution_tf, &task_start_time, &task_end_time ).await {
                     Ok(candles) => candles,
-                    Err(e) => { error!("Task Error: loading execution (1m) candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
+                    Err(e) => { error!("Task Error: loading execution (1m) candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 };
-                if execution_candles.is_empty() { warn!("Task Info: No execution (1m) candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
+                if execution_candles.is_empty() { warn!("Task Info: No execution (1m) candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 debug!("Task Info: Loaded {} execution candles for {}/{}", execution_candles.len(), task_symbol, task_execution_tf);
 
                 let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
                 let detected_value_json: serde_json::Value = recognizer.detect(&pattern_candles);
                 let mut total_detected_zones_count = 0;
                 if let Some(data_val) = detected_value_json.get("data") { if let Some(price_val) = data_val.get("price") { if let Some(supply_zones_val) = price_val.get("supply_zones") { if let Some(zones_array) = supply_zones_val.get("zones").and_then(|z| z.as_array()) { total_detected_zones_count += zones_array.len(); } } if let Some(demand_zones_val) = price_val.get("demand_zones") { if let Some(zones_array) = demand_zones_val.get("zones").and_then(|z| z.as_array()) { total_detected_zones_count += zones_array.len(); } } } }
-                if total_detected_zones_count == 0 { info!("Task Info: No pattern zones found in JSON for {} on {}", task_symbol, task_pattern_tf); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary); }
+                if total_detected_zones_count == 0 { info!("Task Info: No pattern zones found in JSON for {} on {}", task_symbol, task_pattern_tf); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 debug!("Task Info: Total {} raw pattern zones found in JSON for {}/{}", total_detected_zones_count, task_symbol, task_pattern_tf);
 
                 // ⭐ USE THE SAME SIMPLE CONFIG AS ORIGINAL
@@ -487,19 +490,28 @@ pub async fn run_multi_symbol_backtest(
                     total_pnl_pips: round_f64(total_pnl_pips_for_summary_raw, 1), // Uses sum of (potentially adjusted) raw pips
                     profit_factor: round_f64(profit_factor_val, 2),
                 };
-                (task_symbol, task_pattern_tf, current_task_trades_result, summary_for_task)
+                // Collect rejected trades if requested
+                let rejected_trades_for_task = if task_show_rejected_trades {
+                    trade_executor.get_rejected_trades()
+                } else {
+                    Vec::new()
+                };
+
+                (task_symbol, task_pattern_tf, current_task_trades_result, summary_for_task, rejected_trades_for_task)
             }));
         }
     }
 
     let task_results_outcomes = join_all(tasks).await;
     let mut all_individual_trades: Vec<IndividualTradeResult> = Vec::new();
+    let mut all_rejected_trades: Vec<RejectedTradeResult> = Vec::new();
     let mut detailed_summaries: Vec<SymbolTimeframeSummary> = Vec::new();
 
     for result_outcome in task_results_outcomes {
         match result_outcome {
-            Ok((_symbol, _pattern_tf, individual_trades_from_task, summary_from_task)) => {
+            Ok((_symbol, _pattern_tf, individual_trades_from_task, summary_from_task, rejected_trades_from_task)) => {
                 all_individual_trades.extend(individual_trades_from_task);
+                all_rejected_trades.extend(rejected_trades_from_task);
                 if summary_from_task.total_trades > 0 { // Only add summary if trades occurred
                     detailed_summaries.push(summary_from_task);
                 }
@@ -601,11 +613,36 @@ pub async fn run_multi_symbol_backtest(
         pnl_by_hour_of_day_pips: pnl_by_hour_pips_final,
     };
 
+    // Create rejection summary if rejected trades were requested
+    let (rejected_trades_response, rejection_summary_response) = if show_rejected_trades {
+        let mut rejections_by_reason = std::collections::HashMap::new();
+        let mut rejections_by_symbol = std::collections::HashMap::new();
+        
+        for rejected_trade in &all_rejected_trades {
+            *rejections_by_reason.entry(rejected_trade.rejection_reason.clone()).or_insert(0) += 1;
+            *rejections_by_symbol.entry(rejected_trade.symbol.clone()).or_insert(0) += 1;
+        }
+        
+        let rejection_summary = RejectionSummary {
+            total_rejections: all_rejected_trades.len(),
+            rejections_by_reason,
+            rejections_by_symbol,
+        };
+        
+        (Some(all_rejected_trades), Some(rejection_summary))
+    } else {
+        (None, None)
+    };
+
     // ⭐ BUILD RESPONSE WITH TRADING RULES INCLUDED
     let response_payload = MultiBacktestResponse {
         overall_summary,
         detailed_summaries,
         all_trades: all_individual_trades,
+        
+        // Rejected trades tracking
+        rejected_trades: rejected_trades_response,
+        rejection_summary: rejection_summary_response,
         
         // ⭐ ADD THE NEW TRADING RULES FIELDS:
         trading_rules_applied: trading_rules_snapshot,
