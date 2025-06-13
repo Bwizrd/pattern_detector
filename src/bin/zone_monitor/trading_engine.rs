@@ -472,19 +472,29 @@ impl TradingEngine {
             .get(&sb_symbol)
             .ok_or_else(|| format!("symbol_mapping_not_found_{}", signal.symbol))?;
 
+        // Get pip value for the symbol
+        let pip_value = if signal.symbol.contains("JPY") {
+            0.01
+        } else {
+            0.0001
+        };
+
         // Determine trade direction based on zone type
-        let (trade_type, entry_price, stop_loss, take_profit) = match signal.zone_type.as_str() {
+        // Send positive pip distances - TypeScript bridge will convert to relative values
+        let (trade_type, entry_price, stop_loss_distance, take_profit_distance) = match signal.zone_type.as_str() {
             "demand_zone" => {
                 let entry = current_price;
-                let sl = config.stop_loss_pips; // Use pip value directly
-                let tp = config.take_profit_pips; // Use pip value directly
-                ("buy".to_string(), entry, sl, tp)
+                // For BUY: Send positive pip distances
+                let sl_distance = config.stop_loss_pips * pip_value;  // Always positive
+                let tp_distance = config.take_profit_pips * pip_value; // Always positive
+                ("buy".to_string(), entry, sl_distance, tp_distance)
             }
             "supply_zone" => {
                 let entry = current_price;
-                let sl = config.stop_loss_pips; // Use pip value directly
-                let tp = config.take_profit_pips; // Use pip value directly
-                ("sell".to_string(), entry, sl, tp)
+                // For SELL: Send positive pip distances
+                let sl_distance = config.stop_loss_pips * pip_value;  // Always positive
+                let tp_distance = config.take_profit_pips * pip_value; // Always positive
+                ("sell".to_string(), entry, sl_distance, tp_distance)
             }
             _ => {
                 return Err(format!("unknown_zone_type_{}", signal.zone_type));
@@ -512,8 +522,8 @@ impl TradingEngine {
             symbol: signal.symbol.clone(),
             trade_type,
             entry_price,
-            stop_loss,
-            take_profit,
+            stop_loss: stop_loss_distance,
+            take_profit: take_profit_distance,
             lot_size,
             status: "pending".to_string(),
             opened_at: chrono::Utc::now(),
@@ -530,7 +540,7 @@ impl TradingEngine {
         let config = self.config.read().await;
 
         info!(
-            "🚀 Executing {} trade: {} @ {:.5} (SL: {:.5}, TP: {:.5})",
+            "🚀 Executing {} trade: {} @ {:.5} (SL distance: {:.5}, TP distance: {:.5})",
             trade.trade_type.to_uppercase(),
             trade.symbol,
             trade.entry_price,
@@ -561,7 +571,7 @@ impl TradingEngine {
         let url = format!("{}/placeOrder", config.api_bridge_url);
 
         info!(
-            "🌐 API call: {} with symbol_id={}, trade_side={}, volume={}, SL={:.5}, TP={:.5}",
+            "🌐 API call: {} with symbol_id={}, trade_side={}, volume={}, SL_distance={:.5}, TP_distance={:.5}",
             url,
             request.symbol_id,
             request.trade_side,

@@ -16,8 +16,7 @@ pub struct TradingRules {
     pub allowed_weekdays: HashSet<u8>,
 
     // Zone quality filters
-    pub min_touch_count: i32,
-    pub max_touch_count: Option<i32>,
+    pub max_touch_count: i32, // Maximum touches allowed (0 and 1 are valid if max is 1)
     pub min_zone_strength: f64,
 
     // Timing filters
@@ -36,14 +35,14 @@ impl TradingRules {
     pub fn from_env() -> Self {
         // Parse allowed symbols (comma-separated)
         let allowed_symbols: HashSet<String> = env::var("TRADING_ALLOWED_SYMBOLS")
-            .unwrap_or_else(|_| "EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD".to_string())
+            .unwrap_or_else(|_| "EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD,NZDUSD,EURGBP,EURJPY,EURCHF,EURAUD,EURCAD,EURNZD,GBPJPY,GBPCHF,GBPAUD,GBPCAD,GBPNZD,AUDJPY,AUDNZD,AUDCAD,NZDJPY,CADJPY,CHFJPY".to_string())
             .split(',')
             .map(|s| s.trim().to_uppercase())
             .collect();
 
         // Parse allowed timeframes (comma-separated)
         let allowed_timeframes: HashSet<String> = env::var("TRADING_ALLOWED_TIMEFRAMES")
-            .unwrap_or_else(|_| "1h,4h,1d".to_string())
+            .unwrap_or_else(|_| "30m,1h,4h,1d".to_string())
             .split(',')
             .map(|s| s.trim().to_lowercase())
             .collect();
@@ -56,19 +55,15 @@ impl TradingRules {
             .filter(|&day| day >= 1 && day <= 7)
             .collect();
 
-        let min_touch_count = env::var("TRADING_MIN_TOUCH_COUNT")
-            .unwrap_or_else(|_| "1".to_string())
+        let max_touch_count = env::var("MAX_TOUCH_COUNT_FOR_TRADING")
+            .unwrap_or_else(|_| "4".to_string()) // Match backtest API default
             .parse::<i32>()
-            .unwrap_or(1);
-
-        let max_touch_count = env::var("TRADING_MAX_TOUCH_COUNT")
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok());
+            .unwrap_or(4);
 
         let min_zone_strength = env::var("TRADING_MIN_ZONE_STRENGTH")
-            .unwrap_or_else(|_| "70.0".to_string())
+            .unwrap_or_else(|_| "100.0".to_string()) // Match backtest API default
             .parse::<f64>()
-            .unwrap_or(70.0);
+            .unwrap_or(100.0);
 
         let trading_start_hour_utc = env::var("TRADING_START_HOUR_UTC")
             .ok()
@@ -84,21 +79,20 @@ impl TradingRules {
             .unwrap_or(60);
 
         let trading_enabled = env::var("TRADING_ENABLED")
-            .unwrap_or_else(|_| "true".to_string())  // Default to true for backtesting
+            .unwrap_or_else(|_| "false".to_string())  // Match backtest API default
             .trim()
             .to_lowercase()
             == "true";
 
         let max_daily_signals = env::var("TRADING_MAX_DAILY_SIGNALS")
-            .unwrap_or_else(|_| "5".to_string())
+            .unwrap_or_else(|_| "10".to_string()) // Match backtest API default
             .parse::<u32>()
-            .unwrap_or(5);
+            .unwrap_or(10);
 
         Self {
             allowed_symbols,
             allowed_timeframes,
             allowed_weekdays,
-            min_touch_count,
             max_touch_count,
             min_zone_strength,
             trading_start_hour_utc,
@@ -115,6 +109,8 @@ pub struct BacktestTradeValidator {
     triggered_zones: HashMap<String, DateTime<Utc>>, // zone_id -> last_trigger_time
     daily_signal_count: u32,
     last_reset_date: DateTime<Utc>,
+    trades_per_symbol: HashMap<String, u32>, // symbol -> trade count
+    trades_per_zone: HashMap<String, usize>, // zone_id -> trade count
 }
 
 impl BacktestTradeValidator {
@@ -126,6 +122,8 @@ impl BacktestTradeValidator {
             triggered_zones: HashMap::new(),
             daily_signal_count: 0,
             last_reset_date: Utc::now(),
+            trades_per_symbol: HashMap::new(),
+            trades_per_zone: HashMap::new(),
         }
     }
 
@@ -204,21 +202,12 @@ impl BacktestTradeValidator {
             ));
         }
 
-        // Check touch count
-        if touch_count < self.rules.min_touch_count {
+        // Check touch count - only reject if above maximum
+        if touch_count > self.rules.max_touch_count {
             return Err(format!(
-                "Touch count {} below minimum {}",
-                touch_count, self.rules.min_touch_count
+                "Touch count {} above maximum {}",
+                touch_count, self.rules.max_touch_count
             ));
-        }
-
-        if let Some(max_touches) = self.rules.max_touch_count {
-            if touch_count > max_touches {
-                return Err(format!(
-                    "Touch count {} above maximum {}",
-                    touch_count, max_touches
-                ));
-            }
         }
 
         // Check zone cooldown (anti-spam)
@@ -232,9 +221,23 @@ impl BacktestTradeValidator {
             }
         }
 
-        // All checks passed - mark zone as triggered and increment counter
+        // Check max trades per symbol
+        let symbol_trades = self.trades_per_symbol.entry(symbol.to_string()).or_insert(0);
+        if *symbol_trades >= 2 { // Default max trades per symbol
+            return Err(format!("Max trades per symbol reached for {}", symbol));
+        }
+
+        // Check max trades per zone
+        let zone_trades = self.trades_per_zone.entry(zone_id.to_string()).or_insert(0);
+        if *zone_trades >= 3 { // Default max trades per zone
+            return Err(format!("Max trades per zone reached for {}", zone_id));
+        }
+
+        // All checks passed - update counters and mark zone as triggered
         self.triggered_zones.insert(zone_id.to_string(), current_time);
         self.daily_signal_count += 1;
+        *symbol_trades += 1;
+        *zone_trades += 1;
 
         Ok("All validation criteria passed".to_string())
     }
@@ -243,7 +246,9 @@ impl BacktestTradeValidator {
         if current_time.date_naive() != self.last_reset_date.date_naive() {
             self.daily_signal_count = 0;
             self.last_reset_date = current_time;
-            debug!("🔄 [BACKTEST_VALIDATOR] Reset daily signal counter for new day");
+            self.trades_per_symbol.clear();
+            self.trades_per_zone.clear();
+            debug!("🔄 [BACKTEST_VALIDATOR] Reset daily counters for new day");
         }
     }
 

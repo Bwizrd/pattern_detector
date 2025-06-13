@@ -9,11 +9,12 @@ use crate::trading::backtest::backtest_api::{
     RejectedTradeResult, RejectionSummary,
 };
 use crate::zones::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
+use crate::zones::zone_detection::{ZoneDetectionEngine, ZoneDetectionRequest};
 use crate::trading::trades::TradeConfig;
 use crate::trading::trading::TradeExecutor;
 use crate::types::CandleData;
 
-use chrono::{DateTime, Utc, Timelike, Datelike, Weekday};
+use chrono::{DateTime, Utc, Timelike, Datelike, Weekday, Duration};
 use std::collections::HashMap;
 use futures::future::join_all;
 use log::{info, error, warn, debug};
@@ -22,6 +23,18 @@ use reqwest;
 use csv::ReaderBuilder;
 use std::io::Cursor;
 use std::error::Error as StdError;
+
+/// Calculate the same 90-day lookback period that the cache uses
+fn calculate_90_day_window() -> (String, String) {
+    let now = Utc::now();
+    let ninety_days_ago = now - Duration::days(90);
+    
+    // Format to match: YYYY-MM-DDTHH:MM:SSZ
+    let start_time = format!("{}T00:00:00Z", ninety_days_ago.format("%Y-%m-%d"));
+    let end_time = format!("{}T23:59:59Z", now.format("%Y-%m-%d"));
+    
+    (start_time, end_time)
+}
 
 // ⭐ UPDATED: Helper functions to capture trading rules with request parameter resolution
 fn capture_trading_rules_snapshot(trade_config: &TradeConfig, req: &MultiBacktestRequest) -> TradingRulesSnapshot {
@@ -286,6 +299,11 @@ pub async fn run_multi_symbol_backtest(
     req: web::Json<MultiBacktestRequest>,
 ) -> Result<HttpResponse, ActixError> {
     info!("Received multi-symbol backtest request: {:?}", req.0);
+    
+    // ⭐ LOG 90-DAY ZONE DETECTION WINDOW vs REQUESTED TRADE FILTERING WINDOW
+    let (zone_window_start, zone_window_end) = calculate_90_day_window();
+    info!("🕰️ Zone Detection Window (90 days): {} to {}", zone_window_start, zone_window_end);
+    info!("🎯 Trade Filtering Window (requested): {} to {}", req.0.start_time, req.0.end_time);
 
     // ⭐ CAPTURE REQUEST PARAMETERS AND ENVIRONMENT AT THE START
     let request_params_snapshot = capture_request_parameters_snapshot(&req.0);
@@ -367,26 +385,60 @@ pub async fn run_multi_symbol_backtest(
             tasks.push(tokio::spawn(async move {
                 debug!("Starting backtest task for {} on {} (pattern TF), executing on {}", task_symbol, task_pattern_tf, task_execution_tf);
 
-                let pattern_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &task_symbol, &task_pattern_tf, &task_start_time, &task_end_time ).await {
+                // ⭐ ADD "_SB" SUFFIX FOR INFLUXDB QUERY (database stores symbols with _SB suffix)
+                let db_symbol = if task_symbol.ends_with("_SB") { 
+                    task_symbol.clone() 
+                } else { 
+                    format!("{}_SB", task_symbol) 
+                };
+                
+                // ⭐ USE 90-DAY WINDOW FOR ZONE DETECTION (same as cache) but filter trades by requested dates
+                let (zone_detection_start, zone_detection_end) = calculate_90_day_window();
+                debug!("Using 90-day window for zone detection: {} to {}", zone_detection_start, zone_detection_end);
+                debug!("Will filter trades to requested range: {} to {}", task_start_time, task_end_time);
+                
+                let pattern_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &db_symbol, &task_pattern_tf, &zone_detection_start, &zone_detection_end ).await {
                     Ok(candles) => candles,
                     Err(e) => { error!("Task Error: loading pattern candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 };
                 if pattern_candles.is_empty() { warn!("Task Info: No pattern candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 debug!("Task Info: Loaded {} pattern candles for {}/{}", pattern_candles.len(), task_symbol, task_pattern_tf);
 
-                let execution_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &task_symbol, &task_execution_tf, &task_start_time, &task_end_time ).await {
+                let execution_candles = match load_backtest_candles( &host_clone, &org_clone, &token_clone, &bucket_clone, &db_symbol, &task_execution_tf, &zone_detection_start, &zone_detection_end ).await {
                     Ok(candles) => candles,
                     Err(e) => { error!("Task Error: loading execution (1m) candles for {}/{}: {}", task_symbol, task_pattern_tf, e); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 };
                 if execution_candles.is_empty() { warn!("Task Info: No execution (1m) candles found for {}/{}/{}", task_symbol, task_pattern_tf, task_start_time); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
                 debug!("Task Info: Loaded {} execution candles for {}/{}", execution_candles.len(), task_symbol, task_execution_tf);
 
-                let recognizer = FiftyPercentBeforeBigBarRecognizer::default();
-                let detected_value_json: serde_json::Value = recognizer.detect(&pattern_candles);
-                let mut total_detected_zones_count = 0;
-                if let Some(data_val) = detected_value_json.get("data") { if let Some(price_val) = data_val.get("price") { if let Some(supply_zones_val) = price_val.get("supply_zones") { if let Some(zones_array) = supply_zones_val.get("zones").and_then(|z| z.as_array()) { total_detected_zones_count += zones_array.len(); } } if let Some(demand_zones_val) = price_val.get("demand_zones") { if let Some(zones_array) = demand_zones_val.get("zones").and_then(|z| z.as_array()) { total_detected_zones_count += zones_array.len(); } } } }
-                if total_detected_zones_count == 0 { info!("Task Info: No pattern zones found in JSON for {} on {}", task_symbol, task_pattern_tf); let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); }
-                debug!("Task Info: Total {} raw pattern zones found in JSON for {}/{}", total_detected_zones_count, task_symbol, task_pattern_tf);
+                // ⭐ USE ZONE DETECTION ENGINE (with enrichment) instead of raw pattern recognizer
+                let zone_engine = ZoneDetectionEngine::new();
+                let zone_request = ZoneDetectionRequest {
+                    symbol: task_symbol.clone(),
+                    timeframe: task_pattern_tf.clone(),
+                    pattern: "fifty_percent_before_big_bar".to_string(),
+                    candles: pattern_candles.clone(),
+                    max_touch_count: Some(task_max_touch_count),
+                };
+                
+                let zone_result = match zone_engine.detect_zones(zone_request) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        warn!("Task Error: Zone detection failed for {}/{}: {}", task_symbol, task_pattern_tf, e);
+                        let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf);
+                        return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new());
+                    }
+                };
+                
+                let total_detected_zones_count = zone_result.supply_zones.len() + zone_result.demand_zones.len();
+                if total_detected_zones_count == 0 { 
+                    info!("Task Info: No enriched zones found for {} on {}", task_symbol, task_pattern_tf); 
+                    let summary = SymbolTimeframeSummary::default_new(&task_symbol, &task_pattern_tf); 
+                    return (task_symbol, task_pattern_tf, Vec::new(), summary, Vec::new()); 
+                }
+                debug!("Task Info: Total {} enriched zones found for {}/{} ({} supply, {} demand)", 
+                    total_detected_zones_count, task_symbol, task_pattern_tf, 
+                    zone_result.supply_zones.len(), zone_result.demand_zones.len());
 
                 // ⭐ USE THE SAME SIMPLE CONFIG AS ORIGINAL
                 let current_trade_config = TradeConfig {
@@ -415,8 +467,10 @@ pub async fn run_multi_symbol_backtest(
                     task_trade_end_hour_utc
                 );
                 trade_executor.set_minute_candles(execution_candles.clone());
+                trade_executor.set_timeframe(task_pattern_tf.clone());
 
-                let executed_trades_internal = trade_executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles );
+                // ⭐ Execute trades using enriched zones directly (no JSON conversion needed)
+                let executed_trades_internal = trade_executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &serde_json::Value::Null, &pattern_candles );
                 info!("Task Info: Executed {} trades for {}/{}", executed_trades_internal.len(), task_symbol, task_pattern_tf);
                 
                 let mut current_task_trades_result: Vec<IndividualTradeResult> = Vec::new();
@@ -429,7 +483,18 @@ pub async fn run_multi_symbol_backtest(
                     let entry_dt_res = DateTime::parse_from_rfc3339(&trade_internal.entry_time);
                     if entry_dt_res.is_err() { warn!("Task Warning: Failed to parse entry_time '{}' for {}/{}", &trade_internal.entry_time, task_symbol, task_pattern_tf); continue; }
                     let entry_dt = entry_dt_res.unwrap().with_timezone(&Utc);
-                    let exit_dt = trade_internal.exit_time.as_ref().and_then(|et_str| DateTime::parse_from_rfc3339(et_str).ok() ).map(|dt| dt.with_timezone(&Utc)); 
+                    let exit_dt = trade_internal.exit_time.as_ref().and_then(|et_str| DateTime::parse_from_rfc3339(et_str).ok() ).map(|dt| dt.with_timezone(&Utc));
+                    
+                    // ⭐ FILTER TRADES TO REQUESTED DATE RANGE
+                    let requested_start = DateTime::parse_from_rfc3339(&task_start_time).unwrap().with_timezone(&Utc);
+                    let requested_end = DateTime::parse_from_rfc3339(&task_end_time).unwrap().with_timezone(&Utc);
+                    
+                    if entry_dt < requested_start || entry_dt > requested_end {
+                        debug!("Filtering out trade {} - entry time {} outside requested range {} to {}", 
+                               trade_internal.pattern_id,
+                               entry_dt, requested_start, requested_end);
+                        continue;
+                    } 
                     
                     let mut pnl_raw = trade_internal.profit_loss_pips.unwrap_or(0.0);
 
@@ -615,21 +680,34 @@ pub async fn run_multi_symbol_backtest(
 
     // Create rejection summary if rejected trades were requested
     let (rejected_trades_response, rejection_summary_response) = if show_rejected_trades {
+        // ⭐ FILTER REJECTED TRADES TO REQUESTED DATE RANGE
+        let requested_start = DateTime::parse_from_rfc3339(&req.0.start_time).unwrap().with_timezone(&Utc);
+        let requested_end = DateTime::parse_from_rfc3339(&req.0.end_time).unwrap().with_timezone(&Utc);
+        
+        let original_rejected_count = all_rejected_trades.len();
+        let filtered_rejected_trades: Vec<_> = all_rejected_trades.into_iter()
+            .filter(|rejected_trade| {
+                rejected_trade.rejection_time >= requested_start && rejected_trade.rejection_time <= requested_end
+            })
+            .collect();
+        debug!("Filtered rejected trades: {} total -> {} in requested date range", 
+               original_rejected_count, filtered_rejected_trades.len());
+        
         let mut rejections_by_reason = std::collections::HashMap::new();
         let mut rejections_by_symbol = std::collections::HashMap::new();
         
-        for rejected_trade in &all_rejected_trades {
+        for rejected_trade in &filtered_rejected_trades {
             *rejections_by_reason.entry(rejected_trade.rejection_reason.clone()).or_insert(0) += 1;
             *rejections_by_symbol.entry(rejected_trade.symbol.clone()).or_insert(0) += 1;
         }
         
         let rejection_summary = RejectionSummary {
-            total_rejections: all_rejected_trades.len(),
+            total_rejections: filtered_rejected_trades.len(),
             rejections_by_reason,
             rejections_by_symbol,
         };
         
-        (Some(all_rejected_trades), Some(rejection_summary))
+        (Some(filtered_rejected_trades), Some(rejection_summary))
     } else {
         (None, None)
     };

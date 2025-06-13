@@ -1,0 +1,3 @@
+entry_time,symbol,timeframe,zone_id,action,entry_price,exit_time,exit_price,exit_reason,pnl_pips,duration_minutes,zone_strength
+2024-03-12T05:56:00+00:00,GBPJPY,30m,34dbd5afb7aebdae,BUY,189.173,2024-03-12T06:41:00+00:00,188.923,SL_HIT,-25.0,45,100.0
+2024-03-12T15:31:00+00:00,AUDNZD,1h,dd5ea94d115ee4f7,BUY,1.07373,,,STILL_OPEN,12.7,1948,100.0

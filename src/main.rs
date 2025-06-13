@@ -306,6 +306,9 @@ async fn main() -> std::io::Result<()> {
             .route("/debug/test-data", web::get().to(test_data_request_handler))
             .route("/debug/minimal-cache-zones", web::get().to(get_minimal_cache_zones_debug_with_shared_cache))
             
+            // === TRADING TEST ENDPOINTS ===
+            .route("/test-trade", web::post().to(crate::api::test_trade_handler::trigger_test_trade))
+            
             // === CACHE ENDPOINTS ===
             .route("/test-cache", web::get().to(test_cache_endpoint))
             

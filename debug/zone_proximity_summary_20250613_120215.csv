@@ -1,0 +1,7 @@
+zone_id,symbol,timeframe,zone_type,zone_high,zone_low,zone_strength,closest_distance_pips,closest_timestamp,closest_price,was_actual_touch
+34dbd5afb7aebdae,GBPJPY,30m,demand_zone,189.17283,188.91200,100.0,0.0,2024-03-12T05:56:00+00:00,189.17300,true
+b48798dc9ddc76d7,GBPJPY,30m,demand_zone,188.89577,188.67300,90.0,0.0,2024-03-11T02:39:00+00:00,188.89600,false
+132d1eee2e5c8731,USDJPY,30m,supply_zone,147.11500,146.89362,80.0,0.0,2024-03-11T05:17:00+00:00,146.89400,false
+dd5ea94d115ee4f7,AUDNZD,1h,demand_zone,1.07371,1.07259,100.0,0.0,2024-03-12T17:59:00+00:00,1.07371,true
+6ee5cefba176171e,EURJPY,4h,demand_zone,160.38607,159.51800,100.0,0.1,2024-03-11T10:22:00+00:00,160.38700,false
+21faf8a8e563d216,USDCHF,1h,supply_zone,0.87610,0.87508,100.0,0.4,2024-03-12T12:40:00+00:00,0.87512,false

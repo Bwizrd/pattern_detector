@@ -232,11 +232,12 @@ impl ZoneProximityAnalyzer {
     }
 
     pub async fn write_proximity_summary_only(&self) -> Result<(), Box<dyn std::error::Error>> {
-        std::fs::create_dir_all("trades")?;
+        let output_dir = std::env::var("DEBUG_FILES_DIR").unwrap_or_else(|_| "trades".to_string());
+        std::fs::create_dir_all(&output_dir)?;
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         
         // Write ONLY zone summaries (closest approach per zone)
-        let summary_filename = format!("trades/zone_proximity_summary_{}.csv", timestamp);
+        let summary_filename = format!("{}/zone_proximity_summary_{}.csv", output_dir, timestamp);
         info!("📝 Writing {} zone summaries to: {}", self.zone_summaries.len(), summary_filename);
         
         let summary_file = std::fs::File::create(&summary_filename)?;

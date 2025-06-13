@@ -12,9 +12,10 @@ impl CsvWriter {
     }
 
     pub async fn write_results(&self, trades: &[TradeResult]) -> Result<(), Box<dyn std::error::Error>> {
-        std::fs::create_dir_all("trades")?;
+        let output_dir = std::env::var("DEBUG_FILES_DIR").unwrap_or_else(|_| "trades".to_string());
+        std::fs::create_dir_all(&output_dir)?;
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("trades/trade_analysis_{}.csv", timestamp);
+        let filename = format!("{}/trade_analysis_{}.csv", output_dir, timestamp);
         
         info!("📝 Writing {} trades to CSV: {}", trades.len(), filename);
         

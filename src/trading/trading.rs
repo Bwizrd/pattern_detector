@@ -65,6 +65,10 @@ impl TradeExecutor {
         self.minute_candles = Some(candles);
     }
 
+    pub fn set_timeframe(&mut self, timeframe: String) {
+        self.timeframe = Some(timeframe);
+    }
+
     pub fn get_rejected_trades(&self) -> Vec<crate::trading::backtest::backtest_api::RejectedTradeResult> {
         self.rejected_trades.borrow().clone()
     }

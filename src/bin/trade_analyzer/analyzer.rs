@@ -393,42 +393,6 @@ impl TradeAnalyzer {
 
                         trade_results.push(completed_trade);
                         trades_to_close.push(index);
-                    } else if let Some(zone) =
-                        self.zones.iter().find(|z| z.zone_id == open_trade.zone_id)
-                    {
-                        if self.check_zone_invalidation(zone, *current_price) {
-                            let duration = current_time - open_trade.entry_time;
-                            let duration_minutes = duration.num_minutes();
-                            let pnl_pips = self.calculate_pnl_pips(open_trade, *current_price);
-
-                            let completed_trade = TradeResult {
-                                entry_time: open_trade.entry_time,
-                                symbol: open_trade.symbol.clone(),
-                                timeframe: open_trade.timeframe.clone(),
-                                zone_id: open_trade.zone_id.clone(),
-                                action: open_trade.action.clone(),
-                                entry_price: open_trade.entry_price,
-                                exit_time: Some(current_time),
-                                exit_price: Some(*current_price),
-                                exit_reason: "ZONE_INVALIDATED".to_string(),
-                                pnl_pips: Some(pnl_pips),
-                                duration_minutes: Some(duration_minutes),
-                                zone_strength: open_trade.zone_strength,
-                                validation_reason: Some("Zone invalidated".to_string()),
-                            };
-
-                            info!(
-                                "❌ ZONE INVALIDATED: {} {} @ {:.5} | {:.1} pips | {}min",
-                                completed_trade.action,
-                                completed_trade.symbol,
-                                current_price,
-                                pnl_pips,
-                                duration_minutes
-                            );
-
-                            trade_results.push(completed_trade);
-                            trades_to_close.push(index);
-                        }
                     }
                 }
             }
@@ -566,15 +530,6 @@ impl TradeAnalyzer {
         }
     }
 
-    fn check_zone_invalidation(&self, zone: &ZoneData, current_price: f64) -> bool {
-        let is_supply = zone.zone_type.contains("supply");
-        if is_supply {
-            current_price > zone.zone_high
-        } else {
-            current_price < zone.zone_low
-        }
-    }
-
     fn calculate_tp_sl_levels(&self, zone: &ZoneData, entry_price: f64) -> (f64, f64) {
         let pip_value = self.get_pip_value(&zone.symbol);
         let is_supply = zone.zone_type.contains("supply");
@@ -608,9 +563,10 @@ impl TradeAnalyzer {
             return Ok(());
         }
 
-        std::fs::create_dir_all("trades")?;
+        let output_dir = std::env::var("DEBUG_FILES_DIR").unwrap_or_else(|_| "trades".to_string());
+        std::fs::create_dir_all(&output_dir)?;
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let filename = format!("trades/trades-{}.csv", timestamp);
+        let filename = format!("{}/trades-{}.csv", output_dir, timestamp);
 
         info!(
             "📝 Writing {} clean trades to: {}",
