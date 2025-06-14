@@ -68,6 +68,30 @@ pub struct ValidatedTradeDisplay {
     pub signal_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct LiveTrade {
+    pub id: String,           // Unique trade ID
+    pub timestamp: DateTime<Utc>,
+    pub symbol: String,
+    pub timeframe: String,
+    pub direction: String,    // BUY/SELL
+    pub entry_price: f64,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub zone_id: String,
+    pub current_price: f64,   // Updated from websocket
+    pub unrealized_pips: f64, // Current profit/loss in pips
+    pub status: TradeStatus,  // Open, Closed, StoppedOut, TakenProfit
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TradeStatus {
+    Open,
+    Closed,
+    StoppedOut,
+    TakenProfit,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ZoneStatus {
     Approaching,

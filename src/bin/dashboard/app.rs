@@ -11,7 +11,7 @@ use tokio::fs;
 use tokio::time::{Duration, Instant}; // Add this line with your other imports
 
 use crate::types::{
-    AppPage, TradeNotificationDisplay, ValidatedTradeDisplay, ZoneDistanceInfo, ZoneStatus,
+    AppPage, LiveTrade, TradeNotificationDisplay, TradeStatus, ValidatedTradeDisplay, ZoneDistanceInfo, ZoneStatus,
 };
 use pattern_detector::zone_interactions::ZoneInteractionContainer;
 
@@ -73,6 +73,14 @@ pub struct App {
     
     // Display options
     pub show_indices: bool, // Toggle for showing NAS100, US500 etc.
+    
+    // Live trading
+    pub live_trades: Vec<LiveTrade>,
+    pub trading_sl_pips: f64,
+    pub trading_tp_pips: f64,
+    pub websocket_connected: bool,
+    pub last_processed_notification_time: Option<DateTime<Utc>>,
+    pub trading_enabled: bool, // Manual toggle for enabling/disabling trade creation
 }
 
 impl App {
@@ -168,6 +176,20 @@ impl App {
             
             // Display options - indices off by default
             show_indices: false,
+            
+            // Live trading - get from environment variables
+            live_trades: Vec::new(),
+            trading_sl_pips: std::env::var("TRADING_STOP_LOSS_PIPS")
+                .unwrap_or_else(|_| "40.0".to_string())
+                .parse()
+                .unwrap_or(40.0),
+            trading_tp_pips: std::env::var("TRADING_TAKE_PROFIT_PIPS")
+                .unwrap_or_else(|_| "10.0".to_string())
+                .parse()
+                .unwrap_or(10.0),
+            websocket_connected: false,
+            last_processed_notification_time: None,
+            trading_enabled: false, // Trading disabled by default
         }
     }
 
@@ -227,6 +249,208 @@ impl App {
 
     pub fn toggle_indices(&mut self) {
         self.show_indices = !self.show_indices;
+    }
+
+    pub fn toggle_trading(&mut self) {
+        self.trading_enabled = !self.trading_enabled;
+        
+        // When turning trading ON, set last processed time to NOW to prevent
+        // processing old notifications
+        if self.trading_enabled {
+            let now = Utc::now();
+            self.last_processed_notification_time = Some(now);
+            log::info!("🟢 Trading ENABLED at {}", now.format("%H:%M:%S"));
+        } else {
+            log::info!("🔴 Trading DISABLED");
+        }
+    }
+
+    // Live trading methods  
+    pub fn create_trade_from_zone_trigger(&mut self, zone: &ZoneDistanceInfo) {
+        let direction = if zone.zone_type == "supply_zone" { "SELL" } else { "BUY" };
+        let trade_id = format!("{}_{}_{}", zone.symbol, zone.zone_id, Utc::now().timestamp_millis());
+        
+        // Get current price from WebSocket
+        if let Some(price_data) = self.current_prices.get(&zone.symbol) {
+            let current_price = (price_data.bid + price_data.ask) / 2.0;
+            let pip_value = self.get_pip_value(&zone.symbol);
+            
+            let (stop_loss, take_profit) = if direction == "BUY" {
+                (
+                    current_price - (self.trading_sl_pips * pip_value),
+                    current_price + (self.trading_tp_pips * pip_value)
+                )
+            } else {
+                (
+                    current_price + (self.trading_sl_pips * pip_value),
+                    current_price - (self.trading_tp_pips * pip_value)
+                )
+            };
+
+            let trade = LiveTrade {
+                id: trade_id,
+                timestamp: Utc::now(),
+                symbol: zone.symbol.clone(),
+                timeframe: zone.timeframe.clone(),
+                direction: direction.to_string(),
+                entry_price: current_price,
+                stop_loss,
+                take_profit,
+                zone_id: zone.zone_id.clone(),
+                current_price,
+                unrealized_pips: 0.0,
+                status: crate::types::TradeStatus::Open,
+            };
+
+            self.live_trades.push(trade);
+            log::info!("✅ Trade created: {} {} @ {:.4} Zone:{}", direction, zone.symbol, current_price, &zone.zone_id[..8]);
+        }
+    }
+
+    pub fn create_trade_from_trigger(&mut self, notification: &TradeNotificationDisplay) {
+        // Only create trade if it's a trading signal (not proximity alert)
+        if notification.notification_type == "trading_signal" {
+            let trade_id = format!("{}_{}", notification.symbol, notification.timestamp.timestamp_millis());
+            
+            let direction = notification.action.clone();
+            let entry_price = notification.price;
+            
+            // Calculate SL and TP based on direction and environment variables
+            let pip_value = self.get_pip_value(&notification.symbol);
+            let (stop_loss, take_profit) = if direction == "BUY" {
+                (
+                    entry_price - (self.trading_sl_pips * pip_value),
+                    entry_price + (self.trading_tp_pips * pip_value),
+                )
+            } else {
+                (
+                    entry_price + (self.trading_sl_pips * pip_value),
+                    entry_price - (self.trading_tp_pips * pip_value),
+                )
+            };
+
+            let live_trade = LiveTrade {
+                id: trade_id,
+                timestamp: notification.timestamp,
+                symbol: notification.symbol.clone(),
+                timeframe: notification.timeframe.clone(),
+                direction,
+                entry_price,
+                stop_loss,
+                take_profit,
+                zone_id: notification.signal_id.clone().unwrap_or_default(),
+                current_price: entry_price, // Initialize with entry price
+                unrealized_pips: 0.0,
+                status: TradeStatus::Open,
+            };
+
+            self.live_trades.push(live_trade);
+        }
+    }
+
+    pub fn update_live_trades_with_price(&mut self, symbol: &str, price: f64) {
+        let pip_value = self.get_pip_value(symbol);
+        
+        for trade in &mut self.live_trades {
+            if trade.symbol == symbol && trade.status == TradeStatus::Open {
+                trade.current_price = price;
+                
+                // Calculate unrealized P&L in pips
+                if trade.direction == "BUY" {
+                    trade.unrealized_pips = (price - trade.entry_price) / pip_value;
+                    
+                    // Check for SL/TP hits
+                    if price <= trade.stop_loss {
+                        trade.status = TradeStatus::StoppedOut;
+                        trade.unrealized_pips = -self.trading_sl_pips;
+                    } else if price >= trade.take_profit {
+                        trade.status = TradeStatus::TakenProfit;
+                        trade.unrealized_pips = self.trading_tp_pips;
+                    }
+                } else { // SELL
+                    trade.unrealized_pips = (trade.entry_price - price) / pip_value;
+                    
+                    // Check for SL/TP hits
+                    if price >= trade.stop_loss {
+                        trade.status = TradeStatus::StoppedOut;
+                        trade.unrealized_pips = -self.trading_sl_pips;
+                    } else if price <= trade.take_profit {
+                        trade.status = TradeStatus::TakenProfit;
+                        trade.unrealized_pips = self.trading_tp_pips;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn get_total_unrealized_pips(&self) -> f64 {
+        self.live_trades.iter()
+            .filter(|t| t.status == TradeStatus::Open)
+            .map(|t| t.unrealized_pips)
+            .sum()
+    }
+
+    pub fn get_closed_trades_total_pips(&self) -> f64 {
+        self.live_trades.iter()
+            .filter(|t| t.status == TradeStatus::StoppedOut || t.status == TradeStatus::TakenProfit)
+            .map(|t| t.unrealized_pips)
+            .sum()
+    }
+
+    fn get_pip_value(&self, symbol: &str) -> f64 {
+        match symbol {
+            s if s.contains("JPY") => 0.01,
+            "NAS100" => 1.0,
+            "US500" => 0.1,
+            _ => 0.0001,
+        }
+    }
+
+    fn check_for_zone_triggers(&mut self) {
+        // Only create trades if trading is enabled and WebSocket is connected
+        if !self.trading_enabled || !self.websocket_connected {
+            return;
+        }
+
+        let now = Utc::now();
+        
+        // SAFETY: Don't process any signals if trading was just enabled (within last 10 seconds)
+        // This prevents processing triggers when user first turns on trading
+        if let Some(last_processed) = self.last_processed_notification_time {
+            let time_since_baseline = now.signed_duration_since(last_processed);
+            if time_since_baseline < chrono::Duration::seconds(10) {
+                return; // Too soon after enabling trading
+            }
+        } else {
+            return; // No baseline set yet
+        }
+
+        let triggers: Vec<ZoneDistanceInfo> = self.zones.iter()
+            .filter(|zone| zone.zone_status == ZoneStatus::AtProximal)
+            .cloned()
+            .collect();
+        
+        if !triggers.is_empty() {
+            log::info!("🎯 Found {} zone triggers on dashboard", triggers.len());
+        }
+
+        for zone in triggers {
+            // Check if we already have a trade for this zone
+            let exists = self.live_trades.iter().any(|t| t.id.contains(&zone.zone_id));
+            
+            if !exists {
+                // Check if we have current price for this symbol
+                if self.current_prices.contains_key(&zone.symbol) {
+                    log::info!("🚨 Creating trade from zone trigger: {} {} Zone:{}", 
+                        zone.symbol, 
+                        zone.zone_type,
+                        &zone.zone_id[..8]);
+                    self.create_trade_from_zone_trigger(&zone);
+                } else {
+                    log::info!("⚠️ No current price for symbol: {}", zone.symbol);
+                }
+            }
+        }
     }
 
     // CHANGED: Update is_timeframe_enabled to use the current page's filters
@@ -510,6 +734,19 @@ impl App {
 
     pub async fn update_data(&mut self) {
         self.error_message = None;
+        
+        // Check WebSocket connection status based on recent price updates
+        if let Some(last_update) = self.last_price_update {
+            let now = tokio::time::Instant::now();
+            let elapsed = now.duration_since(last_update);
+            
+            // Mark as disconnected if no price updates for more than 30 seconds
+            if elapsed.as_secs() > 30 {
+                self.websocket_connected = false;
+            }
+        } else {
+            self.websocket_connected = false;
+        }
 
         match self.fetch_all_data().await {
             Ok(()) => {
@@ -560,7 +797,12 @@ impl App {
 
         // Process all data with WebSocket prices
         self.zones = self.process_zones_response(zones_response, current_prices)?;
-        self.all_notifications = self.process_api_notifications_response(notifications_response)?;
+        let new_notifications = self.process_api_notifications_response(notifications_response)?;
+        
+        // Check for zone triggers and create trades (independent from notifications)
+        self.check_for_zone_triggers();
+        
+        self.all_notifications = new_notifications;
         self.validated_trades =
             self.process_validated_signals_response(validated_signals_response)?;
         self.placed_trades = Vec::new();
@@ -876,6 +1118,13 @@ impl App {
             .insert(price_update.symbol.clone(), price_stream_data);
         self.price_update_count += 1;
         self.last_price_update = Some(tokio::time::Instant::now());
+        
+        // Mark WebSocket as connected when we receive prices
+        self.websocket_connected = true;
+        
+        // Update live trades with new price
+        let mid_price = (price_update.bid + price_update.ask) / 2.0;
+        self.update_live_trades_with_price(&price_update.symbol, mid_price);
     }
 
     // Zone processing methods (keep all existing methods)...
@@ -1161,10 +1410,8 @@ impl App {
                 ZoneStatus::AtDistal
             } else if current_price > proximal_line && current_price <= distal_line {
                 ZoneStatus::InsideZone
-            } else if current_price > proximal_line - proximity_threshold
-                && current_price <= proximal_line + proximity_threshold
-            {
-                ZoneStatus::AtProximal
+            } else if current_price >= proximal_line {
+                ZoneStatus::AtProximal  // Price has reached/crossed the proximal line (zone entry)
             } else {
                 ZoneStatus::Approaching
             }
@@ -1178,10 +1425,8 @@ impl App {
                 ZoneStatus::AtDistal
             } else if current_price < proximal_line && current_price >= distal_line {
                 ZoneStatus::InsideZone
-            } else if current_price < proximal_line + proximity_threshold
-                && current_price >= proximal_line - proximity_threshold
-            {
-                ZoneStatus::AtProximal
+            } else if current_price <= proximal_line {
+                ZoneStatus::AtProximal  // Price has reached/crossed the proximal line (zone entry)
             } else {
                 ZoneStatus::Approaching
             }
@@ -1350,8 +1595,12 @@ impl App {
         last_crossing_time: Option<DateTime<Utc>>,
         zone_entries: u32,
     ) -> ZoneStatus {
-        // First check if price is inside zone - this takes highest priority
+        // First check if price is inside zone AND zone has never been entered - TRIGGER first entry
         if matches!(base_status, ZoneStatus::InsideZone) {
+            // If zone has never been entered, show TRIGGER instead of INSIDE
+            if !has_ever_entered && zone_entries == 0 {
+                return ZoneStatus::AtProximal;
+            }
             return ZoneStatus::InsideZone;
         }
 

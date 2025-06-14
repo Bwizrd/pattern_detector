@@ -142,6 +142,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Char('i') => {
                             app.toggle_indices();
                         }
+                        // Toggle trading on/off (works on all pages)
+                        KeyCode::Char('t') => {
+                            app.toggle_trading();
+                        }
                         // Timeframe toggles work on dashboard and notifications
                         KeyCode::Char('1') => {
                             if app.current_page != AppPage::Prices {

@@ -127,15 +127,22 @@ fn render_header(f: &mut Frame, app: &App, area: Rect, page_name: &str) {
 
     let now = Utc::now();
     let elapsed = app.last_update.elapsed().as_secs();
+    let ws_status = if app.websocket_connected { "🟢 WS" } else { "🔴 WS" };
+    let trading_status = if app.trading_enabled {
+        if app.websocket_connected { "🟢 ON" } else { "🟡 ON (NO WS)" }
+    } else {
+        "🔴 OFF"
+    };
     let header_text = format!(
-        "Connected: {} | Updates: {} | Last: {}s ago | Time: {} | Page: {} | Prices: {} symbols | WS Updates: {}",
+        "API: {} | {} | Updates: {} | Last: {}s ago | Time: {} | Page: {} | Prices: {} | Trading: {}",
         app.api_base_url,
+        ws_status,
         app.update_count,
         elapsed,
         now.format("%H:%M:%S"),
         page_name,
         app.current_prices.len(),
-        app.price_update_count  // This will show if WebSocket is updating
+        trading_status
     );
     let header = Paragraph::new(header_text)
         .block(header_block)
@@ -753,7 +760,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'i' indices | ↑↓ select zone | 'y' copy zone ID";
+    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'i' indices | 't' trading | ↑↓ select zone | 'y' copy zone ID";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))
@@ -763,20 +770,37 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
 }
 
 fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, content_area: Rect) {
+    // Calculate totals
+    let open_trades_count = app.live_trades.iter().filter(|t| t.status == crate::types::TradeStatus::Open).count();
+    let total_unrealized = app.get_total_unrealized_pips();
+    let total_closed = app.get_closed_trades_total_pips();
+    let total_pips = total_unrealized + total_closed;
+
     // Header
     let trades_header_block = Block::default()
         .borders(Borders::ALL)
-        .title("📋 Placed Trades")
+        .title("💹 Zone Trigger Trades")
         .title_alignment(Alignment::Center)
         .border_style(Style::default().fg(Color::Green));
 
-    let trades_count = app.placed_trades.len();
-    let trades_header_text = format!("Total: {} placed trades", trades_count);
+    let trades_header_text = format!(
+        "Open: {} | Total P&L: {:.1} pips", 
+        open_trades_count,
+        total_pips
+    );
+
+    let header_color = if total_pips > 0.0 {
+        Color::Green
+    } else if total_pips < 0.0 {
+        Color::Red
+    } else {
+        Color::White
+    };
 
     let trades_header = Paragraph::new(trades_header_text)
         .block(trades_header_block)
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(header_color));
 
     f.render_widget(trades_header, header_area);
 
@@ -785,8 +809,8 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
-    if app.placed_trades.is_empty() {
-        let empty_text = Paragraph::new("No trades placed yet.\n\nActual trade orders will appear here once order placement is implemented.")
+    if app.live_trades.is_empty() {
+        let empty_text = Paragraph::new("No live trades.\n\nTrades will be created when zones show 🚨 TRIGGER status.\n\nThis is independent from the notifications page ('n').")
             .block(trades_block)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center)
@@ -795,7 +819,7 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
         f.render_widget(empty_text, content_area);
     } else {
         let trades_lines: Vec<Line> = app
-            .placed_trades
+            .live_trades
             .iter()
             .take(25)
             .map(|trade| {
@@ -806,26 +830,50 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
                     Color::Red
                 };
 
+                let pips_color = if trade.unrealized_pips > 0.0 {
+                    Color::Green
+                } else if trade.unrealized_pips < 0.0 {
+                    Color::Red
+                } else {
+                    Color::Gray
+                };
+
+                let status_icon = match trade.status {
+                    crate::types::TradeStatus::Open => "🔄",
+                    crate::types::TradeStatus::TakenProfit => "✅",
+                    crate::types::TradeStatus::StoppedOut => "❌",
+                    crate::types::TradeStatus::Closed => "⏹️",
+                };
+
                 Line::from(vec![
-                    Span::styled(format!("{} ", time_str), Style::default().fg(Color::Gray)),
-                    Span::styled("📋 ", Style::default().fg(Color::White)),
+                    Span::styled(status_icon, Style::default().fg(Color::White)),
                     Span::styled(
-                        format!("{} ", trade.direction),
+                        format!(" {} ", trade.direction),
                         Style::default()
                             .fg(direction_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        format!("{}/", trade.symbol),
+                        format!("{} ", trade.symbol),
                         Style::default().fg(Color::Cyan),
                     ),
                     Span::styled(
-                        format!("{}", trade.timeframe),
+                        format!("{} ", trade.timeframe),
                         Style::default().fg(Color::Yellow),
                     ),
                     Span::styled(
-                        format!(" @ {:.5}", trade.entry_price),
+                        format!("@ {:.4} ", trade.entry_price),
                         Style::default().fg(Color::White),
+                    ),
+                    Span::styled(
+                        format!("{:+.1}p ", trade.unrealized_pips),
+                        Style::default()
+                            .fg(pips_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("Zone:{}", &trade.zone_id[..8]),
+                        Style::default().fg(Color::LightBlue),
                     ),
                 ])
             })
