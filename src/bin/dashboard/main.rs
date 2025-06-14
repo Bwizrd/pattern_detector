@@ -84,9 +84,15 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.select_notification_by_number(num);
                         }
 
-                        // ADD this case for manual validation trigger:
-                        KeyCode::Enter if app.current_page == AppPage::NotificationMonitor => {
-                            app.validate_selected_notification();
+                        // Handle Enter key for different contexts
+                        KeyCode::Enter => {
+                            if app.show_trading_reminder {
+                                // Dismiss trading reminder popup
+                                app.dismiss_trading_reminder();
+                            } else if app.current_page == AppPage::NotificationMonitor {
+                                // Manual validation trigger on notifications page
+                                app.validate_selected_notification();
+                            }
                         }
                         KeyCode::Char('d') => {
                             app.switch_page(AppPage::Dashboard);

@@ -81,6 +81,7 @@ pub struct App {
     pub websocket_connected: bool,
     pub last_processed_notification_time: Option<DateTime<Utc>>,
     pub trading_enabled: bool, // Manual toggle for enabling/disabling trade creation
+    pub show_trading_reminder: bool, // Show reminder popup to enable trading
 }
 
 impl App {
@@ -190,6 +191,7 @@ impl App {
             websocket_connected: false,
             last_processed_notification_time: None,
             trading_enabled: false, // Trading disabled by default
+            show_trading_reminder: false, // Will show after websocket connects
         }
     }
 
@@ -260,9 +262,15 @@ impl App {
             let now = Utc::now();
             self.last_processed_notification_time = Some(now);
             log::info!("🟢 Trading ENABLED at {}", now.format("%H:%M:%S"));
+            // Hide reminder popup when trading is enabled
+            self.show_trading_reminder = false;
         } else {
             log::info!("🔴 Trading DISABLED");
         }
+    }
+
+    pub fn dismiss_trading_reminder(&mut self) {
+        self.show_trading_reminder = false;
     }
 
     // Live trading methods  
@@ -1120,7 +1128,13 @@ impl App {
         self.last_price_update = Some(tokio::time::Instant::now());
         
         // Mark WebSocket as connected when we receive prices
+        let was_connected = self.websocket_connected;
         self.websocket_connected = true;
+        
+        // Show trading reminder popup when WebSocket first connects (and trading is disabled)
+        if !was_connected && !self.trading_enabled {
+            self.show_trading_reminder = true;
+        }
         
         // Update live trades with new price
         let mid_price = (price_update.bid + price_update.ask) / 2.0;

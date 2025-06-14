@@ -74,7 +74,11 @@ pub fn ui_dashboard(f: &mut Frame, app: &App) {
     render_zones_table_improved(f, app, left_chunks[2], size.width);
     render_dashboard_help(f, left_chunks[3]);
     render_placed_trades_panel(f, app, right_chunks[0], right_chunks[1]);
-    // render_trade_alert_popup(f, app, size);
+    
+    // Show trading reminder popup if needed
+    if app.show_trading_reminder {
+        render_trading_reminder_popup(f, size);
+    }
 }
 
 pub fn ui_notification_monitor(f: &mut Frame, app: &App) {
@@ -1686,4 +1690,58 @@ fn render_price_help(f: &mut Frame, area: Rect) {
         .alignment(Alignment::Center);
 
     f.render_widget(help, area);
+}
+
+fn render_trading_reminder_popup(f: &mut Frame, area: Rect) {
+    // Calculate popup size (centered, smaller than screen)
+    let popup_width = 50;
+    let popup_height = 8;
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(popup_height)) / 2;
+    
+    let popup_area = Rect {
+        x,
+        y,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    // Clear the background
+    f.render_widget(Clear, popup_area);
+
+    // Create popup block
+    let popup_block = Block::default()
+        .borders(Borders::ALL)
+        .title("🔔 Trading Reminder")
+        .title_alignment(Alignment::Center)
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let popup_content = vec![
+        Line::from(vec![
+            Span::styled("WebSocket Connected! 🟢", Style::default().fg(Color::Green)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Trading is currently ", Style::default().fg(Color::White)),
+            Span::styled("DISABLED", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Press ", Style::default().fg(Color::White)),
+            Span::styled("'t'", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(" to enable trading", Style::default().fg(Color::White)),
+        ]),
+        Line::from(vec![
+            Span::styled("Press ", Style::default().fg(Color::White)),
+            Span::styled("Enter", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(" to dismiss", Style::default().fg(Color::White)),
+        ]),
+    ];
+
+    let popup_paragraph = Paragraph::new(popup_content)
+        .block(popup_block)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(popup_paragraph, popup_area);
 }
