@@ -13,6 +13,7 @@ use tokio::time::{Duration, Instant}; // Add this line with your other imports
 use crate::types::{
     AppPage, TradeNotificationDisplay, ValidatedTradeDisplay, ZoneDistanceInfo, ZoneStatus,
 };
+use pattern_detector::zone_interactions::ZoneInteractionContainer;
 
 use crate::notifications::{NotificationRuleValidator, NotificationValidation};
 
@@ -66,6 +67,12 @@ pub struct App {
 
     pub selected_notification_validation: Option<NotificationValidation>,
     pub notification_validator: NotificationRuleValidator,
+
+    // Zone interaction data
+    pub zone_interactions: Option<ZoneInteractionContainer>,
+    
+    // Display options
+    pub show_indices: bool, // Toggle for showing NAS100, US500 etc.
 }
 
 impl App {
@@ -157,6 +164,10 @@ impl App {
             last_price_update: None,
             selected_notification_validation: None,
             notification_validator: NotificationRuleValidator::new(),
+            zone_interactions: None,
+            
+            // Display options - indices off by default
+            show_indices: false,
         }
     }
 
@@ -212,6 +223,10 @@ impl App {
     }
     pub fn toggle_breached(&mut self) {
         self.show_breached = !self.show_breached;
+    }
+
+    pub fn toggle_indices(&mut self) {
+        self.show_indices = !self.show_indices;
     }
 
     // CHANGED: Update is_timeframe_enabled to use the current page's filters
@@ -533,6 +548,9 @@ impl App {
         // Fetch zones
         let zones_response = self.get_zones_from_api().await?;
 
+        // Load zone interaction data
+        self.load_zone_interactions().await;
+
         // CHANGED: Use WebSocket prices instead of API prices
         let current_prices = self.convert_websocket_to_simple_prices();
 
@@ -548,6 +566,18 @@ impl App {
         self.placed_trades = Vec::new();
 
         Ok(())
+    }
+
+    async fn load_zone_interactions(&mut self) {
+        match ZoneInteractionContainer::load_from_file("zone_interactions.json") {
+            Ok(interactions) => {
+                self.zone_interactions = Some(interactions);
+            }
+            Err(_) => {
+                // If file doesn't exist or can't be loaded, start with empty container
+                self.zone_interactions = Some(ZoneInteractionContainer::new());
+            }
+        }
     }
 
     fn convert_websocket_to_simple_prices(&self) -> HashMap<String, f64> {
@@ -872,6 +902,11 @@ impl App {
                         continue;
                     }
 
+                    // Filter out indices if disabled
+                    if !self.show_indices && (zone_info.symbol == "NAS100" || zone_info.symbol == "US500") {
+                        continue;
+                    }
+
                     zone_distances.push(zone_info);
                 }
             }
@@ -882,25 +917,14 @@ impl App {
             z.current_price > 0.0 && z.distance_pips >= 0.0 && z.distance_pips < 10000.0
         });
 
-        // FIXED: Better sorting - prioritize by status, then by distance
+        // Enhanced sorting - prioritize by status (including interaction history), then by distance
         zone_distances.sort_by(|a, b| {
             use std::cmp::Ordering;
 
-            // First, sort by status priority
-            let status_priority = |status: &ZoneStatus| -> u8 {
-                match status {
-                    ZoneStatus::AtProximal => 1,  // Highest priority
-                    ZoneStatus::InsideZone => 2,  // Second priority
-                    ZoneStatus::AtDistal => 3,    // Third priority
-                    ZoneStatus::Approaching => 4, // Fourth priority
-                    ZoneStatus::Breached => 5,    // Lowest priority
-                }
-            };
+            let a_priority = a.zone_status.priority();
+            let b_priority = b.zone_status.priority();
 
-            let a_priority = status_priority(&a.zone_status);
-            let b_priority = status_priority(&b.zone_status);
-
-            match a_priority.cmp(&b_priority) {
+            match b_priority.cmp(&a_priority) { // Note: reversed for descending order (higher priority first)
                 Ordering::Equal => {
                     // Same status, sort by distance (closest first)
                     a.distance_pips
@@ -1229,56 +1253,29 @@ impl App {
             return Err(format!("Invalid zone boundaries").into());
         }
 
-        // FIXED: Determine zone type and lines correctly
+        // FIXED: Determine zone type and lines correctly (matching zone_interactions.rs)
         let is_supply = zone_type.contains("supply") || zone_type.contains("resistance");
         let (proximal_line, distal_line) = if is_supply {
-            // Supply zone: proximal = high, distal = low
-            (zone_high, zone_low)
-        } else {
-            // Demand zone: proximal = low, distal = high
+            // Supply zone: proximal = low (entry from below), distal = high (break above)
             (zone_low, zone_high)
+        } else {
+            // Demand zone: proximal = high (entry from above), distal = low (break below)
+            (zone_high, zone_low)
         };
 
         let pip_value = self.pip_values.get(&symbol).cloned().unwrap_or(0.0001);
 
-        // FIXED: Calculate distance to closest edge of zone
-        let distance_to_proximal = (current_price - proximal_line).abs() / pip_value;
-        // Debug log for every zone
-        {
-            use std::fs::OpenOptions;
-            use std::io::Write;
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("zone_debug.log")
-                .unwrap();
-            writeln!(
-                file,
-                "DEBUG: ZONE {} | symbol: {} | price: {:.5} | proximal: {:.5} | distal: {:.5} | pip_value: {:.5} | distance_to_proximal: {:.1}",
-                zone_id, symbol, current_price, proximal_line, distal_line, pip_value, distance_to_proximal
-            ).unwrap();
-        }
-
-        // FIXED: Calculate signed distance properly
+        // Calculate signed distance to proximal line
+        // Positive = inside zone (past proximal), Negative = outside zone (before proximal)
         let signed_distance_pips = if is_supply {
-            // For supply zones, negative means price is below zone (approaching)
-            if current_price < zone_low {
-                -(zone_low - current_price) / pip_value // Negative = approaching
-            } else if current_price > zone_high {
-                (current_price - zone_high) / pip_value // Positive = breached
-            } else {
-                0.0 // Inside zone
-            }
+            // Supply zone: proximal = low, price enters from below
+            (current_price - proximal_line) / pip_value  // + when above proximal (inside), - when below (outside)
         } else {
-            // For demand zones, negative means price is above zone (approaching)
-            if current_price > zone_high {
-                -(current_price - zone_high) / pip_value // Negative = approaching
-            } else if current_price < zone_low {
-                (zone_low - current_price) / pip_value // Positive = breached
-            } else {
-                0.0 // Inside zone
-            }
+            // Demand zone: proximal = high, price enters from above  
+            (proximal_line - current_price) / pip_value  // + when below proximal (inside), - when above (outside)
         };
+
+        let distance_to_proximal = signed_distance_pips.abs();
 
         let zone_status = self.calculate_zone_status(
             current_price,
@@ -1292,6 +1289,36 @@ impl App {
             return Err("Invalid distance calculation".into());
         }
 
+        // Get zone interaction data if available
+        let interaction_metrics = self
+            .zone_interactions
+            .as_ref()
+            .and_then(|interactions| interactions.metrics.get(&zone_id));
+
+        let (has_ever_entered, total_time_inside_seconds, zone_entries, 
+             last_crossing_time, is_zone_active) = 
+            if let Some(metrics) = interaction_metrics {
+                (
+                    metrics.has_ever_entered,
+                    metrics.total_time_inside_seconds,
+                    metrics.zone_entries,
+                    metrics.last_crossing_time.as_ref()
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&Utc)),
+                    metrics.is_zone_active,
+                )
+            } else {
+                (false, 0, 0, None, true)
+            };
+
+        // Enhance zone status based on interaction history
+        let enhanced_zone_status = self.determine_enhanced_zone_status(
+            &zone_status,
+            has_ever_entered,
+            last_crossing_time,
+            zone_entries,
+        );
+
         Ok(ZoneDistanceInfo {
             zone_id,
             symbol,
@@ -1302,10 +1329,68 @@ impl App {
             distal_line,
             signed_distance_pips,
             distance_pips: distance_to_proximal,
-            zone_status,
+            zone_status: enhanced_zone_status,
             last_update: Utc::now(),
             touch_count,
             strength_score,
+            
+            // Zone interaction metrics
+            has_ever_entered,
+            total_time_inside_seconds,
+            zone_entries,
+            last_crossing_time,
+            is_zone_active,
         })
+    }
+
+    fn determine_enhanced_zone_status(
+        &self,
+        base_status: &ZoneStatus,
+        has_ever_entered: bool,
+        last_crossing_time: Option<DateTime<Utc>>,
+        zone_entries: u32,
+    ) -> ZoneStatus {
+        // First check if price is inside zone - this takes highest priority
+        if matches!(base_status, ZoneStatus::InsideZone) {
+            return ZoneStatus::InsideZone;
+        }
+
+        // Then check for trigger conditions - but only if zone hasn't been entered before
+        if matches!(base_status, ZoneStatus::AtProximal) {
+            // If the zone has already been entered, don't show TRIGGER again
+            if has_ever_entered || zone_entries > 0 {
+                return ZoneStatus::RecentlyTested; // Show as recently tested instead
+            }
+            return ZoneStatus::AtProximal;
+        }
+
+        // For other statuses, enhance based on interaction history
+        match base_status {
+            ZoneStatus::Approaching | ZoneStatus::AtDistal => {
+                // Check for recent activity (within last hour)
+                if let Some(last_crossing) = last_crossing_time {
+                    let now = Utc::now();
+                    let duration = now.signed_duration_since(last_crossing);
+                    if duration.num_hours() < 1 {
+                        return ZoneStatus::RecentlyTested;
+                    }
+                }
+
+                // Check if zone has never been entered
+                if !has_ever_entered && zone_entries == 0 {
+                    return ZoneStatus::FreshZone;
+                }
+
+                // Check if zone is weakened by multiple entries
+                if zone_entries > 3 {
+                    return ZoneStatus::WeakZone;
+                }
+
+                // Otherwise use base status
+                base_status.clone()
+            }
+            ZoneStatus::Breached => ZoneStatus::Breached,
+            _ => base_status.clone(),
+        }
     }
 }

@@ -24,4 +24,5 @@ pub mod realtime;
 pub mod trading;
 pub mod types;
 pub mod zones;
+pub mod zone_interactions;
 pub mod errors;

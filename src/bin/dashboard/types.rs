@@ -33,6 +33,13 @@ pub struct ZoneDistanceInfo {
     pub last_update: DateTime<Utc>,
     pub touch_count: i32,
     pub strength_score: f64,
+    
+    // Zone interaction metrics
+    pub has_ever_entered: bool,
+    pub total_time_inside_seconds: u64,
+    pub zone_entries: u32, // Number of times price has entered the zone
+    pub last_crossing_time: Option<DateTime<Utc>>,
+    pub is_zone_active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +75,10 @@ pub enum ZoneStatus {
     InsideZone,
     AtDistal,
     Breached,
+    // Enhanced status for interaction history
+    FreshZone,      // Never touched before
+    RecentlyTested, // Touched within last hour
+    WeakZone,       // Multiple touches, potentially weakening
 }
 
 impl ZoneStatus {
@@ -78,6 +89,10 @@ impl ZoneStatus {
             ZoneStatus::AtDistal => Color::Blue,
             ZoneStatus::Breached => Color::DarkGray,
             ZoneStatus::Approaching => Color::Green,
+            // Enhanced interaction-based colors
+            ZoneStatus::FreshZone => Color::Cyan,      // Bright for untested zones
+            ZoneStatus::RecentlyTested => Color::Yellow,  // Warning for recent activity
+            ZoneStatus::WeakZone => Color::LightRed,   // Faded for weak zones
         }
     }
 
@@ -88,6 +103,10 @@ impl ZoneStatus {
             ZoneStatus::AtDistal => "🔵",
             ZoneStatus::Breached => "❌",
             ZoneStatus::Approaching => "👀",
+            // Enhanced interaction-based symbols
+            ZoneStatus::FreshZone => "✨",      // Fresh/untested
+            ZoneStatus::RecentlyTested => "🔄", // Recently tested
+            ZoneStatus::WeakZone => "💔",       // Weak zone
         }
     }
 
@@ -98,6 +117,24 @@ impl ZoneStatus {
             ZoneStatus::AtDistal => "AT_DISTAL",
             ZoneStatus::Breached => "BREACHED",
             ZoneStatus::Approaching => "APPROACHING",
+            // Enhanced interaction-based text
+            ZoneStatus::FreshZone => "FRESH",
+            ZoneStatus::RecentlyTested => "RECENT_TEST",
+            ZoneStatus::WeakZone => "WEAK",
+        }
+    }
+
+    /// Priority for sorting zones - higher values appear first
+    pub fn priority(&self) -> u8 {
+        match self {
+            ZoneStatus::InsideZone => 10,      // Highest priority - price is inside
+            ZoneStatus::AtProximal => 9,       // Ready to trigger
+            ZoneStatus::RecentlyTested => 8,   // Recently active zones
+            ZoneStatus::AtDistal => 7,         // At exit side
+            ZoneStatus::FreshZone => 6,        // Fresh zones are interesting
+            ZoneStatus::Approaching => 5,      // Approaching zones
+            ZoneStatus::WeakZone => 4,         // Weak zones lower priority
+            ZoneStatus::Breached => 1,         // Lowest priority
         }
     }
 }

@@ -236,6 +236,15 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
                 Style::default().fg(Color::Red)
             },
         ),
+        Span::styled("| Indices: ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            if app.show_indices { "ON" } else { "OFF" },
+            if app.show_indices {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Red)
+            },
+        ),
     ]);
 
     let strength_line = Line::from(vec![
@@ -378,10 +387,42 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         // Calculate available width (subtract borders and padding)
         let available_width = area.width.saturating_sub(4); // 2 for borders + 2 for padding
 
-        // Dynamic column configuration that includes Zone ID
-        let (headers, widths, max_rows) = if screen_width > 160 {
-            // Very large screens: Show all columns including Zone ID
-            let base_widths = [12, 6, 8, 12, 10, 10, 10, 6, 6, 20]; // Added Zone ID column
+        // Enhanced column configuration with interaction metrics
+        let (headers, widths, max_rows) = if screen_width > 180 {
+            // Extra large screens: Show all columns including interaction metrics
+            let base_widths = [10, 6, 8, 12, 8, 8, 8, 6, 6, 6, 6, 6, 18]; // Added interaction columns
+            let total_base: u16 = base_widths.iter().sum();
+
+            let widths = base_widths
+                .iter()
+                .map(|&w| {
+                    let proportion = (w as f32 / total_base as f32 * available_width as f32) as u16;
+                    Constraint::Length(proportion.max(5))
+                })
+                .collect();
+
+            (
+                vec![
+                    "Symbol/TF",
+                    "Type", 
+                    "Distance",
+                    "Status",
+                    "Price",
+                    "Proximal",
+                    "Distal",
+                    "Str",
+                    "Touch",
+                    "TimeIn", // Time in zone (seconds)
+                    "Cross", // Proximal crossings  
+                    "Fresh", // Has ever entered
+                    "Zone ID",
+                ],
+                widths,
+                50,
+            )
+        } else if screen_width > 160 {
+            // Very large screens: Show basic interaction metrics
+            let base_widths = [12, 6, 8, 12, 10, 10, 10, 6, 6, 6, 6, 16]; // Added some interaction columns
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -396,13 +437,15 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 vec![
                     "Symbol/TF",
                     "Type",
-                    "Distance",
+                    "Distance", 
                     "Status",
                     "Price",
                     "Proximal",
                     "Distal",
                     "Str",
                     "Touch",
+                    "TimeIn", // Time in zone
+                    "Cross", // Crossings
                     "Zone ID",
                 ],
                 widths,
@@ -537,16 +580,75 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                     cells.extend(vec![Cell::from(format!("{:.5}", zone.current_price))]);
 
                     if screen_width > 120 {
-                        cells.push(Cell::from(format!("{:.5}", zone.proximal_line)));
+                        // Highlight proximal line with background color if price is inside zone
+                        let proximal_cell = if zone.zone_status == ZoneStatus::InsideZone {
+                            Cell::from(format!("{:.5}", zone.proximal_line))
+                                .style(Style::default().bg(Color::DarkGray).fg(Color::White))
+                        } else {
+                            Cell::from(format!("{:.5}", zone.proximal_line))
+                        };
+                        cells.push(proximal_cell);
 
                         if screen_width > 140 {
+                            // Highlight distal line with background color if price is inside zone
+                            let distal_cell = if zone.zone_status == ZoneStatus::InsideZone {
+                                Cell::from(format!("{:.5}", zone.distal_line))
+                                    .style(Style::default().bg(Color::DarkGray).fg(Color::White))
+                            } else {
+                                Cell::from(format!("{:.5}", zone.distal_line))
+                            };
+                            
                             cells.extend(vec![
-                                Cell::from(format!("{:.5}", zone.distal_line)),
+                                distal_cell,
                                 Cell::from(format!("{:.0}", zone.strength_score)),
                             ]);
 
                             if screen_width > 160 {
                                 cells.push(Cell::from(format!("{}", zone.touch_count)));
+                                
+                                // Add interaction metrics for very large screens
+                                if screen_width > 180 {
+                                    // Time in zone (convert seconds to human readable)
+                                    let time_in_display = if zone.total_time_inside_seconds > 0 {
+                                        if zone.total_time_inside_seconds < 60 {
+                                            format!("{}s", zone.total_time_inside_seconds)
+                                        } else if zone.total_time_inside_seconds < 3600 {
+                                            format!("{}m", zone.total_time_inside_seconds / 60)
+                                        } else {
+                                            format!("{}h", zone.total_time_inside_seconds / 3600)
+                                        }
+                                    } else {
+                                        "0".to_string()
+                                    };
+                                    cells.push(Cell::from(time_in_display));
+                                    
+                                    // Zone entries (actual entries into the zone)
+                                    cells.push(Cell::from(format!("{}", zone.zone_entries)));
+                                    
+                                    // Fresh zone indicator
+                                    let fresh_indicator = if zone.has_ever_entered { "✓" } else { "✨" };
+                                    cells.push(Cell::from(fresh_indicator).style(
+                                        if zone.has_ever_entered {
+                                            Style::default().fg(Color::Green)
+                                        } else {
+                                            Style::default().fg(Color::Cyan)
+                                        }
+                                    ));
+                                } else {
+                                    // For 160+ screens, add basic interaction metrics
+                                    let time_in_display = if zone.total_time_inside_seconds > 0 {
+                                        if zone.total_time_inside_seconds < 60 {
+                                            format!("{}s", zone.total_time_inside_seconds)
+                                        } else {
+                                            format!("{}m", zone.total_time_inside_seconds / 60)
+                                        }
+                                    } else {
+                                        "0".to_string()
+                                    };
+                                    cells.push(Cell::from(time_in_display));
+                                    
+                                    cells.push(Cell::from(format!("{}", zone.zone_entries)));
+                                }
                             }
                         }
                     }
@@ -651,7 +753,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | ↑↓ select zone | 'y' copy zone ID | 'c' clear";
+    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'i' indices | ↑↓ select zone | 'y' copy zone ID";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))

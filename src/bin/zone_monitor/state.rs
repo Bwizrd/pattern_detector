@@ -11,6 +11,7 @@ use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
 use crate::websocket::WebSocketClient;
 use crate::zone_state_manager::ProcessResult;
 use crate::zone_state_manager::ZoneStateManager;
+use pattern_detector::zone_interactions::{ZoneInteractionContainer, InteractionConfig};
 use chrono::Timelike;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,19 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
+
+/// Get pip value for a symbol (helper function)
+fn get_pip_value(symbol: &str) -> f64 {
+    match symbol {
+        // JPY pairs use 0.01 as pip value
+        s if s.ends_with("JPY") => 0.01,
+        // Indices
+        "NAS100" => 1.0,
+        "US500" => 0.1,
+        // All other pairs use 0.0001
+        _ => 0.0001,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedNotification {
@@ -80,6 +94,8 @@ pub struct MonitorState {
     pub trading_engine: Arc<TradingEngine>,
     pub csv_logger: Arc<CsvLogger>,
     pub telegram_notifier: Arc<TelegramNotifier>,
+    pub zone_interactions: Arc<RwLock<ZoneInteractionContainer>>,
+    pub interaction_config: InteractionConfig,
     pub cache_file_path: String,
     pub websocket_url: String,
 }
@@ -95,6 +111,14 @@ impl MonitorState {
             .parse()
             .unwrap_or(10.0);
 
+        // Initialize zone interaction tracking
+        let interaction_config = InteractionConfig::default();
+        let zone_interactions = ZoneInteractionContainer::load_from_file(&interaction_config.file_path)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load zone interactions: {}, starting fresh", e);
+                ZoneInteractionContainer::new()
+            });
+
         Self {
             zone_cache: Arc::new(RwLock::new(ZoneCache::default())),
             latest_prices: Arc::new(RwLock::new(HashMap::new())),
@@ -106,6 +130,8 @@ impl MonitorState {
             trading_engine: Arc::new(TradingEngine::new()),
             csv_logger: Arc::new(CsvLogger::new()),
             telegram_notifier: Arc::new(TelegramNotifier::new()),
+            zone_interactions: Arc::new(RwLock::new(zone_interactions)),
+            interaction_config,
             cache_file_path,
             websocket_url,
         }
@@ -120,6 +146,7 @@ impl MonitorState {
         self.start_websocket_task().await;
         self.start_notification_cleanup_task().await;
         self.start_zone_reset_task().await;
+        self.start_zone_interaction_save_task().await;
 
         // Test notifications if configured
         if self.notification_manager.is_configured() {
@@ -226,6 +253,24 @@ impl MonitorState {
         });
     }
 
+    async fn start_zone_interaction_save_task(&self) {
+        let zone_interactions = Arc::clone(&self.zone_interactions);
+        let interaction_config = self.interaction_config.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); // Save every 30 seconds
+
+            loop {
+                interval.tick().await;
+                
+                let interactions = zone_interactions.read().await;
+                if let Err(e) = interactions.save_to_file(&interaction_config.file_path) {
+                    tracing::error!("Failed to save zone interactions: {}", e);
+                }
+            }
+        });
+    }
+
     async fn handle_price_update(&self, price_update: PriceUpdate) {
         // Store the latest price
         {
@@ -233,14 +278,68 @@ impl MonitorState {
             prices.insert(price_update.symbol.clone(), price_update.clone());
         }
 
-        // Get zones for this symbol
+        // Update zone interactions with new price data
+        {
+            let mut interactions = self.zone_interactions.write().await;
+            let timestamp = price_update.timestamp.to_rfc3339();
+            let price = (price_update.bid + price_update.ask) / 2.0; // Use mid price
+            
+            interactions.update_all_zones_with_price(
+                &price_update.symbol,
+                price,
+                timestamp,
+                &self.interaction_config,
+            );
+        }
+
+        // Get zones for this symbol and ensure zone interactions are initialized
         let zones = {
             let cache = self.zone_cache.read().await;
-            cache
+            let zones = cache
                 .zones
                 .get(&price_update.symbol)
                 .cloned()
-                .unwrap_or_default()
+                .unwrap_or_default();
+            
+            // Initialize zone interaction metrics only for zones within 50 pips of proximal line
+            if !zones.is_empty() {
+                let mut interactions = self.zone_interactions.write().await;
+                let current_price = (price_update.bid + price_update.ask) / 2.0;
+                let max_distance_pips = 50.0;
+                let pip_value = get_pip_value(&price_update.symbol);
+                
+                for zone in &zones {
+                    let zone_type = if zone.zone_type.contains("supply") {
+                        "supply_zone"
+                    } else {
+                        "demand_zone"
+                    };
+                    
+                    // Calculate proximal line for this zone
+                    let proximal_line = if zone_type == "supply_zone" {
+                        zone.low // For supply zones, proximal is low
+                    } else {
+                        zone.high // For demand zones, proximal is high
+                    };
+                    
+                    // Calculate distance from current price to proximal line
+                    let distance_to_proximal_pips = (current_price - proximal_line).abs() / pip_value;
+                    
+                    // Only create/track zones within 50 pips of their proximal line
+                    if distance_to_proximal_pips <= max_distance_pips {
+                        interactions.get_or_create_zone_metrics(
+                            zone.id.clone(),
+                            price_update.symbol.clone(),
+                            zone.timeframe.clone(),
+                            zone_type.to_string(),
+                            zone.high,
+                            zone.low,
+                        );
+                    }
+                }
+            }
+            
+            zones
         };
 
         if !zones.is_empty() {
@@ -541,6 +640,11 @@ impl MonitorState {
 
     pub async fn get_trading_config(&self) -> crate::trading_engine::TradingConfig {
         self.trading_engine.get_config().await
+    }
+
+    // Zone interaction methods
+    pub async fn get_zone_interactions(&self) -> ZoneInteractionContainer {
+        self.zone_interactions.read().await.clone()
     }
 
     pub async fn close_trade(

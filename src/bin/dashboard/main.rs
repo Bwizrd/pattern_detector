@@ -138,6 +138,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 app.toggle_strength_input_mode();
                             }
                         }
+                        // Toggle indices display (works on all pages)
+                        KeyCode::Char('i') => {
+                            app.toggle_indices();
+                        }
                         // Timeframe toggles work on dashboard and notifications
                         KeyCode::Char('1') => {
                             if app.current_page != AppPage::Prices {

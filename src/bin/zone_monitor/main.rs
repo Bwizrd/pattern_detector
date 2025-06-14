@@ -88,6 +88,11 @@ async fn zone_stats_api(State(state): State<MonitorState>) -> Json<serde_json::V
     Json(response)
 }
 
+async fn zone_interactions_api(State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    let interactions = state.get_zone_interactions().await;
+    Json(serde_json::json!(interactions))
+}
+
 async fn cooldown_stats_api(State(state): State<MonitorState>) -> Json<serde_json::Value> {
     let stats = state.get_cooldown_stats().await;
     Json(stats)
@@ -174,6 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/notifications/test", post(test_notification_api))
         .route("/api/notifications/cooldowns", get(cooldown_stats_api))
         .route("/api/zones/stats", get(zone_stats_api))
+        .route("/api/zones/interactions", get(zone_interactions_api))
         .route("/api/trading/stats", get(trading_stats_api))
         .route("/api/trading/history", get(trade_history_api))
         .route("/health", get(health_check))
@@ -188,6 +194,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   🧪 Test Notification: POST http://localhost:{}/api/notifications/test", monitor_port);
     info!("   ⏱️ Cooldown Stats: http://localhost:{}/api/notifications/cooldowns", monitor_port);
     info!("   📊 Zone Stats: http://localhost:{}/api/zones/stats", monitor_port);
+    info!("   🔄 Zone Interactions: http://localhost:{}/api/zones/interactions", monitor_port);
     info!("   💰 Trading Stats: http://localhost:{}/api/trading/stats", monitor_port);
     info!("   📈 Trade History: http://localhost:{}/api/trading/history", monitor_port);
     info!("   ❤️  Health Check: http://localhost:{}/health", monitor_port);
