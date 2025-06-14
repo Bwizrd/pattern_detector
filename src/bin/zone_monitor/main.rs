@@ -167,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build web server with new notification endpoints
     let app = Router::new()
         .route("/", get(html::status_page))
+        .route("/closest", get(html::closest_zones_page))
         .route("/api/zones", get(zones_api))
         .route("/api/alerts", get(alerts_api))
         .route("/api/notifications/status", get(notifications_status_api))

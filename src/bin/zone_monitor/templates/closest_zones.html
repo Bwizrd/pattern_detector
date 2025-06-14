@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Closest Zones</title>
+    <meta http-equiv="refresh" content="10">
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #222; color: #eee; margin: 0; padding: 20px; }
+        h1 { text-align: center; color: #fff; }
+        table { width: 100%; border-collapse: collapse; margin: 0 auto; background: #181818; }
+        th, td { padding: 10px; text-align: center; }
+        th { background: #333; color: #fff; }
+        tr:nth-child(even) { background: #232323; }
+        tr:hover { background: #444; }
+        .supply { color: #ff5c5c; }
+        .demand { color: #5cff8d; }
+    </style>
+</head>
+<body>
+    <h1>Closest Zones (Proximal Distance)</h1>
+    <div style="margin-bottom: 20px; text-align: center;">
+        <label style="margin-right: 10px;">Timeframes:</label>
+        <label style="margin-right: 10px;"><input type="checkbox" class="tf-filter" value="5m" onchange="filterTimeframes()"> 5m</label>
+        <label style="margin-right: 10px;"><input type="checkbox" class="tf-filter" value="15m" onchange="filterTimeframes()"> 15m</label>
+        <label style="margin-right: 10px;"><input type="checkbox" class="tf-filter" value="30m" checked onchange="filterTimeframes()"> 30m</label>
+        <label style="margin-right: 10px;"><input type="checkbox" class="tf-filter" value="1h" checked onchange="filterTimeframes()"> 1h</label>
+        <label style="margin-right: 10px;"><input type="checkbox" class="tf-filter" value="4h" checked onchange="filterTimeframes()"> 4h</label>
+        <label style="margin-right: 10px;"><input type="checkbox" class="tf-filter" value="1d" checked onchange="filterTimeframes()"> 1d</label>
+    </div>
+    <table id="zonesTable">
+        <tr>
+            <th>Symbol</th>
+            <th>Timeframe</th>
+            <th>Type</th>
+            <th>Distance (pips)</th>
+            <th>Price</th>
+            <th>Proximal</th>
+            <th>Distal</th>
+            <th>Strength</th>
+            <th>Touches</th>
+            <th>Zone ID</th>
+        </tr>
+        {zone_rows}
+    </table>
+    <p style="text-align:center; color:#aaa; margin-top:20px;">Auto-refreshes every 10 seconds</p>
+    <script>
+        function filterTimeframes() {
+            const checked = Array.from(document.querySelectorAll('.tf-filter:checked')).map(cb => cb.value);
+            // Save checked timeframes to localStorage
+            localStorage.setItem('closest_tf_filters', JSON.stringify(checked));
+            const rows = document.querySelectorAll('#zonesTable tr:not(:first-child)');
+            rows.forEach(row => {
+                const tf = row.cells[1].textContent.trim();
+                row.style.display = checked.includes(tf) ? '' : 'none';
+            });
+        }
+        // On page load, restore filter state from localStorage and apply filter
+        window.onload = function() {
+            const saved = localStorage.getItem('closest_tf_filters');
+            if (saved) {
+                const checked = JSON.parse(saved);
+                document.querySelectorAll('.tf-filter').forEach(cb => {
+                    cb.checked = checked.includes(cb.value);
+                });
+            } else {
+                document.querySelectorAll('.tf-filter').forEach(cb => {
+                    if(cb.value === '5m' || cb.value === '15m') cb.checked = false;
+                    else cb.checked = true;
+                });
+            }
+            filterTimeframes();
+        }
+    </script>
+</body>
+</html> 

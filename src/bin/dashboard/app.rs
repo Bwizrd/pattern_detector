@@ -1232,21 +1232,32 @@ impl App {
         // FIXED: Determine zone type and lines correctly
         let is_supply = zone_type.contains("supply") || zone_type.contains("resistance");
         let (proximal_line, distal_line) = if is_supply {
-            // Supply zone: price approaches from below, so proximal is the bottom (zone_low)
-            (zone_low, zone_high)
-        } else {
-            // Demand zone: price approaches from above, so proximal is the top (zone_high)
+            // Supply zone: proximal = high, distal = low
             (zone_high, zone_low)
+        } else {
+            // Demand zone: proximal = low, distal = high
+            (zone_low, zone_high)
         };
 
         let pip_value = self.pip_values.get(&symbol).cloned().unwrap_or(0.0001);
 
         // FIXED: Calculate distance to closest edge of zone
         let distance_to_proximal = (current_price - proximal_line).abs() / pip_value;
-        let distance_to_distal = (current_price - distal_line).abs() / pip_value;
-
-        // Use the smaller distance (closest edge)
-        let distance_pips = distance_to_proximal.min(distance_to_distal);
+        // Debug log for every zone
+        {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("zone_debug.log")
+                .unwrap();
+            writeln!(
+                file,
+                "DEBUG: ZONE {} | symbol: {} | price: {:.5} | proximal: {:.5} | distal: {:.5} | pip_value: {:.5} | distance_to_proximal: {:.1}",
+                zone_id, symbol, current_price, proximal_line, distal_line, pip_value, distance_to_proximal
+            ).unwrap();
+        }
 
         // FIXED: Calculate signed distance properly
         let signed_distance_pips = if is_supply {
@@ -1277,7 +1288,7 @@ impl App {
             pip_value,
         );
 
-        if distance_pips.is_nan() || distance_pips.is_infinite() {
+        if distance_to_proximal.is_nan() || distance_to_proximal.is_infinite() {
             return Err("Invalid distance calculation".into());
         }
 
@@ -1290,7 +1301,7 @@ impl App {
             proximal_line,
             distal_line,
             signed_distance_pips,
-            distance_pips,
+            distance_pips: distance_to_proximal,
             zone_status,
             last_update: Utc::now(),
             touch_count,
