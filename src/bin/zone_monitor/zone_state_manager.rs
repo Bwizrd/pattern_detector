@@ -7,6 +7,19 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
+/// Helper function to get pip value for a symbol
+fn get_pip_value(symbol: &str) -> f64 {
+    match symbol {
+        // JPY pairs use 0.01 as pip value
+        s if s.ends_with("JPY") => 0.01,
+        // Indices
+        "NAS100" => 1.0,
+        "US500" => 0.1,
+        // All other pairs use 0.0001
+        _ => 0.0001,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ZoneState {
     NeverAlerted,      // Initial state - never been in proximity
@@ -133,6 +146,7 @@ impl ZoneStateManager {
         &self,
         price_update: &PriceUpdate,
         zones: &[Zone],
+        zone_interactions: Option<&pattern_detector::zone_interactions::ZoneInteractionContainer>,
     ) -> ProcessResult {
         let mut result = ProcessResult::default();
         let current_price = (price_update.bid + price_update.ask) / 2.0;
@@ -182,6 +196,40 @@ impl ZoneStateManager {
                     zone.id, zone_state.state, distance_pips
                 );
 
+                // Get zone interaction data for first-time entry detection
+                let (has_ever_entered, zone_entries) = if let Some(interactions) = zone_interactions {
+                    if let Some(metrics) = interactions.metrics.get(&zone.id) {
+                        (metrics.has_ever_entered, metrics.zone_entries)
+                    } else {
+                        (false, 0)
+                    }
+                } else {
+                    (false, 0)
+                };
+
+                // Check if price is within the extended zone boundary using TRADING_THRESHOLD_PIPS
+                let is_supply = zone.zone_type.contains("supply") || zone.zone_type.contains("resistance");
+                let proximal_line = if is_supply { zone.low } else { zone.high };
+                let pip_value = get_pip_value(&zone.symbol);
+                
+                // Extend the zone boundary by TRADING_THRESHOLD_PIPS
+                let extended_proximal_line = if is_supply {
+                    // Supply zone: extend lower (reduce proximal line)
+                    proximal_line - (self.trading_threshold_pips * pip_value)
+                } else {
+                    // Demand zone: extend higher (increase proximal line)
+                    proximal_line + (self.trading_threshold_pips * pip_value)
+                };
+                
+                let signed_distance = if is_supply {
+                    (current_price - extended_proximal_line) / pip_value
+                } else {
+                    (extended_proximal_line - current_price) / pip_value
+                };
+                
+                let is_inside_extended_zone = signed_distance > 0.0;
+                let is_first_time_entry = !has_ever_entered && zone_entries == 0;
+
                 match zone_state.state {
                     ZoneState::NeverAlerted => {
                         // First time in proximity - send proximity alert
@@ -203,9 +251,9 @@ impl ZoneStateManager {
                         );
                     }
                     ZoneState::ProximityAlerted => {
-                        // Already alerted for proximity, check if we should trade
-                        if distance_pips <= self.trading_threshold_pips {
-                            // Within trading threshold - send trading signal ONCE
+                        // Check for TRIGGER condition: price inside extended zone AND first time entry
+                        if is_inside_extended_zone && is_first_time_entry {
+                            // TRIGGER: First time entering extended zone - send trading signal
                             self.update_zone_state(
                                 &zone.id,
                                 ZoneState::TradingSignalSent,
@@ -217,11 +265,15 @@ impl ZoneStateManager {
                             result.trading_signals.push(alert);
 
                             let timeframe = self.get_timeframe(zone);
-                            info!("💰 TRADING signal: {} {} zone @ {:.1} pips [{}] (Zone: {}, {} touches)", 
-                                  zone.symbol, zone.zone_type, distance_pips, timeframe, zone.id, zone.touch_count);
+                            info!("💰 TRADING signal (FIRST ENTRY @ {:.1} pips threshold): {} {} zone @ {:.1} pips [{}] (Zone: {}, {} touches)", 
+                                  self.trading_threshold_pips, zone.symbol, zone.zone_type, distance_pips, timeframe, zone.id, zone.touch_count);
+                        } else if is_inside_extended_zone && !is_first_time_entry {
+                            // Price inside extended zone but not first time - no trading signal
+                            debug!("🔄 Zone {} price inside extended zone but not first entry (entries: {})", 
+                                   zone.id, zone_entries);
                         } else {
-                            // Still in proximity but not trading threshold - do nothing
-                            debug!("🔄 Zone {} still in proximity ({:.1} pips) but not trading threshold ({:.1} pips)", 
+                            // Still in proximity but not inside extended zone - do nothing
+                            debug!("🔄 Zone {} still in proximity ({:.1} pips) but not inside extended zone (threshold: {:.1})", 
                                    zone.id, distance_pips, self.trading_threshold_pips);
                         }
                     }
@@ -270,10 +322,25 @@ impl ZoneStateManager {
         result
     }
 
-    // Calculate distance from current price to zone
+    // Calculate distance from current price to zone proximal line (matches dashboard logic)
     fn calculate_distance_to_zone(&self, current_price: f64, zone: &Zone) -> f64 {
-        let zone_mid = (zone.high + zone.low) / 2.0;
-        ((current_price - zone_mid).abs() * 10000.0).round()
+        // Determine zone type and proximal line (matching dashboard calculation)
+        let is_supply = zone.zone_type.contains("supply") || zone.zone_type.contains("resistance");
+        let proximal_line = if is_supply {
+            zone.low  // Supply zone: proximal = low (entry from below)
+        } else {
+            zone.high // Demand zone: proximal = high (entry from above)  
+        };
+        
+        // Calculate signed distance to proximal line
+        let pip_value = get_pip_value(&zone.symbol);
+        let signed_distance_pips = if is_supply {
+            (current_price - proximal_line) / pip_value
+        } else {
+            (proximal_line - current_price) / pip_value
+        };
+        
+        signed_distance_pips.abs()
     }
 
     // Create a zone alert object

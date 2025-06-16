@@ -256,6 +256,15 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
                 Style::default().fg(Color::Red)
             },
         ),
+        Span::styled("| Threshold: ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            format!("{:.1}p", app.trading_threshold_pips),
+            if app.trading_threshold_pips == 0.0 {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Yellow)
+            },
+        ),
     ]);
 
     let strength_line = Line::from(vec![
@@ -398,10 +407,35 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         // Calculate available width (subtract borders and padding)
         let available_width = area.width.saturating_sub(4); // 2 for borders + 2 for padding
 
-        // Enhanced column configuration with interaction metrics
+        // Enhanced column configuration with interaction metrics and optional start date
         let (headers, widths, max_rows) = if screen_width > 180 {
             // Extra large screens: Show all columns including interaction metrics
-            let base_widths = [10, 6, 8, 12, 8, 8, 8, 6, 6, 6, 6, 6, 18]; // Added interaction columns
+            let mut headers = vec![
+                "Symbol/TF",
+                "Type", 
+                "Distance",
+                "Status",
+                "Price",
+                "Proximal",
+                "Distal",
+                "Str",
+                "Touch",
+                "TimeIn", // Time in zone (seconds)
+                "Cross", // Proximal crossings  
+                "Fresh", // Has ever entered
+            ];
+            
+            let mut base_widths = vec![10, 6, 8, 12, 8, 8, 8, 6, 6, 6, 6, 6];
+            
+            // Add start date column if enabled
+            if app.show_start_dates {
+                headers.push("Start");
+                base_widths.push(10);
+            }
+            
+            headers.push("Zone ID");
+            base_widths.push(18);
+            
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -412,28 +446,34 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 })
                 .collect();
 
-            (
-                vec![
-                    "Symbol/TF",
-                    "Type", 
-                    "Distance",
-                    "Status",
-                    "Price",
-                    "Proximal",
-                    "Distal",
-                    "Str",
-                    "Touch",
-                    "TimeIn", // Time in zone (seconds)
-                    "Cross", // Proximal crossings  
-                    "Fresh", // Has ever entered
-                    "Zone ID",
-                ],
-                widths,
-                50,
-            )
+            (headers, widths, 50)
         } else if screen_width > 160 {
             // Very large screens: Show basic interaction metrics
-            let base_widths = [12, 6, 8, 12, 10, 10, 10, 6, 6, 6, 6, 16]; // Added some interaction columns
+            let mut headers = vec![
+                "Symbol/TF",
+                "Type",
+                "Distance", 
+                "Status",
+                "Price",
+                "Proximal",
+                "Distal",
+                "Str",
+                "Touch",
+                "TimeIn", // Time in zone
+                "Cross", // Crossings
+            ];
+            
+            let mut base_widths = vec![12, 6, 8, 12, 10, 10, 10, 6, 6, 6, 6];
+            
+            // Add start date column if enabled
+            if app.show_start_dates {
+                headers.push("Start");
+                base_widths.push(10);
+            }
+            
+            headers.push("Zone ID");
+            base_widths.push(16);
+            
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -444,27 +484,31 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 })
                 .collect();
 
-            (
-                vec![
-                    "Symbol/TF",
-                    "Type",
-                    "Distance", 
-                    "Status",
-                    "Price",
-                    "Proximal",
-                    "Distal",
-                    "Str",
-                    "Touch",
-                    "TimeIn", // Time in zone
-                    "Cross", // Crossings
-                    "Zone ID",
-                ],
-                widths,
-                50,
-            )
+            (headers, widths, 50)
         } else if screen_width > 140 {
             // Large screens: Show most columns but truncated Zone ID
-            let base_widths = [15, 6, 10, 15, 12, 12, 12, 8, 16]; // Zone ID instead of touches
+            let mut headers = vec![
+                "Symbol/TF",
+                "Type",
+                "S.Dist",
+                "Status",
+                "Price",
+                "Proximal",
+                "Distal",
+                "Str",
+            ];
+            
+            let mut base_widths = vec![15, 6, 10, 15, 12, 12, 12, 8];
+            
+            // Add start date column if enabled
+            if app.show_start_dates {
+                headers.push("Start");
+                base_widths.push(8);
+            }
+            
+            headers.push("Zone ID");
+            base_widths.push(16);
+            
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -475,24 +519,29 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 })
                 .collect();
 
-            (
-                vec![
-                    "Symbol/TF",
-                    "Type",
-                    "S.Dist",
-                    "Status",
-                    "Price",
-                    "Proximal",
-                    "Distal",
-                    "Str",
-                    "Zone ID",
-                ],
-                widths,
-                50,
-            )
+            (headers, widths, 50)
         } else if screen_width > 120 {
             // Medium-large screens: Basic columns + truncated Zone ID
-            let base_widths = [18, 8, 12, 18, 15, 15, 16];
+            let mut headers = vec![
+                "Symbol/TF",
+                "Type",
+                "S.Dist",
+                "Status",
+                "Price",
+                "Proximal",
+            ];
+            
+            let mut base_widths = vec![18, 8, 12, 18, 15, 15];
+            
+            // Add start date column if enabled (condensed)
+            if app.show_start_dates {
+                headers.push("Start");
+                base_widths.push(10);
+            }
+            
+            headers.push("Zone ID");
+            base_widths.push(16);
+            
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -503,19 +552,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 })
                 .collect();
 
-            (
-                vec![
-                    "Symbol/TF",
-                    "Type",
-                    "S.Dist",
-                    "Status",
-                    "Price",
-                    "Proximal",
-                    "Zone ID",
-                ],
-                widths,
-                45,
-            )
+            (headers, widths, 45)
         } else if screen_width > 100 {
             // Medium screens: Essential columns only
             (
@@ -664,6 +701,20 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                         }
                     }
 
+                    // Add start date column if enabled
+                    if app.show_start_dates && screen_width > 120 {
+                        let start_date_display = if let Some(created_at) = zone.created_at {
+                            if screen_width > 160 {
+                                created_at.format("%m/%d %H:%M").to_string() // MM/DD HH:MM
+                            } else {
+                                created_at.format("%m/%d").to_string() // Just MM/DD
+                            }
+                        } else {
+                            "N/A".to_string()
+                        };
+                        cells.push(Cell::from(start_date_display).style(row_style.fg(Color::Gray)));
+                    }
+
                     // Add Zone ID column (truncated based on available space)
                     let zone_id_display = if screen_width > 160 {
                         zone.zone_id.clone() // Show full ID on very large screens
@@ -764,7 +815,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'i' indices | 't' trading | ↑↓ select zone | 'y' copy zone ID";
+    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'i' indices | 't' trading | 'x' start dates | ↑↓ select zone | 'y' copy zone ID";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))

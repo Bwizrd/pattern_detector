@@ -33,6 +33,7 @@ pub struct ZoneDistanceInfo {
     pub last_update: DateTime<Utc>,
     pub touch_count: i32,
     pub strength_score: f64,
+    pub created_at: Option<DateTime<Utc>>, // Zone start date
     
     // Zone interaction metrics
     pub has_ever_entered: bool,

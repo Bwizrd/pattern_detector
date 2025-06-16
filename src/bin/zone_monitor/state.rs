@@ -344,9 +344,10 @@ impl MonitorState {
 
         if !zones.is_empty() {
             // Use the new ZoneStateManager to process the price update
+            let zone_interactions_guard = self.zone_interactions.read().await;
             let result = self
                 .zone_state_manager
-                .process_price_update(&price_update, &zones)
+                .process_price_update(&price_update, &zones, Some(&*zone_interactions_guard))
                 .await;
 
             self.handle_new_notifications(&result).await;

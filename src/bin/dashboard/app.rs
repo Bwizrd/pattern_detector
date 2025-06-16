@@ -73,11 +73,13 @@ pub struct App {
     
     // Display options
     pub show_indices: bool, // Toggle for showing NAS100, US500 etc.
+    pub show_start_dates: bool, // Toggle for showing zone start dates
     
     // Live trading
     pub live_trades: Vec<LiveTrade>,
     pub trading_sl_pips: f64,
     pub trading_tp_pips: f64,
+    pub trading_threshold_pips: f64, // Zone extension threshold for trigger
     pub websocket_connected: bool,
     pub last_processed_notification_time: Option<DateTime<Utc>>,
     pub trading_enabled: bool, // Manual toggle for enabling/disabling trade creation
@@ -177,6 +179,7 @@ impl App {
             
             // Display options - indices off by default
             show_indices: false,
+            show_start_dates: false, // Start dates off by default
             
             // Live trading - get from environment variables
             live_trades: Vec::new(),
@@ -188,6 +191,14 @@ impl App {
                 .unwrap_or_else(|_| "10.0".to_string())
                 .parse()
                 .unwrap_or(10.0),
+            trading_threshold_pips: {
+                let threshold = std::env::var("TRADING_THRESHOLD_PIPS")
+                    .unwrap_or_else(|_| "0.0".to_string())
+                    .parse()
+                    .unwrap_or(0.0);
+                log::info!("📐 Dashboard trading threshold: {:.1} pips", threshold);
+                threshold
+            },
             websocket_connected: false,
             last_processed_notification_time: None,
             trading_enabled: false, // Trading disabled by default
@@ -251,6 +262,10 @@ impl App {
 
     pub fn toggle_indices(&mut self) {
         self.show_indices = !self.show_indices;
+    }
+    
+    pub fn toggle_start_dates(&mut self) {
+        self.show_start_dates = !self.show_start_dates;
     }
 
     pub fn toggle_trading(&mut self) {
@@ -1229,7 +1244,8 @@ impl App {
                                         "zone_low": zone.get("low").unwrap_or(&Value::Null),
                                         "touch_count": zone.get("touch_count").unwrap_or(&json!(0)),
                                         "strength_score": zone.get("strength").unwrap_or(&json!(0.0)),
-                                        "created_at": zone.get("created_at").unwrap_or(&Value::Null)
+                                        "created_at": zone.get("created_at").unwrap_or(&Value::Null),
+                                        "start_time": zone.get("start_time").unwrap_or(&Value::Null)
                                     });
                                     all_zones.push(converted_zone);
                                 }
@@ -1413,6 +1429,15 @@ impl App {
         pip_value: f64,
     ) -> ZoneStatus {
         let proximity_threshold = 2.0 * pip_value;
+        
+        // Extend the zone boundary by TRADING_THRESHOLD_PIPS
+        let extended_proximal_line = if is_supply {
+            // Supply zone: extend lower (reduce proximal line)
+            proximal_line - (self.trading_threshold_pips * pip_value)
+        } else {
+            // Demand zone: extend higher (increase proximal line)
+            proximal_line + (self.trading_threshold_pips * pip_value)
+        };
 
         if is_supply {
             // Supply zone: distal_line (top) > proximal_line (bottom)
@@ -1422,10 +1447,10 @@ impl App {
                 && current_price <= distal_line + proximity_threshold
             {
                 ZoneStatus::AtDistal
-            } else if current_price > proximal_line && current_price <= distal_line {
+            } else if current_price > extended_proximal_line && current_price <= distal_line {
                 ZoneStatus::InsideZone
-            } else if current_price >= proximal_line {
-                ZoneStatus::AtProximal  // Price has reached/crossed the proximal line (zone entry)
+            } else if current_price >= extended_proximal_line {
+                ZoneStatus::AtProximal  // Price has reached/crossed the extended proximal line (zone entry)
             } else {
                 ZoneStatus::Approaching
             }
@@ -1437,10 +1462,10 @@ impl App {
                 && current_price >= distal_line - proximity_threshold
             {
                 ZoneStatus::AtDistal
-            } else if current_price < proximal_line && current_price >= distal_line {
+            } else if current_price < extended_proximal_line && current_price >= distal_line {
                 ZoneStatus::InsideZone
-            } else if current_price <= proximal_line {
-                ZoneStatus::AtProximal  // Price has reached/crossed the proximal line (zone entry)
+            } else if current_price <= extended_proximal_line {
+                ZoneStatus::AtProximal  // Price has reached/crossed the extended proximal line (zone entry)
             } else {
                 ZoneStatus::Approaching
             }
@@ -1495,6 +1520,21 @@ impl App {
             .get("strength_score")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
+
+        // Try to get start_time first (preferred), fallback to created_at for backward compatibility
+        let created_at = zone_json
+            .get("start_time")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|| {
+                // Fallback to created_at for backward compatibility
+                zone_json
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+            });
 
         let current_price = current_prices
             .get(&symbol)
@@ -1592,6 +1632,7 @@ impl App {
             last_update: Utc::now(),
             touch_count,
             strength_score,
+            created_at,
             
             // Zone interaction metrics
             has_ever_entered,

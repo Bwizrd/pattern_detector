@@ -152,6 +152,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Char('t') => {
                             app.toggle_trading();
                         }
+                        // Toggle start dates display (only on dashboard)
+                        KeyCode::Char('x') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.toggle_start_dates();
+                            }
+                        }
                         // Timeframe toggles work on dashboard and notifications
                         KeyCode::Char('1') => {
                             if app.current_page != AppPage::Prices {
