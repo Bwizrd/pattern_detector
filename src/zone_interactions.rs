@@ -293,6 +293,7 @@ impl ZoneInteractionContainer {
     /// Load zone interactions from file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
+        
         if !path.exists() {
             info!("[ZoneInteraction] Creating new zone interactions file at {:?}", path);
             return Ok(Self::new());
@@ -312,8 +313,25 @@ impl ZoneInteractionContainer {
         Ok(())
     }
 
-    /// Get or create zone interaction metrics
+    /// Get or create zone interaction metrics with boundary validation
     pub fn get_or_create_zone_metrics(&mut self, zone_id: String, symbol: String, timeframe: String, zone_type: String, zone_high: f64, zone_low: f64) -> &mut ZoneInteractionMetrics {
+        // Check if zone exists and validate boundaries
+        if let Some(existing_metrics) = self.metrics.get(&zone_id) {
+            // Compare boundaries with tolerance for floating point precision
+            let boundary_tolerance = 0.00001;
+            let high_matches = (existing_metrics.zone_high - zone_high).abs() < boundary_tolerance;
+            let low_matches = (existing_metrics.zone_low - zone_low).abs() < boundary_tolerance;
+            
+            if !high_matches || !low_matches {
+                warn!("[ZoneInteraction] Zone {} boundaries changed! Old: {:.5}-{:.5}, New: {:.5}-{:.5}. Resetting interaction data.", 
+                      zone_id, existing_metrics.zone_low, existing_metrics.zone_high, zone_low, zone_high);
+                
+                // Remove old data and create fresh entry
+                self.metrics.remove(&zone_id);
+            }
+        }
+        
+        // Get or create with validated boundaries
         self.metrics.entry(zone_id.clone()).or_insert_with(|| {
             debug!("[ZoneInteraction] Creating new interaction metrics for zone {}", zone_id);
             ZoneInteractionMetrics::new(zone_id, symbol, timeframe, zone_type, zone_high, zone_low)
@@ -433,6 +451,14 @@ impl ZoneInteractionContainer {
             self.metrics.remove(&zone_id);
             debug!("[ZoneInteraction] Removed old inactive zone {}", zone_id);
         }
+    }
+    
+    /// Reset all zone interaction data (daily cleanup)
+    pub fn reset_all_data(&mut self) {
+        let old_count = self.metrics.len();
+        self.metrics.clear();
+        self.last_updated = Utc::now().to_rfc3339();
+        info!("[ZoneInteraction] Daily reset: Cleared {} zone interaction records", old_count);
     }
 }
 

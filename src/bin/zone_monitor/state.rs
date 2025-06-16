@@ -147,6 +147,7 @@ impl MonitorState {
         self.start_notification_cleanup_task().await;
         self.start_zone_reset_task().await;
         self.start_zone_interaction_save_task().await;
+        self.start_zone_interaction_midnight_cleanup().await;
 
         // Test notifications if configured
         if self.notification_manager.is_configured() {
@@ -266,6 +267,43 @@ impl MonitorState {
                 let interactions = zone_interactions.read().await;
                 if let Err(e) = interactions.save_to_file(&interaction_config.file_path) {
                     tracing::error!("Failed to save zone interactions: {}", e);
+                }
+            }
+        });
+    }
+
+    async fn start_zone_interaction_midnight_cleanup(&self) {
+        let zone_interactions = Arc::clone(&self.zone_interactions);
+        let interaction_config = self.interaction_config.clone();
+
+        tokio::spawn(async move {
+            loop {
+                // Calculate time until next midnight UTC
+                let now = chrono::Utc::now();
+                let next_midnight = (now + chrono::Duration::days(1))
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc();
+                let duration_until_midnight = (next_midnight - now).to_std().unwrap_or(Duration::from_secs(24 * 3600));
+                
+                tracing::info!("🕐 Zone interactions midnight cleanup scheduled in {:.1} hours", 
+                              duration_until_midnight.as_secs_f64() / 3600.0);
+                
+                // Wait until midnight
+                tokio::time::sleep(duration_until_midnight).await;
+                
+                // Reset all zone interaction data
+                {
+                    let mut interactions = zone_interactions.write().await;
+                    interactions.reset_all_data();
+                    
+                    // Save the reset state
+                    if let Err(e) = interactions.save_to_file(&interaction_config.file_path) {
+                        tracing::error!("Failed to save reset zone interactions: {}", e);
+                    } else {
+                        tracing::info!("🌅 Midnight cleanup: Zone interactions data reset successfully");
+                    }
                 }
             }
         });
