@@ -1664,22 +1664,31 @@ impl App {
         zone_entries: u32,
         signed_distance_pips: f64,
     ) -> ZoneStatus {
-        // First check if price is inside zone AND zone has never been entered - TRIGGER first entry
-        if matches!(base_status, ZoneStatus::InsideZone) {
-            // If zone has never been entered, show TRIGGER instead of INSIDE
-            if !has_ever_entered && zone_entries == 0 {
+        // CRITICAL: Match zone_monitor logic exactly - check distance threshold AND first-time entry
+        let is_first_time_entry = !has_ever_entered && zone_entries == 0;
+        let distance_pips = signed_distance_pips.abs();
+        
+        // Zone can only trigger if BOTH conditions are met (matching zone_monitor):
+        // 1. distance_pips <= trading_threshold_pips
+        // 2. is_first_time_entry = true
+        let can_trigger = distance_pips <= self.trading_threshold_pips && is_first_time_entry;
+        
+        // For zones that are at proximal or inside, apply the exact trigger logic
+        if matches!(base_status, ZoneStatus::AtProximal | ZoneStatus::InsideZone) {
+            if can_trigger {
+                // Both conditions met - show as TRIGGER
                 return ZoneStatus::AtProximal;
+            } else if !is_first_time_entry {
+                // Zone has been entered before - show as recently tested
+                return ZoneStatus::RecentlyTested;
+            } else {
+                // First time but distance too far - show as inside/approaching
+                return if matches!(base_status, ZoneStatus::InsideZone) {
+                    ZoneStatus::InsideZone
+                } else {
+                    ZoneStatus::Approaching
+                };
             }
-            return ZoneStatus::InsideZone;
-        }
-
-        // Then check for trigger conditions - but only if zone hasn't been entered before
-        if matches!(base_status, ZoneStatus::AtProximal) {
-            // If the zone has already been entered, don't show TRIGGER again
-            if has_ever_entered || zone_entries > 0 {
-                return ZoneStatus::RecentlyTested; // Show as recently tested instead
-            }
-            return ZoneStatus::AtProximal;
         }
 
         // For other statuses, enhance based on interaction history

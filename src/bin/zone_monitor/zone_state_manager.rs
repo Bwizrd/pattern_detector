@@ -221,27 +221,6 @@ impl ZoneStateManager {
                     (false, 0)
                 };
 
-                // Check if price is within the extended zone boundary using TRADING_THRESHOLD_PIPS
-                let is_supply = zone.zone_type.contains("supply") || zone.zone_type.contains("resistance");
-                let proximal_line = if is_supply { zone.low } else { zone.high };
-                let pip_value = get_pip_value(&zone.symbol);
-                
-                // Extend the zone boundary by TRADING_THRESHOLD_PIPS
-                let extended_proximal_line = if is_supply {
-                    // Supply zone: extend lower (reduce proximal line)
-                    proximal_line - (self.trading_threshold_pips * pip_value)
-                } else {
-                    // Demand zone: extend higher (increase proximal line)
-                    proximal_line + (self.trading_threshold_pips * pip_value)
-                };
-                
-                let signed_distance = if is_supply {
-                    (current_price - extended_proximal_line) / pip_value
-                } else {
-                    (extended_proximal_line - current_price) / pip_value
-                };
-                
-                let is_inside_extended_zone = signed_distance > 0.0;
                 let is_first_time_entry = !has_ever_entered && zone_entries == 0;
 
                 match zone_state.state {
@@ -265,9 +244,9 @@ impl ZoneStateManager {
                         );
                     }
                     ZoneState::ProximityAlerted => {
-                        // Check for TRIGGER condition: price inside extended zone AND first time entry
-                        if is_inside_extended_zone && is_first_time_entry {
-                            // TRIGGER: First time entering extended zone - send trading signal
+                        // Check for TRIGGER condition: within trading threshold AND first time entry
+                        if distance_pips <= self.trading_threshold_pips && is_first_time_entry {
+                            // TRIGGER: First time within trading threshold - send trading signal
                             self.update_zone_state(
                                 &zone.id,
                                 ZoneState::TradingSignalSent,
@@ -281,13 +260,13 @@ impl ZoneStateManager {
                             let timeframe = self.get_timeframe(zone);
                             info!("💰 TRADING signal (FIRST ENTRY @ {:.1} pips threshold): {} {} zone @ {:.1} pips [{}] (Zone: {}, {} touches)", 
                                   self.trading_threshold_pips, zone.symbol, zone.zone_type, distance_pips, timeframe, zone.id, zone.touch_count);
-                        } else if is_inside_extended_zone && !is_first_time_entry {
-                            // Price inside extended zone but not first time - no trading signal
-                            debug!("🔄 Zone {} price inside extended zone but not first entry (entries: {})", 
+                        } else if distance_pips <= self.trading_threshold_pips && !is_first_time_entry {
+                            // Within threshold but not first time - no trading signal
+                            debug!("🔄 Zone {} within threshold but not first entry (entries: {})", 
                                    zone.id, zone_entries);
                         } else {
-                            // Still in proximity but not inside extended zone - do nothing
-                            debug!("🔄 Zone {} still in proximity ({:.1} pips) but not inside extended zone (threshold: {:.1})", 
+                            // Still in proximity but not within trading threshold - do nothing
+                            debug!("🔄 Zone {} still in proximity ({:.1} pips) but not within trading threshold ({:.1})", 
                                    zone.id, distance_pips, self.trading_threshold_pips);
                         }
                     }
