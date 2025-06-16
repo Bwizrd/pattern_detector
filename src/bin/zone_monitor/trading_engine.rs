@@ -472,18 +472,27 @@ impl TradingEngine {
             .get(&sb_symbol)
             .ok_or_else(|| format!("symbol_mapping_not_found_{}", signal.symbol))?;
 
+        // Get pip value for the symbol
+        let pip_value = if signal.symbol.contains("JPY") {
+            0.01
+        } else {
+            0.0001
+        };
+
         // Determine trade direction based on zone type
         let (trade_type, entry_price, stop_loss, take_profit) = match signal.zone_type.as_str() {
             "demand_zone" => {
                 let entry = current_price;
-                let sl = config.stop_loss_pips; // Use pip value directly
-                let tp = config.take_profit_pips; // Use pip value directly
+                // Convert pip counts to pip distances (price units)
+                let sl = config.stop_loss_pips * pip_value; // e.g., 40 * 0.0001 = 0.004
+                let tp = config.take_profit_pips * pip_value; // e.g., 10 * 0.0001 = 0.001
                 ("buy".to_string(), entry, sl, tp)
             }
             "supply_zone" => {
                 let entry = current_price;
-                let sl = config.stop_loss_pips; // Use pip value directly
-                let tp = config.take_profit_pips; // Use pip value directly
+                // Convert pip counts to pip distances (price units)
+                let sl = config.stop_loss_pips * pip_value; // e.g., 40 * 0.0001 = 0.004
+                let tp = config.take_profit_pips * pip_value; // e.g., 10 * 0.0001 = 0.001
                 ("sell".to_string(), entry, sl, tp)
             }
             _ => {
