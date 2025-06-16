@@ -1452,7 +1452,13 @@ impl App {
             } else if current_price >= extended_proximal_line {
                 ZoneStatus::AtProximal  // Price has reached/crossed the extended proximal line (zone entry)
             } else {
-                ZoneStatus::Approaching
+                // Check distance to determine if truly approaching
+                let distance_to_proximal = (current_price - proximal_line).abs() / pip_value;
+                if distance_to_proximal < 10.0 {
+                    ZoneStatus::Approaching
+                } else {
+                    ZoneStatus::FreshZone  // Too far to be approaching
+                }
             }
         } else {
             // Demand zone: proximal_line (top) > distal_line (bottom)
@@ -1467,7 +1473,13 @@ impl App {
             } else if current_price <= extended_proximal_line {
                 ZoneStatus::AtProximal  // Price has reached/crossed the extended proximal line (zone entry)
             } else {
-                ZoneStatus::Approaching
+                // Check distance to determine if truly approaching
+                let distance_to_proximal = (proximal_line - current_price).abs() / pip_value;
+                if distance_to_proximal < 10.0 {
+                    ZoneStatus::Approaching
+                } else {
+                    ZoneStatus::FreshZone  // Too far to be approaching
+                }
             }
         }
     }
@@ -1673,23 +1685,28 @@ impl App {
         // For other statuses, enhance based on interaction history
         match base_status {
             ZoneStatus::Approaching | ZoneStatus::AtDistal => {
-                // Check for recent activity (within last hour) AND reasonable distance
+                // PRIORITY 1: Check for recent activity (within last hour) AND reasonable distance
                 if let Some(last_crossing) = last_crossing_time {
                     let now = Utc::now();
                     let duration = now.signed_duration_since(last_crossing);
-                    // Only mark as recently tested if within last hour AND within reasonable distance (< 20 pips)
-                    if duration.num_hours() < 1 && signed_distance_pips.abs() < 20.0 {
+                    // Only mark as recently tested if within last hour AND within reasonable distance (< 10 pips)
+                    if duration.num_hours() < 1 && signed_distance_pips.abs() < 10.0 {
                         return ZoneStatus::RecentlyTested;
                     }
                 }
 
-                // Check if zone has never been entered
+                // PRIORITY 2: Current proximity takes precedence - if close to zone, show base status
+                if signed_distance_pips.abs() < 10.0 {
+                    return base_status.clone(); // Show APPROACHING/AT_DISTAL regardless of history
+                }
+
+                // PRIORITY 3: Check if zone has never been entered (only for distant zones)
                 if !has_ever_entered && zone_entries == 0 {
                     return ZoneStatus::FreshZone;
                 }
 
-                // Check if zone is weakened by multiple entries
-                if zone_entries > 3 {
+                // PRIORITY 4: Mark as weak only if distant AND heavily tested
+                if zone_entries > 10 {
                     return ZoneStatus::WeakZone;
                 }
 

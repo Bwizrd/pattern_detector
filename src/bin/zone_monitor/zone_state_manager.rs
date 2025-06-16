@@ -129,6 +129,20 @@ impl ZoneStateManager {
             return true;
         }
 
+        // Check minimum zone strength
+        let min_zone_strength = std::env::var("TRADING_MIN_ZONE_STRENGTH")
+            .unwrap_or_else(|_| "70.0".to_string())
+            .parse::<f64>()
+            .unwrap_or(70.0);
+
+        if zone.strength < min_zone_strength {
+            debug!(
+                "🚫 Excluding zone {} (strength: {:.1} < min: {:.1})", 
+                zone.id, zone.strength, min_zone_strength
+            );
+            return true;
+        }
+
         false
     }
 

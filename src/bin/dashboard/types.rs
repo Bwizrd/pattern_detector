@@ -155,9 +155,9 @@ impl ZoneStatus {
             ZoneStatus::InsideZone => 10,      // Highest priority - price is inside
             ZoneStatus::AtProximal => 9,       // Ready to trigger
             ZoneStatus::RecentlyTested => 8,   // Recently active zones
-            ZoneStatus::AtDistal => 7,         // At exit side
-            ZoneStatus::FreshZone => 6,        // Fresh zones are interesting
-            ZoneStatus::Approaching => 5,      // Approaching zones
+            ZoneStatus::Approaching => 7,      // Approaching zones - HIGH priority!
+            ZoneStatus::AtDistal => 6,         // At exit side
+            ZoneStatus::FreshZone => 5,        // Fresh zones are interesting
             ZoneStatus::WeakZone => 4,         // Weak zones lower priority
             ZoneStatus::Breached => 1,         // Lowest priority
         }
