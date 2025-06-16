@@ -84,6 +84,10 @@ pub struct App {
     pub last_processed_notification_time: Option<DateTime<Utc>>,
     pub trading_enabled: bool, // Manual toggle for enabling/disabling trade creation
     pub show_trading_reminder: bool, // Show reminder popup to enable trading
+    
+    // Symbol filtering
+    pub symbol_filter: String, // Current symbol filter text
+    pub symbol_filter_mode: bool, // Whether we're in symbol filter input mode
 }
 
 impl App {
@@ -203,6 +207,10 @@ impl App {
             last_processed_notification_time: None,
             trading_enabled: false, // Trading disabled by default
             show_trading_reminder: false, // Will show after websocket connects
+            
+            // Symbol filtering - empty by default (shows all symbols)
+            symbol_filter: String::new(),
+            symbol_filter_mode: false,
         }
     }
 
@@ -755,6 +763,72 @@ impl App {
         }
     }
 
+    // Symbol filtering methods
+    pub fn toggle_symbol_filter_mode(&mut self) {
+        self.symbol_filter_mode = !self.symbol_filter_mode;
+        if !self.symbol_filter_mode {
+            // Reset zone selection when exiting filter mode
+            self.selected_zone_index = None;
+        }
+    }
+
+    pub fn handle_symbol_filter_input(&mut self, c: char) {
+        if self.symbol_filter_mode {
+            match c {
+                'A'..='Z' | 'a'..='z' | '0'..='9' => {
+                    self.symbol_filter.push(c.to_ascii_uppercase());
+                }
+                _ => {} // Ignore other characters
+            }
+        }
+    }
+
+    pub fn handle_symbol_filter_backspace(&mut self) {
+        if self.symbol_filter_mode {
+            self.symbol_filter.pop();
+        }
+    }
+
+    pub fn cancel_symbol_filter(&mut self) {
+        if self.symbol_filter_mode {
+            self.symbol_filter.clear();
+            self.symbol_filter_mode = false;
+            self.selected_zone_index = None;
+        }
+    }
+
+    pub fn clear_symbol_filter(&mut self) {
+        self.symbol_filter.clear();
+        self.selected_zone_index = None;
+    }
+
+    pub fn symbol_matches_filter(&self, symbol: &str) -> bool {
+        if self.symbol_filter.is_empty() {
+            return true; // No filter means show all
+        }
+        
+        // Case-insensitive partial matching
+        let filter_upper = self.symbol_filter.to_uppercase();
+        let symbol_upper = symbol.to_uppercase();
+        
+        // Support intelligent matching - if user types "JPY", show all JPY pairs
+        symbol_upper.contains(&filter_upper)
+    }
+
+    pub fn get_symbol_filter_status(&self) -> String {
+        if self.symbol_filter_mode {
+            if self.symbol_filter.is_empty() {
+                "Symbol Filter: _ (editing)".to_string()
+            } else {
+                format!("Symbol Filter: {} (editing)", self.symbol_filter)
+            }
+        } else if self.symbol_filter.is_empty() {
+            "Symbol Filter: ALL".to_string()
+        } else {
+            format!("Symbol Filter: {}", self.symbol_filter)
+        }
+    }
+
     pub async fn update_data(&mut self) {
         self.error_message = None;
         
@@ -1182,6 +1256,12 @@ impl App {
 
                     // Filter out indices if disabled
                     if !self.show_indices && (zone_info.symbol == "NAS100" || zone_info.symbol == "US500") {
+                        continue;
+                    }
+
+                    // Filter by symbol (only on dashboard)
+                    if matches!(self.current_page, AppPage::Dashboard) 
+                        && !self.symbol_matches_filter(&zone_info.symbol) {
                         continue;
                     }
 

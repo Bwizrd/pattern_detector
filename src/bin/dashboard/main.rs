@@ -48,8 +48,24 @@ async fn run_app<B: ratatui::backend::Backend>(
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                // Handle strength input mode first
-                if app.strength_input_mode {
+                // Handle symbol filter input mode first
+                if app.symbol_filter_mode {
+                    match key.code {
+                        KeyCode::Enter => {
+                            app.toggle_symbol_filter_mode(); // This will save the input
+                        }
+                        KeyCode::Esc => {
+                            app.cancel_symbol_filter();
+                        }
+                        KeyCode::Backspace => {
+                            app.handle_symbol_filter_backspace();
+                        }
+                        KeyCode::Char(c) => {
+                            app.handle_symbol_filter_input(c);
+                        }
+                        _ => {}
+                    }
+                } else if app.strength_input_mode {
                     match key.code {
                         KeyCode::Enter => {
                             app.toggle_strength_input_mode(); // This will save the input
@@ -142,6 +158,18 @@ async fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Char('s') => {
                             if app.current_page == AppPage::Dashboard {
                                 app.toggle_strength_input_mode();
+                            }
+                        }
+                        // Symbol filter toggle (only on dashboard)
+                        KeyCode::Char('f') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.toggle_symbol_filter_mode();
+                            }
+                        }
+                        // Clear symbol filter (only on dashboard)
+                        KeyCode::Char('c') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.clear_symbol_filter();
                             }
                         }
                         // Toggle indices display (works on all pages)

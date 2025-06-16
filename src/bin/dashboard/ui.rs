@@ -58,7 +58,7 @@ pub fn ui_dashboard(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header
-            Constraint::Length(5), // Stats
+            Constraint::Length(6), // Stats (increased for symbol filter)
             Constraint::Min(10),   // Zones table (takes ALL remaining space)
             Constraint::Length(3), // Controls
         ])
@@ -288,6 +288,27 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         },
     ]);
 
+    let symbol_filter_line = Line::from(vec![
+        Span::styled(
+            app.get_symbol_filter_status(),
+            if app.symbol_filter_mode {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Cyan)
+            },
+        ),
+        if app.symbol_filter_mode {
+            Span::styled(
+                " (Enter to confirm, Esc to cancel)",
+                Style::default().fg(Color::Gray),
+            )
+        } else {
+            Span::styled(" | Press 'f' to edit, 'c' to clear", Style::default().fg(Color::Gray))
+        },
+    ]);
+
     // NEW: Add selection status line
     let selection_line = Line::from(vec![
         if let Some(index) = app.selected_zone_index {
@@ -366,14 +387,17 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
                 Style::default().fg(Color::Red)
             },
         ),
-        Span::styled("[s]strength", Style::default().fg(Color::Cyan)),
+        Span::styled("[s]strength ", Style::default().fg(Color::Cyan)),
+        Span::styled("[f]filter ", Style::default().fg(Color::Cyan)),
+        Span::styled("[c]clear", Style::default().fg(Color::Cyan)),
     ]);
 
-    // NEW: Build text with 5 lines instead of 4
+    // NEW: Build text with 6 lines including symbol filter
     let stats_text = Text::from(vec![
         stats_line,
         timeframes_line,
         strength_line,
+        symbol_filter_line,
         selection_line,
         controls_line,
     ]);
@@ -815,7 +839,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'i' indices | 't' trading | 'x' start dates | ↑↓ select zone | 'y' copy zone ID";
+    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'f' filter symbol | 'c' clear filter | 'i' indices | 't' trading | 'x' start dates | ↑↓ select zone | 'y' copy zone ID";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))
