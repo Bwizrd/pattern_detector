@@ -320,9 +320,57 @@ impl ZoneInteractionContainer {
         })
     }
 
+    /// Clean up stale interaction data (older than 24 hours for last_crossing_time)
+    pub fn cleanup_stale_data(&mut self) {
+        let now = Utc::now();
+        let mut zones_to_clean = Vec::new();
+        
+        for (zone_id, metrics) in &self.metrics {
+            // Reset last_crossing_time if older than 24 hours and price is far from zone
+            if let Some(last_crossing) = &metrics.last_crossing_time {
+                if let Ok(last_crossing_dt) = DateTime::parse_from_rfc3339(last_crossing) {
+                    let duration = now.signed_duration_since(last_crossing_dt.with_timezone(&Utc));
+                    if duration.num_hours() > 24 {
+                        zones_to_clean.push(zone_id.clone());
+                    }
+                }
+            }
+        }
+        
+        for zone_id in zones_to_clean {
+            if let Some(metrics) = self.metrics.get_mut(&zone_id) {
+                metrics.last_crossing_time = None;
+                debug!("Cleaned stale crossing data for zone {}", zone_id);
+            }
+        }
+    }
+
     /// Update all zone interactions with new price data
     /// Only tracks zones within max_distance_pips from their proximal line
     pub fn update_all_zones_with_price(&mut self, symbol: &str, price: f64, timestamp: String, config: &InteractionConfig) {
+        // Validate price data - reject obviously invalid prices
+        if price <= 0.0 || price.is_nan() || price.is_infinite() {
+            warn!("Invalid price data for {}: {}", symbol, price);
+            return;
+        }
+        
+        // Additional sanity checks for major pairs
+        match symbol {
+            "EURJPY" | "GBPJPY" | "USDJPY" => {
+                if price < 50.0 || price > 300.0 {
+                    warn!("Suspicious JPY price for {}: {} - rejecting", symbol, price);
+                    return;
+                }
+            },
+            "EURUSD" | "GBPUSD" | "AUDUSD" | "NZDUSD" => {
+                if price < 0.5 || price > 2.0 {
+                    warn!("Suspicious USD price for {}: {} - rejecting", symbol, price);
+                    return;
+                }
+            },
+            _ => {}
+        }
+        
         let max_distance_pips = 50.0; // Only track zones within 50 pips of proximal
         let pip_value = self.get_pip_value(symbol);
         

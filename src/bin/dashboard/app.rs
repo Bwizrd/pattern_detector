@@ -1616,6 +1616,7 @@ impl App {
             has_ever_entered,
             last_crossing_time,
             zone_entries,
+            signed_distance_pips,
         );
 
         Ok(ZoneDistanceInfo {
@@ -1649,6 +1650,7 @@ impl App {
         has_ever_entered: bool,
         last_crossing_time: Option<DateTime<Utc>>,
         zone_entries: u32,
+        signed_distance_pips: f64,
     ) -> ZoneStatus {
         // First check if price is inside zone AND zone has never been entered - TRIGGER first entry
         if matches!(base_status, ZoneStatus::InsideZone) {
@@ -1671,11 +1673,12 @@ impl App {
         // For other statuses, enhance based on interaction history
         match base_status {
             ZoneStatus::Approaching | ZoneStatus::AtDistal => {
-                // Check for recent activity (within last hour)
+                // Check for recent activity (within last hour) AND reasonable distance
                 if let Some(last_crossing) = last_crossing_time {
                     let now = Utc::now();
                     let duration = now.signed_duration_since(last_crossing);
-                    if duration.num_hours() < 1 {
+                    // Only mark as recently tested if within last hour AND within reasonable distance (< 20 pips)
+                    if duration.num_hours() < 1 && signed_distance_pips.abs() < 20.0 {
                         return ZoneStatus::RecentlyTested;
                     }
                 }
