@@ -547,6 +547,51 @@ impl App {
         }
     }
 
+    // NEW: Copy selected zone details from dashboard in format: Type,High,Low,Date
+    pub fn copy_selected_zone_details(&mut self) {
+        if let Some(index) = self.selected_zone_index {
+            if let Some(zone) = self.zones.get(index) {
+                // Determine zone type - convert from "supply_zone"/"demand_zone" to "Supply"/"Demand"
+                let zone_type_display = if zone.zone_type.contains("supply") {
+                    "Supply"
+                } else {
+                    "Demand"
+                };
+
+                // For supply zones: high = distal, low = proximal
+                // For demand zones: high = proximal, low = distal
+                let (high, low) = if zone.zone_type.contains("supply") {
+                    (zone.distal_line, zone.proximal_line)
+                } else {
+                    (zone.proximal_line, zone.distal_line)
+                };
+
+                // Format date and time - use created_at if available, otherwise use "N/A"
+                let date_time_str = if let Some(created_at) = zone.created_at {
+                    created_at.format("%Y-%m-%d, %H:%M").to_string()
+                } else {
+                    "N/A".to_string()
+                };
+
+                // Create the formatted string: Type,High,Low,Date,Time
+                let zone_details = format!("{},{:.4},{:.4},{}", zone_type_display, high, low, date_time_str);
+
+                // Try to copy to system clipboard
+                match self.copy_to_clipboard(&zone_details) {
+                    Ok(()) => {
+                        self.last_copied_zone_id = Some(format!("✅ Zone Details: {}", zone_details));
+                    }
+                    Err(_) => {
+                        // Fallback: just show the details
+                        self.last_copied_zone_id = Some(format!("Zone Details: {}", zone_details));
+                    }
+                }
+            }
+        } else {
+            self.last_copied_zone_id = Some("❌ No zone selected".to_string());
+        }
+    }
+
     pub fn validate_selected_notification(&mut self) {
         if let Some(index) = self.selected_notification_index {
             if let Some(notification) = self.all_notifications.get(index) {

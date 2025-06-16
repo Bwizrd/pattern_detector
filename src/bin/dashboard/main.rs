@@ -154,6 +154,17 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 // Could add price copying later
                             }
                         },
+                        KeyCode::Char('z') => match app.current_page {
+                            AppPage::Dashboard => {
+                                app.copy_selected_zone_details();
+                            }
+                            AppPage::NotificationMonitor => {
+                                // Could add zone details copying from notifications later
+                            }
+                            AppPage::Prices => {
+                                // Could add price details copying later
+                            }
+                        },
                         // Strength filter toggle (only on dashboard)
                         KeyCode::Char('s') => {
                             if app.current_page == AppPage::Dashboard {

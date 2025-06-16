@@ -323,7 +323,7 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
             Span::styled(format!("| {}", copied), Style::default().fg(Color::Green))
         } else {
             Span::styled(
-                "| ↑↓ to select, 'y' to copy zone ID",
+                "| ↑↓ to select, 'y' zone ID, 'z' zone details",
                 Style::default().fg(Color::Gray),
             )
         },
@@ -839,7 +839,7 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
         .title("🔧 Controls")
         .border_style(Style::default().fg(Color::Gray));
 
-    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'f' filter symbol | 'c' clear filter | 'i' indices | 't' trading | 'x' start dates | ↑↓ select zone | 'y' copy zone ID";
+    let help_text = "'q' quit | 'r' refresh | 'n' Notifications | '1-6' timeframes | 'b' breached | 's' strength | 'f' filter symbol | 'c' clear filter | 'i' indices | 't' trading | 'x' start dates | ↑↓ select zone | 'y' copy zone ID | 'z' copy zone details";
     let help = Paragraph::new(help_text)
         .block(help_block)
         .style(Style::default().fg(Color::Gray))
