@@ -45,3 +45,7 @@ dotenvy = "0.15"
 [[bin]]
 name = "pattern_detector"  # This should match your main binary name
 path = "src/main.rs"
+
+[[bin]]
+name = "dashboard_proxy"
+path = "src/bin/dashboard_proxy.rs"

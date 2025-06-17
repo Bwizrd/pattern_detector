@@ -231,6 +231,13 @@ async fn main() -> std::io::Result<()> {
 
     let shared_http_client = Arc::new(HttpClient::new());
 
+    // Initialize live price manager for mobile dashboard
+    let price_manager = Arc::new(crate::api::mobile_dashboard::LivePriceManager::new());
+    
+    // Start WebSocket price feed for mobile dashboard
+    crate::api::mobile_dashboard::start_price_websocket(Arc::clone(&price_manager)).await;
+    info!("📱 Mobile dashboard price feed started");
+
     // Server configuration
     let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port_str = env::var("PORT").unwrap_or_else(|_| "8080".to_string());
@@ -240,6 +247,7 @@ async fn main() -> std::io::Result<()> {
     info!("📊 Endpoints: Core, Zone Analysis, Backtest, Debug");
 
     let http_client_for_app_factory = Arc::clone(&shared_http_client);
+    let price_manager_for_app_factory = Arc::clone(&price_manager);
 
     // Start the HTTP server
     let server_handle = HttpServer::new(move || {
@@ -258,6 +266,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .app_data(web::Data::new(Arc::clone(&http_client_for_app_factory)))
             .app_data(web::Data::new(Arc::clone(&shared_cache)))
+            .app_data(web::Data::new(Arc::clone(&price_manager_for_app_factory)))
             
             // === CORE ENDPOINTS ===
             .route("/echo", web::get().to(echo))
@@ -311,6 +320,10 @@ async fn main() -> std::io::Result<()> {
             
             // === CACHE ENDPOINTS ===
             .route("/test-cache", web::get().to(test_cache_endpoint))
+            
+            // === MOBILE DASHBOARD ===
+            .route("/dashboard", web::get().to(crate::api::mobile_dashboard::serve_dashboard))
+            .route("/api/dashboard-data", web::get().to(crate::api::mobile_dashboard::get_dashboard_data))
             
             // === BASIC HANDLERS (for compatibility) ===
             .route("/current-prices", web::get().to(get_current_prices_handler))

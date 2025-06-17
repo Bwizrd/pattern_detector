@@ -1,0 +1,72 @@
+# Zrok Remote Dashboard Setup Instructions
+
+## Overview
+This project uses zrok to securely expose the trading dashboard remotely with password protection.
+
+## Prerequisites
+- Main Rust application running on port 8080
+- Dashboard proxy compiled and available at `target/debug/dashboard_proxy`
+- zrok v1.0.6+ installed and configured
+
+## Setup Steps
+
+### 1. Start the Dashboard Proxy
+```bash
+# Build the dashboard proxy (if not already built)
+cargo build --bin dashboard_proxy
+
+# Start the proxy on port 3004 (logs to proxy.log)
+cargo run --bin dashboard_proxy > proxy.log 2>&1 &
+```
+
+### 2. Start the Secure Zrok Share
+```bash
+# Start password-protected public share
+zrok share public --headless --basic-auth "admin:Purple-Skull-4829" http://localhost:3004 > zrok_public_auth.log 2>&1 &
+```
+
+### 3. Access the Dashboard
+- The zrok share will output a URL like: `https://xxxxx.share.zrok.io`
+- Use credentials: **Username**: `admin` | **Password**: `Purple-Skull-4829`
+
+## Security Features
+- ✅ Only dashboard endpoints exposed (/, /dashboard, /api/dashboard-data)
+- ✅ All sensitive API endpoints blocked by proxy
+- ✅ HTTPS encryption via zrok
+- ✅ Password protection with basic auth
+- ✅ No direct access to main application
+
+## Management Commands
+
+### Stop Services
+```bash
+# Stop zrok share
+pkill -f "zrok share public"
+
+# Stop dashboard proxy
+pkill -f "dashboard_proxy"
+```
+
+### View Logs
+```bash
+# Proxy activity
+tail -f proxy.log
+
+# Zrok share activity
+tail -f zrok_public_auth.log
+```
+
+### Change Password
+```bash
+# Stop current share
+pkill -f "zrok share public"
+
+# Start with new password
+zrok share public --headless --basic-auth "admin:NEW_PASSWORD" http://localhost:3004 > zrok_public_auth.log 2>&1 &
+```
+
+## Notes
+- Each zrok share gets a new random URL when restarted
+- Dashboard proxy must be running before starting zrok share
+- Main application on port 8080 must be running for live data
+- Dashboard updates every 10 seconds with live price feeds and trade data

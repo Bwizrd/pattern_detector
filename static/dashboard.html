@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 Zone Trading Dashboard</title>
+    <style>
+        /* Terminal-style CSS inspired by ratatui */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', 'Monaco', 'Lucida Console', monospace;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            padding: 8px;
+            line-height: 1.2;
+            font-size: 12px;
+            overflow-x: auto;
+        }
+
+        /* Terminal box styling */
+        .terminal-box {
+            border: 1px solid #40e0d0;
+            margin-bottom: 8px;
+            background-color: #1a1a1a;
+            border-radius: 2px;
+        }
+
+        .terminal-box-header {
+            padding: 4px 8px;
+            border-bottom: 1px solid #40e0d0;
+            background-color: #2a2a2a;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .terminal-box-content {
+            padding: 6px;
+        }
+
+        /* Header */
+        .header {
+            border-color: #40e0d0;
+            color: #40e0d0;
+        }
+
+        /* Stats */
+        .stats {
+            border-color: #00ff00;
+        }
+
+        .stats .terminal-box-header {
+            color: #00ff00;
+            border-bottom-color: #00ff00;
+        }
+
+        .stats-line {
+            margin-bottom: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .stat-item {
+            white-space: nowrap;
+        }
+
+        .trigger-count {
+            color: #ff00ff;
+            font-weight: bold;
+        }
+
+        .inside-count { color: #ff0000; }
+        .close-count { color: #ffff00; }
+        .watch-count { color: #00ff00; }
+
+        /* Zones table */
+        .zones {
+            border-color: #0080ff;
+        }
+
+        .zones .terminal-box-header {
+            color: #0080ff;
+            border-bottom-color: #0080ff;
+        }
+
+        .zones-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+
+        .zones-table th,
+        .zones-table td {
+            padding: 2px 4px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .zones-table th {
+            color: #ffff00;
+            font-weight: bold;
+            background-color: #2a2a2a;
+            position: sticky;
+            top: 0;
+        }
+
+        /* Zone status colors */
+        .status-trigger {
+            color: #ff00ff !important;
+            font-weight: bold;
+        }
+
+        .status-inside {
+            color: #ff0000 !important;
+        }
+
+        .status-close {
+            color: #ffff00 !important;
+        }
+
+        .status-watch {
+            color: #00ff00 !important;
+        }
+
+        .status-normal {
+            color: #ffffff;
+        }
+
+        .zone-type-buy {
+            color: #00ff00;
+        }
+
+        .zone-type-sell {
+            color: #ff0000;
+        }
+
+        /* Trades panel */
+        .trades {
+            border-color: #00ff00;
+        }
+
+        .trades .terminal-box-header {
+            color: #00ff00;
+            border-bottom-color: #00ff00;
+        }
+
+        .trade-item {
+            margin-bottom: 4px;
+            font-size: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .trade-direction-buy {
+            color: #00ff00;
+            font-weight: bold;
+        }
+
+        .trade-direction-sell {
+            color: #ff0000;
+            font-weight: bold;
+        }
+
+        .trade-profit {
+            color: #00ff00;
+        }
+
+        .trade-loss {
+            color: #ff0000;
+        }
+
+        /* Controls */
+        .controls {
+            border-color: #808080;
+        }
+
+        .controls .terminal-box-header {
+            color: #808080;
+            border-bottom-color: #808080;
+        }
+
+        .control-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .control-btn {
+            background-color: #333;
+            color: #40e0d0;
+            border: 1px solid #40e0d0;
+            padding: 4px 8px;
+            font-family: inherit;
+            font-size: 10px;
+            cursor: pointer;
+            border-radius: 2px;
+        }
+
+        .control-btn:hover {
+            background-color: #40e0d0;
+            color: #1a1a1a;
+        }
+
+        .control-btn.active {
+            background-color: #00ff00;
+            color: #1a1a1a;
+            border-color: #00ff00;
+        }
+
+        /* Status indicators */
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 4px;
+        }
+
+        .status-connected {
+            background-color: #00ff00;
+        }
+
+        .status-disconnected {
+            background-color: #ff0000;
+        }
+
+        .status-warning {
+            background-color: #ffff00;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 480px) {
+            body {
+                font-size: 10px;
+                padding: 4px;
+            }
+
+            .zones-table {
+                font-size: 8px;
+            }
+
+            .terminal-box-content {
+                padding: 4px;
+            }
+
+            .control-btn {
+                font-size: 9px;
+                padding: 3px 6px;
+            }
+        }
+
+        /* Loading and error states */
+        .loading {
+            text-align: center;
+            color: #ffff00;
+            animation: blink 1s infinite;
+        }
+
+        .error {
+            color: #ff0000;
+            text-align: center;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+
+        /* Scrollable zones container */
+        .zones-container {
+            max-height: 60vh;
+            overflow-y: auto;
+            border: 1px solid #333;
+        }
+
+        /* Footer info */
+        .footer-info {
+            font-size: 9px;
+            color: #808080;
+            text-align: center;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="terminal-box header">
+        <div class="terminal-box-header">🎯 Zone Trading Dashboard</div>
+        <div class="terminal-box-content">
+            <div>
+                API: <span id="api-url">Loading...</span> | 
+                <span class="status-indicator" id="ws-indicator"></span><span id="ws-status">WS</span> | 
+                Updates: <span id="update-count">0</span> | 
+                Last: <span id="last-update">-</span> | 
+                Time: <span id="current-time">--:--:--</span> | 
+                Trading: <span id="trading-status">🔴 OFF</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="terminal-box stats">
+        <div class="terminal-box-header">📊 Stats & Controls</div>
+        <div class="terminal-box-content">
+            <div class="stats-line">
+                <span class="stat-item">Total: <span id="total-zones">0</span> zones</span>
+                <span class="stat-item trigger-count">🚨 TRIGGERS: <span id="trigger-zones">0</span></span>
+                <span class="stat-item inside-count">📍 Inside: <span id="inside-zones">0</span></span>
+                <span class="stat-item close-count">🔴 Close: <span id="close-zones">0</span></span>
+                <span class="stat-item watch-count">🟢 Watch: <span id="watch-zones">0</span></span>
+            </div>
+            
+            <div class="control-buttons">
+                <button class="control-btn" onclick="toggleTimeframe('5m')" id="btn-5m">5m</button>
+                <button class="control-btn" onclick="toggleTimeframe('15m')" id="btn-15m">15m</button>
+                <button class="control-btn" onclick="toggleTimeframe('30m')" id="btn-30m">30m</button>
+                <button class="control-btn" onclick="toggleTimeframe('1h')" id="btn-1h">1h</button>
+                <button class="control-btn" onclick="toggleTimeframe('4h')" id="btn-4h">4h</button>
+                <button class="control-btn" onclick="toggleTimeframe('1d')" id="btn-1d">1d</button>
+                <button class="control-btn" onclick="toggleBreached()" id="btn-breached">Breached</button>
+                <button class="control-btn" onclick="refreshData()">🔄 Refresh</button>
+            </div>
+
+            <div style="margin-top: 4px;">
+                <input type="text" id="symbol-filter" placeholder="Filter symbols (e.g., JPY, EUR)" 
+                       style="background: #333; color: #fff; border: 1px solid #40e0d0; padding: 4px; font-family: inherit; width: 150px;">
+                <input type="number" id="strength-filter" placeholder="Min strength" min="0" max="100" 
+                       style="background: #333; color: #fff; border: 1px solid #40e0d0; padding: 4px; font-family: inherit; width: 80px;">
+                <button class="control-btn" onclick="clearFilters()">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zones Table -->
+    <div class="terminal-box zones">
+        <div class="terminal-box-header">🎯 Active Zones</div>
+        <div class="terminal-box-content">
+            <div class="zones-container">
+                <table class="zones-table">
+                    <thead>
+                        <tr>
+                            <th>Symbol/TF</th>
+                            <th>Type</th>
+                            <th>Distance</th>
+                            <th>Status</th>
+                            <th>Price</th>
+                            <th>Str</th>
+                            <th>Zone ID</th>
+                        </tr>
+                    </thead>
+                    <tbody id="zones-tbody">
+                        <tr>
+                            <td colspan="7" class="loading">Loading zones...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Trades -->
+    <div class="terminal-box trades">
+        <div class="terminal-box-header">💹 Zone Trigger Trades | Total: <span id="total-pips" style="color: #00ff00;">0.0</span> pips</div>
+        <div class="terminal-box-content">
+            <div id="trades-container">
+                <div class="loading">Loading trades...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="terminal-box controls">
+        <div class="terminal-box-header">🔧 Controls</div>
+        <div class="terminal-box-content">
+            <div style="font-size: 9px; line-height: 1.4;">
+                Tap timeframe buttons to toggle | Symbol & strength filters | 
+                Tap zone row to copy details | Auto-refresh every 10 seconds
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-info">
+        Mobile Dashboard • Terminal Style • Last Updated: <span id="footer-time">Never</span>
+    </div>
+
+    <script>
+        // Dashboard JavaScript
+        let dashboardData = {};
+        let enabledTimeframes = new Set(['30m', '1h', '4h', '1d']);
+        let showBreached = true;
+        let symbolFilter = '';
+        let strengthFilter = 0;
+        let updateCount = 0;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            updateClock();
+            setInterval(updateClock, 1000);
+            setInterval(fetchDashboardData, 10000); // Auto-refresh every 10 seconds
+            fetchDashboardData();
+            
+            // Symbol filter input
+            document.getElementById('symbol-filter').addEventListener('input', function(e) {
+                symbolFilter = e.target.value.toUpperCase();
+                renderZones();
+            });
+            
+            // Strength filter input
+            document.getElementById('strength-filter').addEventListener('input', function(e) {
+                strengthFilter = parseFloat(e.target.value) || 0;
+                renderZones();
+            });
+
+            // Initialize timeframe buttons
+            updateTimeframeButtons();
+        });
+
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toTimeString().split(' ')[0];
+        }
+
+        async function fetchDashboardData() {
+            try {
+                const response = await fetch('/api/dashboard-data');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                dashboardData = await response.json();
+                updateCount++;
+                
+                renderDashboard();
+                
+            } catch (error) {
+                console.error('Failed to fetch dashboard data:', error);
+                document.getElementById('zones-tbody').innerHTML = 
+                    '<tr><td colspan="7" class="error">Error loading data: ' + error.message + '</td></tr>';
+            }
+        }
+
+        function renderDashboard() {
+            updateStats();
+            renderZones();
+            renderTrades();
+            updateStatus();
+        }
+
+        function updateStats() {
+            const stats = dashboardData.stats || {};
+            document.getElementById('total-zones').textContent = stats.total || 0;
+            document.getElementById('trigger-zones').textContent = stats.triggers || 0;
+            document.getElementById('inside-zones').textContent = stats.inside || 0;
+            document.getElementById('close-zones').textContent = stats.close || 0;
+            document.getElementById('watch-zones').textContent = stats.watch || 0;
+        }
+
+        function renderZones() {
+            const tbody = document.getElementById('zones-tbody');
+            const zones = dashboardData.zones || [];
+            
+            // Filter zones
+            const filteredZones = zones.filter(zone => {
+                // Timeframe filter
+                if (!enabledTimeframes.has(zone.timeframe)) return false;
+                
+                // Breached filter
+                if (!showBreached && zone.status === 'Breached') return false;
+                
+                // Symbol filter
+                if (symbolFilter && !zone.symbol.includes(symbolFilter)) return false;
+                
+                // Strength filter
+                if (strengthFilter > 0 && zone.strength < strengthFilter) return false;
+                
+                return true;
+            });
+
+            if (filteredZones.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #808080;">No zones match current filters</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filteredZones.map(zone => {
+                const statusClass = getStatusClass(zone.status);
+                const typeClass = zone.type === 'supply_zone' ? 'zone-type-sell' : 'zone-type-buy';
+                const typeText = zone.type === 'supply_zone' ? 'SELL' : 'BUY';
+                
+                return `
+                    <tr onclick="copyZoneDetails('${zone.zone_id}')" style="cursor: pointer;">
+                        <td>${zone.symbol}/${zone.timeframe}</td>
+                        <td class="${typeClass}">${typeText}</td>
+                        <td>${zone.distance >= 0 ? '+' : ''}${zone.distance.toFixed(1)}</td>
+                        <td class="${statusClass}">${getStatusSymbol(zone.status)} ${zone.status}</td>
+                        <td>${zone.current_price.toFixed(5)}</td>
+                        <td>${zone.strength.toFixed(0)}</td>
+                        <td style="font-size: 8px;">${zone.zone_id.substring(0, 12)}...</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderTrades() {
+            const container = document.getElementById('trades-container');
+            const trades = dashboardData.trades || [];
+            const totalPips = dashboardData.total_pips || 0;
+            
+            // Update total pips in header
+            const totalPipsElement = document.getElementById('total-pips');
+            if (totalPipsElement) {
+                totalPipsElement.textContent = totalPips.toFixed(1);
+                totalPipsElement.style.color = totalPips >= 0 ? '#00ff00' : '#ff0000';
+            }
+            
+            if (trades.length === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #808080;">No live trades</div>';
+                return;
+            }
+
+            container.innerHTML = trades.map(trade => {
+                const directionClass = trade.direction === 'BUY' ? 'trade-direction-buy' : 'trade-direction-sell';
+                const pipsClass = trade.unrealized_pips > 0 ? 'trade-profit' : 'trade-loss';
+                
+                return `
+                    <div class="trade-item">
+                        <span class="${directionClass}">${trade.direction}</span>
+                        <span style="color: #40e0d0;">${trade.symbol}</span>
+                        <span style="color: #ffff00;">${trade.timeframe}</span>
+                        <span>@ ${trade.entry_price.toFixed(4)}</span>
+                        <span class="${pipsClass}">${trade.unrealized_pips > 0 ? '+' : ''}${trade.unrealized_pips.toFixed(1)}p</span>
+                        <span style="color: #808080;">Zone:${trade.zone_id.substring(0, 8)}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateStatus() {
+            document.getElementById('api-url').textContent = window.location.origin;
+            document.getElementById('update-count').textContent = updateCount;
+            document.getElementById('last-update').textContent = 'Just now';
+            document.getElementById('footer-time').textContent = new Date().toLocaleTimeString();
+            
+            // WebSocket status
+            const wsIndicator = document.getElementById('ws-indicator');
+            const wsStatus = document.getElementById('ws-status');
+            if (dashboardData.websocket_connected) {
+                wsIndicator.className = 'status-indicator status-connected';
+                wsStatus.textContent = '🟢 WS';
+            } else {
+                wsIndicator.className = 'status-indicator status-disconnected';
+                wsStatus.textContent = '🔴 WS';
+            }
+            
+            // Trading status
+            const tradingStatus = document.getElementById('trading-status');
+            if (dashboardData.trading_enabled) {
+                tradingStatus.textContent = dashboardData.websocket_connected ? '🟢 ON' : '🟡 ON (NO WS)';
+            } else {
+                tradingStatus.textContent = '🔴 OFF';
+            }
+        }
+
+        function getStatusClass(status) {
+            switch (status) {
+                case 'AtProximal': return 'status-trigger';
+                case 'InsideZone': return 'status-inside';
+                case 'Approaching': return 'status-close';
+                case 'Watching': return 'status-watch';
+                default: return 'status-normal';
+            }
+        }
+
+        function getStatusSymbol(status) {
+            switch (status) {
+                case 'AtProximal': return '🚨';
+                case 'InsideZone': return '📍';
+                case 'Approaching': return '🔴';
+                case 'Watching': return '🟢';
+                case 'Breached': return '💥';
+                default: return '⚪';
+            }
+        }
+
+        function toggleTimeframe(tf) {
+            if (enabledTimeframes.has(tf)) {
+                enabledTimeframes.delete(tf);
+            } else {
+                enabledTimeframes.add(tf);
+            }
+            updateTimeframeButtons();
+            renderZones();
+        }
+
+        function updateTimeframeButtons() {
+            ['5m', '15m', '30m', '1h', '4h', '1d'].forEach(tf => {
+                const btn = document.getElementById(`btn-${tf}`);
+                if (enabledTimeframes.has(tf)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
+        function toggleBreached() {
+            showBreached = !showBreached;
+            const btn = document.getElementById('btn-breached');
+            if (showBreached) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+            renderZones();
+        }
+
+        function clearFilters() {
+            document.getElementById('symbol-filter').value = '';
+            document.getElementById('strength-filter').value = '';
+            symbolFilter = '';
+            strengthFilter = 0;
+            renderZones();
+        }
+
+        function refreshData() {
+            fetchDashboardData();
+        }
+
+        function copyZoneDetails(zoneId) {
+            // Find the zone
+            const zone = dashboardData.zones?.find(z => z.zone_id === zoneId);
+            if (!zone) return;
+            
+            // Format: Type,High,Low,Date,Time
+            const zoneType = zone.type === 'supply_zone' ? 'Supply' : 'Demand';
+            const high = zone.type === 'supply_zone' ? zone.distal_line : zone.proximal_line;
+            const low = zone.type === 'supply_zone' ? zone.proximal_line : zone.distal_line;
+            const dateTime = zone.created_at ? new Date(zone.created_at).toLocaleString() : 'N/A';
+            
+            const details = `${zoneType},${high.toFixed(4)},${low.toFixed(4)},${dateTime}`;
+            
+            // Copy to clipboard
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(details).then(() => {
+                    showToast(`✅ Copied: ${details}`);
+                }).catch(() => {
+                    showToast(`Zone: ${details}`);
+                });
+            } else {
+                showToast(`Zone: ${details}`);
+            }
+        }
+
+        function showToast(message) {
+            // Simple toast notification
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #40e0d0;
+                color: #1a1a1a;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: inherit;
+                font-size: 10px;
+                z-index: 1000;
+                max-width: 80%;
+                word-wrap: break-word;
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                document.body.removeChild(toast);
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
