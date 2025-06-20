@@ -740,7 +740,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                     }
 
                     // Add Zone ID column (truncated based on available space)
-                    let zone_id_display = if screen_width > 160 {
+                    let mut zone_id_display = if screen_width > 160 {
                         zone.zone_id.clone() // Show full ID on very large screens
                     } else if screen_width > 140 {
                         if zone.zone_id.len() > 16 {
@@ -761,6 +761,11 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                             zone.zone_id.clone()
                         }
                     };
+
+                    // Add 'P' indicator if zone has a pending order
+                    if app.has_pending_order(&zone.zone_id) {
+                        zone_id_display = format!("P {}", zone_id_display);
+                    }
 
                     cells.push(Cell::from(zone_id_display).style(row_style.fg(Color::Magenta)));
                 }

@@ -3,9 +3,12 @@
 
 mod html;
 mod notifications;
+mod pending_order_manager;
 mod proximity;
+mod proximity_logger;
 mod sound_notifier;
 mod state;
+mod trade_rules;
 mod trading_engine;
 mod types;
 mod websocket;
@@ -17,6 +20,27 @@ use axum::{extract::State, http::StatusCode, routing::get, routing::post, Json, 
 use state::MonitorState;
 use tracing::info;
 use types::{ZoneAlert, ZoneCache};
+use serde::{Deserialize, Serialize};
+
+// Request/Response structs for manual trading
+#[derive(Debug, Deserialize, Serialize)]
+struct ManualTradeRequest {
+    symbol_id: i32,
+    trade_side: i32,  // 1 = BUY, 2 = SELL  
+    volume: f64,
+    entry_price: f64,
+    stop_loss: Option<f64>,
+    take_profit: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ManualTradeResponse {
+    success: bool,
+    message: String,
+    order_id: Option<String>,
+    error_code: Option<String>,
+    request_sent: ManualTradeRequest,
+}
 
 // API endpoint handlers
 async fn zones_api(State(state): State<MonitorState>) -> Json<ZoneCache> {
@@ -127,6 +151,77 @@ async fn health_check(State(state): State<MonitorState>) -> (StatusCode, Json<se
     (status_code, Json(status))
 }
 
+async fn manual_trade_api(State(_state): State<MonitorState>, Json(request): Json<ManualTradeRequest>) -> (StatusCode, Json<ManualTradeResponse>) {
+    info!("🧪 Manual trade request: {:?}", request);
+    
+    let ctrader_api_url = std::env::var("CTRADER_API_BRIDGE_URL")
+        .unwrap_or_else(|_| "http://localhost:8000".to_string());
+    
+    let api_request = serde_json::json!({
+        "symbolId": request.symbol_id,
+        "tradeSide": request.trade_side,
+        "volume": request.volume,
+        "entryPrice": request.entry_price,
+        "stopLoss": request.stop_loss,
+        "takeProfit": request.take_profit
+    });
+    
+    info!("🧪 Sending to cTrader API: {}", api_request);
+    
+    let client = reqwest::Client::new();
+    let api_url = format!("{}/placePendingOrder", ctrader_api_url);
+    
+    match client.post(&api_url).json(&api_request).send().await {
+        Ok(response) => {
+            let response_text = response.text().await.unwrap_or_else(|_| "Failed to read response".to_string());
+            info!("🧪 cTrader API response: {}", response_text);
+            
+            match serde_json::from_str::<serde_json::Value>(&response_text) {
+                Ok(json_response) => {
+                    let success = json_response.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let message = json_response.get("message").and_then(|v| v.as_str()).unwrap_or("No message").to_string();
+                    let order_id = json_response.get("orderId").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let error_code = json_response.get("errorCode").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    
+                    let response = ManualTradeResponse {
+                        success,
+                        message,
+                        order_id,
+                        error_code,
+                        request_sent: request,
+                    };
+                    
+                    if success {
+                        (StatusCode::OK, Json(response))
+                    } else {
+                        (StatusCode::BAD_REQUEST, Json(response))
+                    }
+                }
+                Err(e) => {
+                    let response = ManualTradeResponse {
+                        success: false,
+                        message: format!("Failed to parse API response: {} - Raw: {}", e, response_text),
+                        order_id: None,
+                        error_code: Some("PARSE_ERROR".to_string()),
+                        request_sent: request,
+                    };
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
+                }
+            }
+        }
+        Err(e) => {
+            let response = ManualTradeResponse {
+                success: false,
+                message: format!("Failed to call cTrader API: {}", e),
+                order_id: None,
+                error_code: Some("API_ERROR".to_string()),
+                request_sent: request,
+            };
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env file from current directory (root of project)
@@ -182,6 +277,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/zones/interactions", get(zone_interactions_api))
         .route("/api/trading/stats", get(trading_stats_api))
         .route("/api/trading/history", get(trade_history_api))
+        .route("/api/trading/manual", post(manual_trade_api))
         .route("/health", get(health_check))
         .with_state(state);
 
@@ -197,6 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   🔄 Zone Interactions: http://localhost:{}/api/zones/interactions", monitor_port);
     info!("   💰 Trading Stats: http://localhost:{}/api/trading/stats", monitor_port);
     info!("   📈 Trade History: http://localhost:{}/api/trading/history", monitor_port);
+    info!("   🧪 Manual Trade: POST http://localhost:{}/api/trading/manual", monitor_port);
     info!("   ❤️  Health Check: http://localhost:{}/health", monitor_port);
     info!("✅ Zone Monitor with Notifications and CSV Logging ready!");
 

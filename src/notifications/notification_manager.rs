@@ -189,6 +189,13 @@ impl NotificationManager {
         // Optionally send a startup message to Telegram
         // self.telegram.send_startup_message().await;
     }
+
+    /// Send a custom message to Telegram
+    pub async fn send_custom_telegram_message(&self, message: &str) {
+        if let Err(e) = self.telegram.send_custom_message(message).await {
+            error!("📱 Failed to send custom Telegram message: {}", e);
+        }
+    }
 }
 
 // Global notification manager instance

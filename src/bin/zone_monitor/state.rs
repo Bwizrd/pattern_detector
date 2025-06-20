@@ -3,7 +3,9 @@
 
 use crate::csv_logger::CsvLogger;
 use crate::notifications::NotificationManager;
+use crate::pending_order_manager::PendingOrderManager;
 use crate::proximity::ProximityDetector;
+use crate::proximity_logger::ProximityLogger;
 use crate::telegram_notifier::TelegramNotifier;
 use crate::trading_engine::TradeResult;
 use crate::trading_engine::TradingEngine;
@@ -94,6 +96,8 @@ pub struct MonitorState {
     pub trading_engine: Arc<TradingEngine>,
     pub csv_logger: Arc<CsvLogger>,
     pub telegram_notifier: Arc<TelegramNotifier>,
+    pub proximity_logger: Arc<RwLock<ProximityLogger>>,
+    pub pending_order_manager: Arc<RwLock<PendingOrderManager>>,
     pub zone_interactions: Arc<RwLock<ZoneInteractionContainer>>,
     pub interaction_config: InteractionConfig,
     pub cache_file_path: String,
@@ -130,6 +134,8 @@ impl MonitorState {
             trading_engine: Arc::new(TradingEngine::new()),
             csv_logger: Arc::new(CsvLogger::new()),
             telegram_notifier: Arc::new(TelegramNotifier::new()),
+            proximity_logger: Arc::new(RwLock::new(ProximityLogger::new())),
+            pending_order_manager: Arc::new(RwLock::new(PendingOrderManager::new())),
             zone_interactions: Arc::new(RwLock::new(zone_interactions)),
             interaction_config,
             cache_file_path,
@@ -140,6 +146,14 @@ impl MonitorState {
     pub async fn initialize(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Load initial zones from file
         self.load_zones_from_file().await?;
+
+        // Initialize pending order manager
+        {
+            let mut pending_order_manager = self.pending_order_manager.write().await;
+            if let Err(e) = pending_order_manager.load_pending_orders().await {
+                error!("📋 Failed to load pending orders: {}", e);
+            }
+        }
 
         // Start background tasks
         self.start_cache_refresh_task().await;
@@ -387,6 +401,18 @@ impl MonitorState {
                 .zone_state_manager
                 .process_price_update(&price_update, &zones, Some(&*zone_interactions_guard))
                 .await;
+
+            // Log proximity data for debugging and verification
+            {
+                let mut proximity_logger = self.proximity_logger.write().await;
+                proximity_logger.log_proximity(&price_update, &zones, Some(&*zone_interactions_guard)).await;
+            }
+
+            // Check and place pending orders for eligible zones
+            {
+                let mut pending_order_manager = self.pending_order_manager.write().await;
+                pending_order_manager.check_and_place_orders(&price_update, &zones).await;
+            }
 
             self.handle_new_notifications(&result).await;
 

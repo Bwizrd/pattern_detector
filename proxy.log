@@ -1,0 +1,323 @@
+warning: unused imports: `Responder` and `get`
+ --> src/api/get_zone_by_id.rs:5:17
+  |
+5 | use actix_web::{get, web, HttpResponse, Responder};
+  |                 ^^^                     ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `Serialize`
+ --> src/api/get_zone_by_id.rs:9:26
+  |
+9 | use serde::{Deserialize, Serialize};
+  |                          ^^^^^^^^^
+
+warning: unused import: `web`
+ --> src/api/latest_zones_handler.rs:3:17
+  |
+3 | use actix_web::{web, HttpResponse, Responder};
+  |                 ^^^
+
+warning: unused imports: `FiftyPercentBeforeBigBarRecognizer` and `PatternRecognizer`
+  --> src/api/multi_backtest_handler.rs:11:30
+   |
+11 | use crate::zones::patterns::{FiftyPercentBeforeBigBarRecognizer, PatternRecognizer};
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `chrono::Utc`
+ --> src/api/test_trade_handler.rs:6:5
+  |
+6 | use chrono::Utc;
+  |     ^^^^^^^^^^^
+
+warning: unused import: `serde_json::json`
+ --> src/api/test_trade_handler.rs:9:5
+  |
+9 | use serde_json::json;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+ --> src/cache/minimal_zone_cache.rs:2:18
+  |
+2 | use log::{debug, error, info, warn};
+  |                  ^^^^^
+
+warning: unused import: `std::io::Write`
+ --> src/cache/zone_cache_writer.rs:5:5
+  |
+5 | use std::io::Write;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `info`
+ --> src/zones/zone_detection.rs:7:18
+  |
+7 | use log::{debug, info, warn};
+  |                  ^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> src/zones/zone_detection.rs:9:5
+  |
+9 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+ --> src/zone_interactions.rs:9:18
+  |
+9 | use log::{debug, error, info, warn};
+  |                  ^^^^^
+
+warning: unused import: `std::fmt`
+ --> src/errors.rs:3:5
+  |
+3 | use std::fmt;
+  |     ^^^^^^^^
+
+warning: unused variable: `caller_task_id`
+   --> src/api/detect.rs:618:21
+    |
+618 |                 let caller_task_id = format!("bulk_task_{}/{}", current_symbol, current_timeframe);
+    |                     ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_caller_task_id`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: variable does not need to be mutable
+   --> src/realtime/realtime_zone_monitor.rs:535:13
+    |
+535 |         let mut blocked_set = BLOCKED_ZONES.lock().unwrap();
+    |             ----^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: unused variable: `symbol`
+   --> src/trading/trade_event_logger.rs:267:17
+    |
+267 |             let symbol = parts[0];
+    |                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_symbol`
+
+warning: value assigned to `is_still_valid` is never read
+    --> src/api/detect.rs:1393:17
+     |
+1393 |                 is_still_valid = false;
+     |                 ^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` on by default
+
+warning: value assigned to `is_still_valid` is never read
+    --> src/api/detect.rs:1400:17
+     |
+1400 |                 is_still_valid = false;
+     |                 ^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: unused variable: `end_idx`
+   --> src/zones/patterns/combined_demand.rs:435:89
+    |
+435 |     fn detect_zone_before_multi_candle(&self, candles: &[CandleData], start_idx: usize, end_idx: usize) -> Option<Value> {
+    |                                                                                         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_end_idx`
+
+warning: unused variable: `current_score`
+   --> src/zones/patterns/demand_move_away.rs:312:25
+    |
+312 |                     let current_score = m["strength_score"].as_f64().unwrap_or(0.0);
+    |                         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_current_score`
+
+warning: unused variable: `existing_score`
+   --> src/zones/patterns/demand_move_away.rs:313:25
+    |
+313 |                     let existing_score = existing["strength_score"].as_f64().unwrap_or(0.0);
+    |                         ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_existing_score`
+
+warning: fields `losing_trades`, `win_rate`, and `profit_factor` are never read
+   --> src/api/optimize_handler.rs:168:5
+    |
+165 | struct TradeTaskSummary {
+    |        ---------------- fields in this struct
+...
+168 |     losing_trades: usize,
+    |     ^^^^^^^^^^^^^
+169 |     total_pnl_pips: f64,
+170 |     win_rate: f64,
+    |     ^^^^^^^^
+171 |     profit_factor: f64,
+    |     ^^^^^^^^^^^^^
+    |
+    = note: `TradeTaskSummary` has derived impls for the traits `Default`, `Clone`, and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` on by default
+
+warning: field `proximity_alert_cache` is never read
+  --> src/realtime/realtime_zone_monitor.rs:64:5
+   |
+49 | pub struct NewRealTimeZoneMonitor {
+   |            ---------------------- field in this struct
+...
+64 |     proximity_alert_cache: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `generate_fifty_percent_zone_trades` is never used
+   --> src/trading/trading.rs:472:8
+    |
+34  | impl TradeExecutor {
+    | ------------------ method in this implementation
+...
+472 |     fn generate_fifty_percent_zone_trades(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `lookback_candles` and `min_zone_candles` are never read
+  --> src/zones/patterns/combined_demand.rs:17:9
+   |
+10 | pub struct CombinedDemandRecognizer {
+   |            ------------------------ fields in this struct
+...
+17 |     pub lookback_candles: usize,
+   |         ^^^^^^^^^^^^^^^^
+...
+21 |     pub min_zone_candles: usize,
+   |         ^^^^^^^^^^^^^^^^
+
+warning: field `lookback_candles` is never read
+  --> src/zones/patterns/demand_move_away.rs:23:9
+   |
+11 | pub struct DemandMoveAwayRecognizer {
+   |            ------------------------ field in this struct
+...
+23 |     pub lookback_candles: usize,
+   |         ^^^^^^^^^^^^^^^^
+
+warning: module `FiftyPercentBeforeBigBar` should have a snake case name
+  --> src/zones/patterns/mod.rs:46:5
+   |
+46 | mod FiftyPercentBeforeBigBar;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `fifty_percent_before_big_bar`
+   |
+   = note: `#[warn(non_snake_case)]` on by default
+
+warning: module `FiftyPercentBodyCandle` should have a snake case name
+  --> src/zones/patterns/mod.rs:47:5
+   |
+47 | mod FiftyPercentBodyCandle;
+   |     ^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `fifty_percent_body_candle`
+
+warning: `pattern_detector` (lib) generated 27 warnings (run `cargo fix --lib -p pattern_detector` to apply 13 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running `target/debug/dashboard_proxy`
+🚀 Starting Dashboard Proxy for zrok
+📱 Only exposing dashboard endpoints:
+   ✅ /dashboard
+   ✅ /api/dashboard-data
+   ✅ /
+🔒 All other endpoints blocked for security
+
+📡 Dashboard Proxy starting on http://localhost:3004
+🌐 Ready for zrok private share!
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+🚫 [PROXY] Blocked access to: /test-blocked-endpoint
+✅ [PROXY] Forwarding: /dashboard -> http://localhost:8080/dashboard
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /dashboard -> http://localhost:8080/dashboard
+✅ [PROXY] Forwarding: /dashboard -> http://localhost:8080/dashboard
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /dashboard -> http://localhost:8080/dashboard
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /dashboard -> http://localhost:8080/dashboard
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data
+✅ [PROXY] Forwarding: /api/dashboard-data -> http://localhost:8080/api/dashboard-data

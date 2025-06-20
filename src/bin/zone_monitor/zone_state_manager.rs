@@ -2,6 +2,7 @@
 // Zone state management for proximity and trading flow
 
 use crate::types::{PriceUpdate, Zone, ZoneAlert};
+use crate::trade_rules::TradeRulesEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -45,6 +46,7 @@ pub struct ZoneStateManager {
     proximity_threshold_pips: f64,
     trading_threshold_pips: f64,
     proximity_reset_minutes: i64,
+    trade_rules: TradeRulesEngine,
 }
 
 impl Clone for ZoneStateManager {
@@ -55,6 +57,7 @@ impl Clone for ZoneStateManager {
             proximity_threshold_pips: self.proximity_threshold_pips,
             trading_threshold_pips: self.trading_threshold_pips,
             proximity_reset_minutes: self.proximity_reset_minutes,
+            trade_rules: TradeRulesEngine::new(),
         }
     }
 }
@@ -90,6 +93,7 @@ impl ZoneStateManager {
             proximity_threshold_pips,
             trading_threshold_pips,
             proximity_reset_minutes,
+            trade_rules: TradeRulesEngine::new(),
         }
     }
 
@@ -244,9 +248,11 @@ impl ZoneStateManager {
                         );
                     }
                     ZoneState::ProximityAlerted => {
-                        // Check for TRIGGER condition: within trading threshold AND first time entry
-                        if distance_pips <= self.trading_threshold_pips && is_first_time_entry {
-                            // TRIGGER: First time within trading threshold - send trading signal
+                        // Use centralized trade rules to evaluate if trade should trigger
+                        let evaluation = self.trade_rules.evaluate_trade_opportunity(price_update, zone, zone_interactions);
+                        
+                        if evaluation.should_trigger_trade {
+                            // TRIGGER: Centralized rules say trade should trigger - send trading signal
                             self.update_zone_state(
                                 &zone.id,
                                 ZoneState::TradingSignalSent,
@@ -258,16 +264,17 @@ impl ZoneStateManager {
                             result.trading_signals.push(alert);
 
                             let timeframe = self.get_timeframe(zone);
-                            info!("💰 TRADING signal (FIRST ENTRY @ {:.1} pips threshold): {} {} zone @ {:.1} pips [{}] (Zone: {}, {} touches)", 
-                                  self.trading_threshold_pips, zone.symbol, zone.zone_type, distance_pips, timeframe, zone.id, zone.touch_count);
-                        } else if distance_pips <= self.trading_threshold_pips && !is_first_time_entry {
-                            // Within threshold but not first time - no trading signal
-                            debug!("🔄 Zone {} within threshold but not first entry (entries: {})", 
-                                   zone.id, zone_entries);
+                            let trade_direction = evaluation.trade_direction.unwrap_or_else(|| "UNKNOWN".to_string());
+                            info!("💰 TRADING signal (CENTRALIZED RULES TRIGGER): {} {} zone @ {:.1} pips [{}] (Zone: {}, {} touches, Direction: {})", 
+                                  zone.symbol, zone.zone_type, distance_pips, timeframe, zone.id, zone.touch_count, trade_direction);
+                        } else if evaluation.is_in_proximity {
+                            // Still in proximity but centralized rules reject trade
+                            debug!("🔄 Zone {} in proximity ({:.1} pips) but trade rejected by centralized rules: {:?}", 
+                                   zone.id, distance_pips, evaluation.rejection_reasons);
                         } else {
-                            // Still in proximity but not within trading threshold - do nothing
-                            debug!("🔄 Zone {} still in proximity ({:.1} pips) but not within trading threshold ({:.1})", 
-                                   zone.id, distance_pips, self.trading_threshold_pips);
+                            // No longer in proximity
+                            debug!("🔄 Zone {} no longer in proximity ({:.1} pips)", 
+                                   zone.id, distance_pips);
                         }
                     }
                     ZoneState::TradingSignalSent => {

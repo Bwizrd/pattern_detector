@@ -4,6 +4,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn default_is_active() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Zone {
     pub id: String,
@@ -14,6 +18,8 @@ pub struct Zone {
     pub strength: f64,
     pub timeframe: String, // e.g., "H1", "D1"
     pub touch_count: i32,  // Number of touches within the zone
+    #[serde(default = "default_is_active")]
+    pub is_active: bool,   // Whether the zone is active for trading
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 

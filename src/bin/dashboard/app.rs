@@ -14,6 +14,35 @@ use crate::types::{
     AppPage, LiveTrade, TradeNotificationDisplay, TradeStatus, ValidatedTradeDisplay, ZoneDistanceInfo, ZoneStatus,
 };
 use pattern_detector::zone_interactions::ZoneInteractionContainer;
+use serde::{Deserialize, Serialize};
+
+// Import PendingOrder from zone monitor
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingOrder {
+    pub zone_id: String,
+    pub symbol: String,
+    pub timeframe: String,
+    pub zone_type: String,
+    pub order_type: String,        // "BUY_LIMIT" or "SELL_LIMIT"
+    pub entry_price: f64,          // The limit price
+    pub lot_size: i32,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub ctrader_order_id: Option<String>, // Order ID returned by cTrader
+    pub placed_at: DateTime<Utc>,
+    pub status: String,            // "PENDING", "FILLED", "CANCELLED", "FAILED"
+    pub zone_high: f64,
+    pub zone_low: f64,
+    pub zone_strength: f64,
+    pub touch_count: i32,
+    pub distance_when_placed: f64, // Distance in pips when order was placed
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingOrdersContainer {
+    pub last_updated: DateTime<Utc>,
+    pub orders: HashMap<String, PendingOrder>, // zone_id -> PendingOrder
+}
 
 use crate::notifications::{NotificationRuleValidator, NotificationValidation};
 
@@ -88,6 +117,9 @@ pub struct App {
     // Symbol filtering
     pub symbol_filter: String, // Current symbol filter text
     pub symbol_filter_mode: bool, // Whether we're in symbol filter input mode
+    
+    // Pending orders
+    pub pending_orders: HashMap<String, PendingOrder>, // zone_id -> PendingOrder
 }
 
 impl App {
@@ -211,6 +243,7 @@ impl App {
             // Symbol filtering - empty by default (shows all symbols)
             symbol_filter: String::new(),
             symbol_filter_mode: false,
+            pending_orders: HashMap::new(),
         }
     }
 
@@ -929,6 +962,9 @@ impl App {
 
         // Load zone interaction data
         self.load_zone_interactions().await;
+
+        // Load pending orders
+        self.load_pending_orders().await;
 
         // CHANGED: Use WebSocket prices instead of API prices
         let current_prices = self.convert_websocket_to_simple_prices();
@@ -1850,5 +1886,41 @@ impl App {
             ZoneStatus::Breached => ZoneStatus::Breached,
             _ => base_status.clone(),
         }
+    }
+
+    /// Load pending orders from shared file
+    pub async fn load_pending_orders(&mut self) {
+        let pending_orders_file = std::env::var("LIMIT_ORDER_SHARED_FILE")
+            .unwrap_or_else(|_| "shared_pending_orders.json".to_string());
+
+        match fs::read_to_string(&pending_orders_file).await {
+            Ok(content) => {
+                match serde_json::from_str::<PendingOrdersContainer>(&content) {
+                    Ok(container) => {
+                        self.pending_orders = container.orders;
+                        log::info!("📋 Dashboard loaded {} pending orders", self.pending_orders.len());
+                    }
+                    Err(e) => {
+                        log::warn!("📋 Failed to parse pending orders file: {}", e);
+                        self.pending_orders = HashMap::new();
+                    }
+                }
+            }
+            Err(_) => {
+                // File doesn't exist yet, that's OK
+                log::debug!("📋 No pending orders file found, starting with empty orders");
+                self.pending_orders = HashMap::new();
+            }
+        }
+    }
+
+    /// Check if a zone has a pending order
+    pub fn has_pending_order(&self, zone_id: &str) -> bool {
+        self.pending_orders.contains_key(zone_id)
+    }
+
+    /// Get pending order info for a zone
+    pub fn get_pending_order(&self, zone_id: &str) -> Option<&PendingOrder> {
+        self.pending_orders.get(zone_id)
     }
 }

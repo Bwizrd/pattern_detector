@@ -460,4 +460,38 @@ impl TelegramNotifier {
 
         Ok(())
     }
+
+    /// Send a custom message to Telegram
+    pub async fn send_custom_message(&self, message: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        let bot_token = self.bot_token.as_ref().unwrap();
+        let chat_id = self.chat_id.as_ref().unwrap();
+
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+        
+        let payload = json!({
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": true
+        });
+
+        let response = self.client
+            .post(&url)
+            .json(&payload)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            info!("📱 Custom message sent to Telegram");
+        } else {
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            error!("📱 Failed to send custom message: {}", error_text);
+        }
+
+        Ok(())
+    }
 }
