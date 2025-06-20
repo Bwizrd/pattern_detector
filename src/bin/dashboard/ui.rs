@@ -457,6 +457,9 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 base_widths.push(10);
             }
             
+            headers.push("P"); // Pending order indicator
+            base_widths.push(3);
+            
             headers.push("Zone ID");
             base_widths.push(18);
             
@@ -495,6 +498,9 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 base_widths.push(10);
             }
             
+            headers.push("P"); // Pending order indicator
+            base_widths.push(3);
+            
             headers.push("Zone ID");
             base_widths.push(16);
             
@@ -530,6 +536,9 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 base_widths.push(8);
             }
             
+            headers.push("P"); // Pending order indicator
+            base_widths.push(3);
+            
             headers.push("Zone ID");
             base_widths.push(16);
             
@@ -563,6 +572,9 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 base_widths.push(10);
             }
             
+            headers.push("P"); // Pending order indicator
+            base_widths.push(3);
+            
             headers.push("Zone ID");
             base_widths.push(16);
             
@@ -580,14 +592,15 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         } else if screen_width > 100 {
             // Medium screens: Essential columns only
             (
-                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "Zone ID"],
+                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "P", "Zone ID"],
                 vec![
                     Constraint::Percentage(18),
                     Constraint::Percentage(10),
                     Constraint::Percentage(12),
                     Constraint::Percentage(18),
                     Constraint::Percentage(18),
-                    Constraint::Percentage(24), // Zone ID gets remaining space
+                    Constraint::Percentage(4), // P column
+                    Constraint::Percentage(20), // Zone ID gets remaining space
                 ],
                 35,
             )
@@ -739,8 +752,16 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                         cells.push(Cell::from(start_date_display).style(row_style.fg(Color::Gray)));
                     }
 
+                    // Add Pending Order indicator column
+                    let pending_indicator = if app.has_pending_order(&zone.zone_id) {
+                        "P"
+                    } else {
+                        ""
+                    };
+                    cells.push(Cell::from(pending_indicator).style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
+
                     // Add Zone ID column (truncated based on available space)
-                    let mut zone_id_display = if screen_width > 160 {
+                    let zone_id_display = if screen_width > 160 {
                         zone.zone_id.clone() // Show full ID on very large screens
                     } else if screen_width > 140 {
                         if zone.zone_id.len() > 16 {
@@ -761,11 +782,6 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                             zone.zone_id.clone()
                         }
                     };
-
-                    // Add 'P' indicator if zone has a pending order
-                    if app.has_pending_order(&zone.zone_id) {
-                        zone_id_display = format!("P {}", zone_id_display);
-                    }
 
                     cells.push(Cell::from(zone_id_display).style(row_style.fg(Color::Magenta)));
                 }
