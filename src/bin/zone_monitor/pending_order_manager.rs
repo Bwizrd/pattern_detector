@@ -496,7 +496,7 @@ impl PendingOrderManager {
         if self.is_jpy_pair(symbol_id) {
             display_volume * 100.0  // JPY: 0.1 → 10 
         } else if self.is_index_pair(symbol_id) {
-            display_volume * 1.0    // Indices: 0.1 → 0.1
+            display_volume * 10.0   // Indices: 0.1 → 1.0
         } else {
             display_volume * 10000.0  // Forex: 0.1 → 1000
         }
