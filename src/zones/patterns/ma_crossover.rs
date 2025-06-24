@@ -142,7 +142,7 @@ impl PatternRecognizer for PriceSmaCrossRecognizer {
         let trades = executor.execute_trades_for_pattern(
             "price_sma_cross", // Pass NEW pattern name
             &pattern_data,     // Pass data containing events
-            candles
+            candles,false
         );
         log::info!("Price/SMA TRADE: Executor finished. Found {} trades.", trades.len());
 

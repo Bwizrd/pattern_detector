@@ -192,7 +192,7 @@ async fn run_advanced_optimization() -> Result<(), Box<dyn std::error::Error>> {
                     if is_debug_run {
                         info!("{} Calling execute_trades_for_pattern for {}/{} with SL:{}, TP:{}", log_prefix, task_symbol, task_pattern_tf, sl_pips, tp_pips);
                     }
-                    let trades_from_executor: Vec<Trade> = executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles );
+                    let trades_from_executor: Vec<Trade> = executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles, true );
                     info!("{} Trades from executor for SL:{}/TP:{}: {}", log_prefix, sl_pips, tp_pips, trades_from_executor.len());
                     
                     // if !is_debug_run && trades_from_executor.len() < 5 { 

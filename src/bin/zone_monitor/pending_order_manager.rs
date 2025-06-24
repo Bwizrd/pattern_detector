@@ -49,6 +49,7 @@ pub struct PendingOrderManager {
     pending_orders: HashMap<String, PendingOrder>, // zone_id -> order
     http_client: reqwest::Client,
     symbol_ids: HashMap<String, i32>, // symbol -> symbol_id mapping
+    allowed_timeframes: Vec<String>, // allowed timeframes for trading
 }
 
 #[derive(Debug, Serialize)]
@@ -105,6 +106,12 @@ impl PendingOrderManager {
         let ctrader_api_url = env::var("CTRADER_API_BRIDGE_URL")
             .unwrap_or_else(|_| "http://localhost:8000".to_string());
 
+        let allowed_timeframes = env::var("TRADING_ALLOWED_TIMEFRAMES")
+            .unwrap_or_else(|_| "30m,1h,4h,1d".to_string())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+
         if enabled {
             info!("📋 Pending Order Manager initialized:");
             info!("   Enabled: {}", enabled);
@@ -114,6 +121,7 @@ impl PendingOrderManager {
             info!("   Default SL: {:.1} pips", default_sl_pips);
             info!("   Default TP: {:.1} pips", default_tp_pips);
             info!("   cTrader API: {}", ctrader_api_url);
+            info!("   Allowed timeframes: {:?}", allowed_timeframes);
         } else {
             info!("📋 Pending Order Manager disabled");
         }
@@ -129,6 +137,7 @@ impl PendingOrderManager {
             pending_orders: HashMap::new(),
             http_client: reqwest::Client::new(),
             symbol_ids: Self::init_symbol_ids(),
+            allowed_timeframes,
         }
     }
 
@@ -248,6 +257,19 @@ impl PendingOrderManager {
 
             // Skip if we already have a pending order for this zone
             if self.pending_orders.contains_key(&zone.id) {
+                continue;
+            }
+
+            // Skip if we already have a pending order for this symbol/timeframe combination
+            let symbol_timeframe_key = format!("{}_{}", zone.symbol, zone.timeframe);
+            if self.pending_orders.values().any(|order| 
+                format!("{}_{}", order.symbol, order.timeframe) == symbol_timeframe_key
+            ) {
+                continue;
+            }
+
+            // Skip if zone timeframe is not in allowed timeframes
+            if !self.allowed_timeframes.contains(&zone.timeframe) {
                 continue;
             }
 

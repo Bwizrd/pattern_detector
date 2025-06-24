@@ -100,11 +100,13 @@ impl TradeExecutor {
         self.rejected_trades.borrow_mut().push(rejection);
     }
 
+
     pub fn execute_trades_for_pattern(
         &self,
         pattern_type: &str,
         pattern_data: &Value,
         candles: &[CandleData],
+        use_old_method: bool, // <-- Add this flag
     ) -> Vec<Trade> {
         let mut initial_trades = Vec::new();
 
@@ -123,7 +125,11 @@ impl TradeExecutor {
 
         match pattern_type {
             "fifty_percent_before_big_bar" => {
-                self.generate_fifty_percent_zone_trades_with_engine(candles, &mut initial_trades);
+                if use_old_method {
+                    self.generate_fifty_percent_zone_trades(pattern_data, candles, &mut initial_trades);
+                } else {
+                    self.generate_fifty_percent_zone_trades_with_engine(candles, &mut initial_trades);
+                }
             }
             "specific_time_entry" => {
                 self.trade_specific_time_events(pattern_data, candles, &mut initial_trades);

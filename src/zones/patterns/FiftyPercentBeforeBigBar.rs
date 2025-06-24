@@ -276,6 +276,7 @@ impl PatternRecognizer for FiftyPercentBeforeBigBarRecognizer {
             "fifty_percent_before_big_bar",
             &pattern_data,
             candles,
+            false
         );
         let summary = TradeSummary::from_trades(&trades);
         (trades, summary)
