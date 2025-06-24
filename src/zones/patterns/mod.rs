@@ -18,7 +18,7 @@ pub trait PatternRecognizer {
             default_symbol_for_recognizer_trade,
             None,
             None);
-        let trades = executor.execute_trades_for_pattern(&pattern_type, &pattern_data, candles);
+        let trades = executor.execute_trades_for_pattern(&pattern_type, &pattern_data, candles, false);
         let summary = TradeSummary::from_trades(&trades);
 
         (trades, summary)
@@ -35,7 +35,7 @@ pub trait PatternRecognizer {
             .unwrap_or("unknown")
             .to_string();
 
-        let trades = executor.execute_trades_for_pattern(&pattern_type, &pattern_data, candles);
+        let trades = executor.execute_trades_for_pattern(&pattern_type, &pattern_data, candles, false);
         let summary = TradeSummary::from_trades(&trades);
 
         (trades, summary)

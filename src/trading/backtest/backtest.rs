@@ -358,6 +358,7 @@ pub async fn run_backtest(
         pattern_name,
         &pattern_data,
         &primary_candles,
+        true
     );
     log::info!(
         "Trade execution simulation complete. Found {} potential trades.",

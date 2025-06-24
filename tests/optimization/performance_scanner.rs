@@ -174,7 +174,7 @@ async fn run_performance_scan() -> Result<(), Box<dyn std::error::Error>> {
                 executor.set_minute_candles(execution_candles.clone());
 
                 let trades_from_executor: Vec<Trade> = executor.execute_trades_for_pattern(
-                    "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles
+                    "fifty_percent_before_big_bar", &detected_value_json, &pattern_candles, true
                 );
 
                 if trades_from_executor.is_empty() { 

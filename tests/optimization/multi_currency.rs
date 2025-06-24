@@ -274,6 +274,7 @@ async fn run_multi_currency_optimization() -> Result<(), Box<dyn std::error::Err
                                 "fifty_percent_before_big_bar",
                                 &pattern_data,
                                 &hourly_candles,
+                                true
                             );
 
                             // Calculate summary

@@ -470,7 +470,9 @@ pub async fn run_multi_symbol_backtest(
                 trade_executor.set_timeframe(task_pattern_tf.clone());
 
                 // ⭐ Execute trades using enriched zones directly (no JSON conversion needed)
-                let executed_trades_internal = trade_executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &serde_json::Value::Null, &pattern_candles );
+                let recognizer: Box<dyn PatternRecognizer> = Box::new(FiftyPercentBeforeBigBarRecognizer::default());
+                let pattern_data = recognizer.detect(&pattern_candles);
+                let executed_trades_internal = trade_executor.execute_trades_for_pattern( "fifty_percent_before_big_bar", &pattern_data, &pattern_candles, true );
                 info!("Task Info: Executed {} trades for {}/{}", executed_trades_internal.len(), task_symbol, task_pattern_tf);
                 
                 let mut current_task_trades_result: Vec<IndividualTradeResult> = Vec::new();

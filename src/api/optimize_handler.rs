@@ -508,6 +508,7 @@ pub async fn run_multi_backtest_internal(
                     "fifty_percent_before_big_bar",
                     &detected_value_json,
                     &pattern_candles,
+                    false
                 );
                 let mut current_task_trades = Vec::new();
                 let mut winning_trades_count = 0;

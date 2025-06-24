@@ -236,6 +236,7 @@ async fn run_optimization() -> Result<(), Box<dyn std::error::Error>> {
                     "fifty_percent_before_big_bar",
                     &pattern_data,
                     &hourly_candles,
+                    true
                 );
 
                 // Calculate summary

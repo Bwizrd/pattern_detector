@@ -77,7 +77,8 @@ impl PatternRecognizer for SpecificTimeEntryRecognizer {
         let trades = executor.execute_trades_for_pattern(
             "specific_time_entry", // Use correct pattern name
             &pattern_data,
-            candles
+            candles, 
+            false
         );
         let summary = TradeSummary::from_trades(&trades);
         (trades, summary)
