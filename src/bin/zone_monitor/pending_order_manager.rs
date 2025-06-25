@@ -37,16 +37,39 @@ pub struct PendingOrdersContainer {
     pub orders: HashMap<String, PendingOrder>, // zone_id -> PendingOrder
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookedPendingOrder {
+    pub zone_id: String,
+    pub symbol: String,
+    pub timeframe: String,
+    pub order_type: String,        // "BUY_LIMIT" or "SELL_LIMIT"
+    pub entry_price: f64,
+    pub lot_size: i32,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub ctrader_order_id: String,
+    pub booked_at: DateTime<Utc>,
+    pub status: String,            // "PENDING", "FILLED", "CANCELLED"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookedOrdersContainer {
+    pub last_updated: DateTime<Utc>,
+    pub booked_orders: HashMap<String, BookedPendingOrder>, // zone_id -> BookedPendingOrder
+}
+
 #[derive(Debug)]
 pub struct PendingOrderManager {
     enabled: bool,
     distance_threshold_pips: f64,
     shared_file_path: String,
+    booked_orders_file_path: String,
     default_lot_size: i32,
     default_sl_pips: f64,
     default_tp_pips: f64,
     ctrader_api_url: String,
     pending_orders: HashMap<String, PendingOrder>, // zone_id -> order
+    booked_orders: HashMap<String, BookedPendingOrder>, // zone_id -> successfully booked pending order
     http_client: reqwest::Client,
     symbol_ids: HashMap<String, i32>, // symbol -> symbol_id mapping
     allowed_timeframes: Vec<String>, // allowed timeframes for trading
@@ -88,20 +111,23 @@ impl PendingOrderManager {
         let shared_file_path = env::var("LIMIT_ORDER_SHARED_FILE")
             .unwrap_or_else(|_| "shared_pending_orders.json".to_string());
 
+        let booked_orders_file_path = env::var("BOOKED_ORDERS_SHARED_FILE")
+            .unwrap_or_else(|_| "shared_booked_orders.json".to_string());
+
         let default_lot_size = env::var("LIMIT_ORDER_LOT_SIZE")
             .unwrap_or_else(|_| "1000".to_string())
             .parse::<i32>()
             .unwrap_or(1000);
 
-        let default_sl_pips = env::var("LIMIT_ORDER_SL_PIPS")
-            .unwrap_or_else(|_| "40.0".to_string())
+        let default_sl_pips = env::var("TRADING_STOP_LOSS_PIPS")
+            .unwrap_or_else(|_| "20.0".to_string())
             .parse::<f64>()
-            .unwrap_or(40.0);
+            .unwrap_or(20.0);
 
-        let default_tp_pips = env::var("LIMIT_ORDER_TP_PIPS")
-            .unwrap_or_else(|_| "10.0".to_string())
+        let default_tp_pips = env::var("TRADING_TAKE_PROFIT_PIPS")
+            .unwrap_or_else(|_| "42.0".to_string())
             .parse::<f64>()
-            .unwrap_or(10.0);
+            .unwrap_or(42.0);
 
         let ctrader_api_url = env::var("CTRADER_API_BRIDGE_URL")
             .unwrap_or_else(|_| "http://localhost:8000".to_string());
@@ -130,11 +156,13 @@ impl PendingOrderManager {
             enabled,
             distance_threshold_pips,
             shared_file_path,
+            booked_orders_file_path,
             default_lot_size,
             default_sl_pips,
             default_tp_pips,
             ctrader_api_url,
             pending_orders: HashMap::new(),
+            booked_orders: HashMap::new(),
             http_client: reqwest::Client::new(),
             symbol_ids: Self::init_symbol_ids(),
             allowed_timeframes,
@@ -242,6 +270,20 @@ impl PendingOrderManager {
         Ok(())
     }
 
+    /// Save booked orders to shared file
+    async fn save_booked_orders(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let container = BookedOrdersContainer {
+            last_updated: Utc::now(),
+            booked_orders: self.booked_orders.clone(),
+        };
+
+        let json_content = serde_json::to_string_pretty(&container)?;
+        fs::write(&self.booked_orders_file_path, json_content).await?;
+
+        debug!("📋 Saved {} booked orders to {}", self.booked_orders.len(), self.booked_orders_file_path);
+        Ok(())
+    }
+
     /// Check zones and place pending orders for eligible ones
     pub async fn check_and_place_orders(&mut self, price_update: &PriceUpdate, zones: &[Zone]) {
         if !self.enabled {
@@ -268,6 +310,14 @@ impl PendingOrderManager {
                 continue;
             }
 
+            // Skip if we already have a successfully booked order for this symbol/timeframe combination
+            if self.booked_orders.values().any(|order| 
+                format!("{}_{}", order.symbol, order.timeframe) == symbol_timeframe_key && 
+                order.status == "PENDING"
+            ) {
+                continue;
+            }
+
             // Skip if zone timeframe is not in allowed timeframes
             if !self.allowed_timeframes.contains(&zone.timeframe) {
                 continue;
@@ -283,9 +333,12 @@ impl PendingOrderManager {
             }
         }
 
-        // Save updated orders to file
+        // Save updated orders to files
         if let Err(e) = self.save_pending_orders().await {
             error!("📋 Failed to save pending orders: {}", e);
+        }
+        if let Err(e) = self.save_booked_orders().await {
+            error!("📋 Failed to save booked orders: {}", e);
         }
     }
 
@@ -399,10 +452,28 @@ impl PendingOrderManager {
         if api_response.success && api_response.order_id.is_some() {
             let order_id = api_response.order_id.unwrap();
             pending_order.status = "PENDING".to_string();
+            pending_order.ctrader_order_id = Some(order_id.clone());
             info!("✅ Pending order placed successfully! Zone: {}, Order ID: {}", zone.id, order_id);
             
             // Store the successful pending order
-            self.pending_orders.insert(zone.id.clone(), pending_order);
+            self.pending_orders.insert(zone.id.clone(), pending_order.clone());
+            
+            // Also record it as a successfully booked order
+            let booked_order = BookedPendingOrder {
+                zone_id: zone.id.clone(),
+                symbol: price_update.symbol.clone(),
+                timeframe: zone.timeframe.clone(),
+                order_type: order_type_str.to_string(),
+                entry_price,
+                lot_size: self.default_lot_size,
+                stop_loss,
+                take_profit,
+                ctrader_order_id: order_id,
+                booked_at: Utc::now(),
+                status: "PENDING".to_string(),
+            };
+            self.booked_orders.insert(zone.id.clone(), booked_order);
+            
         } else {
             pending_order.status = "FAILED".to_string();
             let error_msg = api_response.error_code

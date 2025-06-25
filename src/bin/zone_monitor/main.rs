@@ -16,11 +16,12 @@ mod zone_state_manager;
 mod csv_logger;
 mod telegram_notifier;
 
-use axum::{extract::State, http::StatusCode, routing::get, routing::post, Json, Router};
+use axum::{extract::State, http::StatusCode, routing::get, routing::post, Json, Router, response::Html};
 use state::MonitorState;
 use tracing::info;
 use types::{ZoneAlert, ZoneCache};
 use serde::{Deserialize, Serialize};
+use std::fs;
 
 // Request/Response structs for manual trading
 #[derive(Debug, Deserialize, Serialize)]
@@ -151,6 +152,37 @@ async fn health_check(State(state): State<MonitorState>) -> (StatusCode, Json<se
     (status_code, Json(status))
 }
 
+async fn pending_orders_html() -> Html<String> {
+    match fs::read_to_string("pending_orders_viewer.html") {
+        Ok(content) => Html(content),
+        Err(_) => Html("<h1>Error: pending_orders_viewer.html not found</h1>".to_string())
+    }
+}
+
+async fn pending_orders_json() -> (StatusCode, Json<serde_json::Value>) {
+    match fs::read_to_string("shared_pending_orders.json") {
+        Ok(content) => {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(json) => (StatusCode::OK, Json(json)),
+                Err(e) => {
+                    let error = serde_json::json!({
+                        "error": "Failed to parse JSON",
+                        "message": e.to_string()
+                    });
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(error))
+                }
+            }
+        }
+        Err(e) => {
+            let error = serde_json::json!({
+                "error": "Failed to read file",
+                "message": e.to_string()
+            });
+            (StatusCode::NOT_FOUND, Json(error))
+        }
+    }
+}
+
 async fn manual_trade_api(State(_state): State<MonitorState>, Json(request): Json<ManualTradeRequest>) -> (StatusCode, Json<ManualTradeResponse>) {
     info!("🧪 Manual trade request: {:?}", request);
     
@@ -268,8 +300,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(html::status_page))
         .route("/closest", get(html::closest_zones_page))
+        .route("/pending-orders", get(pending_orders_html))
         .route("/api/zones", get(zones_api))
         .route("/api/alerts", get(alerts_api))
+        .route("/api/pending-orders", get(pending_orders_json))
         .route("/api/notifications/status", get(notifications_status_api))
         .route("/api/notifications/test", post(test_notification_api))
         .route("/api/notifications/cooldowns", get(cooldown_stats_api))
@@ -284,8 +318,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🌐 Zone Monitor Dashboard starting on http://localhost:{}", monitor_port);
     info!("🔗 Available endpoints:");
     info!("   📊 Dashboard: http://localhost:{}", monitor_port);
+    info!("   📋 Pending Orders: http://localhost:{}/pending-orders", monitor_port);
     info!("   📈 Zones API: http://localhost:{}/api/zones", monitor_port);
     info!("   🚨 Alerts API: http://localhost:{}/api/alerts", monitor_port);
+    info!("   📋 Pending Orders API: http://localhost:{}/api/pending-orders", monitor_port);
     info!("   📢 Notifications Status: http://localhost:{}/api/notifications/status", monitor_port);
     info!("   🧪 Test Notification: POST http://localhost:{}/api/notifications/test", monitor_port);
     info!("   ⏱️ Cooldown Stats: http://localhost:{}/api/notifications/cooldowns", monitor_port);
