@@ -164,20 +164,27 @@ async function runBacktest() {
             allowed_trade_days: allowedTradeDays
         };
         
-        // Make API call
-        const response = await fetch('http://localhost:8080/multi-symbol-backtest', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestBody)
-        });
+        // Make API call with AbortController for proper cleanup
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
         
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
+        try {
+            const response = await fetch('http://localhost:8080/multi-symbol-backtest', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody),
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
         
-        const data = await response.json();
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
         
         // Store results for export
         window.lastBacktestResults = data;
@@ -250,6 +257,11 @@ async function runBacktest() {
         `;
         
         displayResults(data);
+        
+        } catch (innerError) {
+            clearTimeout(timeoutId);
+            throw innerError;
+        }
         
     } catch (error) {
         results.innerHTML = `
