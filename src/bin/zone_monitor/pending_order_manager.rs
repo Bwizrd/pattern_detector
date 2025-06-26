@@ -96,6 +96,53 @@ struct PlacePendingOrderResponse {
     error: Option<serde_json::Value>,
 }
 
+// cTrader API response structures for fetching and cancelling orders
+#[derive(Debug, Deserialize)]
+struct CTraderPendingOrdersResponse {
+    success: bool,
+    orders: Vec<CTraderPendingOrder>,
+    count: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct CTraderPendingOrder {
+    #[serde(rename = "orderId")]
+    order_id: i64,
+    #[serde(rename = "symbolId")]
+    symbol_id: i32,
+    volume: f64,
+    #[serde(rename = "tradeSide")]
+    trade_side: i32,
+    #[serde(rename = "orderType")]
+    order_type: i32,
+    #[serde(rename = "limitPrice")]
+    limit_price: f64,
+    #[serde(rename = "stopLoss")]
+    stop_loss: f64,
+    #[serde(rename = "takeProfit")]
+    take_profit: f64,
+    #[serde(rename = "orderStatus")]
+    order_status: i32,
+    #[serde(rename = "executedVolume")]
+    executed_volume: f64,
+    #[serde(rename = "openTimestamp")]
+    open_timestamp: i64,
+    #[serde(rename = "lastUpdateTimestamp")]
+    last_update_timestamp: i64,
+    #[serde(rename = "clientOrderId")]
+    client_order_id: String,
+    #[serde(rename = "timeInForce")]
+    time_in_force: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelOrderResponse {
+    success: bool,
+    message: String,
+    #[serde(rename = "errorCode")]
+    error_code: Option<String>,
+}
+
 impl PendingOrderManager {
     pub fn new() -> Self {
         let enabled = env::var("ENABLE_LIMIT_ORDERS")
@@ -299,14 +346,18 @@ impl PendingOrderManager {
 
             // Skip if we already have a pending order for this zone
             if self.pending_orders.contains_key(&zone.id) {
+                debug!("📋 Zone {} already has a pending order, skipping", zone.id);
                 continue;
             }
 
-            // Skip if we already have a pending order for this symbol/timeframe combination
+            // Check if we already have ANY pending order for this symbol/timeframe combination
             let symbol_timeframe_key = format!("{}_{}", zone.symbol, zone.timeframe);
-            if self.pending_orders.values().any(|order| 
+            let has_blocking_order = self.pending_orders.values().any(|order| 
                 format!("{}_{}", order.symbol, order.timeframe) == symbol_timeframe_key
-            ) {
+            );
+            
+            if has_blocking_order {
+                debug!("📋 Skipping zone {} - already have pending order for {}_{}", zone.id, zone.symbol, zone.timeframe);
                 continue;
             }
 
@@ -620,5 +671,261 @@ impl PendingOrderManager {
             205 => 1.0,    // NAS100
             _ => 0.01,     // Default for forex pairs
         }
+    }
+
+    /// Fetch all pending orders from cTrader API
+    async fn fetch_ctrader_pending_orders(&self) -> Result<Vec<CTraderPendingOrder>, Box<dyn std::error::Error + Send + Sync>> {
+        let api_url = format!("{}/pendingOrders", self.ctrader_api_url);
+        let response = self.http_client
+            .get(&api_url)
+            .send()
+            .await?;
+
+        let response_text = response.text().await?;
+        let api_response: CTraderPendingOrdersResponse = serde_json::from_str(&response_text)
+            .map_err(|e| format!("Failed to parse cTrader pending orders response: {} - Response: {}", e, response_text))?;
+
+        if api_response.success {
+            Ok(api_response.orders)
+        } else {
+            Err("Failed to fetch pending orders from cTrader".into())
+        }
+    }
+
+    /// Cancel an order via cTrader API
+    async fn cancel_ctrader_order(&self, order_id: i64) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let api_url = format!("{}/cancelOrder/{}", self.ctrader_api_url, order_id);
+        
+        info!("📋 Calling DELETE {}", api_url);
+        
+        let response = self.http_client
+            .delete(&api_url)
+            .send()
+            .await?;
+
+        let response_text = response.text().await?;
+        
+        // Try to parse the response
+        let api_response: CancelOrderResponse = serde_json::from_str(&response_text)
+            .map_err(|e| format!("Failed to parse cancel order response: {} - Response: {}", e, response_text))?;
+
+        if api_response.success {
+            info!("✅ Successfully cancelled cTrader order {}", order_id);
+            Ok(true)
+        } else {
+            warn!("❌ Failed to cancel cTrader order {}: {}", order_id, api_response.message);
+            Ok(false)
+        }
+    }
+
+    /// Check if order is old and moved away, then cancel it
+    async fn should_cancel_order(&self, order: &CTraderPendingOrder, current_prices: &HashMap<String, f64>) -> (bool, String) {
+        // Convert timestamp from milliseconds to seconds
+        let order_timestamp = order.open_timestamp / 1000;
+        let order_time = DateTime::from_timestamp(order_timestamp, 0)
+            .unwrap_or_else(|| Utc::now());
+        
+        let now = Utc::now();
+        let age_hours = now.signed_duration_since(order_time).num_hours();
+
+        // Check if order is older than 12 hours
+        if age_hours < 12 {
+            return (false, format!("Order only {} hours old", age_hours));
+        }
+
+        // Find the symbol for this order
+        let symbol = self.symbol_ids.iter()
+            .find(|(_, &id)| id == order.symbol_id)
+            .map(|(symbol, _)| symbol.clone())
+            .unwrap_or_else(|| format!("UNKNOWN_{}", order.symbol_id));
+
+        // Get current price for this symbol
+        let current_price = match current_prices.get(&symbol).or_else(|| {
+            // Try without _SB suffix
+            let symbol_without_sb = symbol.replace("_SB", "");
+            current_prices.get(&symbol_without_sb)
+        }) {
+            Some(&price) => price,
+            None => {
+                warn!("📋 No current price available for symbol {}, skipping cancel check", symbol);
+                return (false, "No current price available".to_string());
+            }
+        };
+
+        // Calculate distance from current price to order entry price
+        let entry_price = order.limit_price;
+        let pip_value = self.get_pip_value(&symbol);
+        let distance_pips = (current_price - entry_price).abs() / pip_value;
+
+        // Cancel if more than 50 pips away and older than 12 hours
+        if distance_pips > 50.0 {
+            (true, format!("{} hours old, {:.1} pips away from entry {:.5} (current: {:.5})", 
+                          age_hours, distance_pips, entry_price, current_price))
+        } else {
+            (false, format!("{} hours old but only {:.1} pips away", age_hours, distance_pips))
+        }
+    }
+
+    /// Periodic cleanup of old orders that have moved away
+    pub async fn periodic_cleanup_old_orders(&mut self, current_prices: &HashMap<String, f64>) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(0);
+        }
+
+        info!("📋 Starting periodic cleanup of old pending orders...");
+
+        // Fetch current orders from cTrader
+        let ctrader_orders = match self.fetch_ctrader_pending_orders().await {
+            Ok(orders) => orders,
+            Err(e) => {
+                error!("📋 Failed to fetch pending orders from cTrader: {}", e);
+                return Err(e);
+            }
+        };
+
+        let mut cancelled_count = 0;
+        let mut orders_to_remove = Vec::new();
+
+        for ctrader_order in ctrader_orders {
+            let (should_cancel, reason) = self.should_cancel_order(&ctrader_order, current_prices).await;
+            
+            if should_cancel {
+                info!("📋 Cancelling order {} - Reason: {}", ctrader_order.order_id, reason);
+                
+                match self.cancel_ctrader_order(ctrader_order.order_id).await {
+                    Ok(true) => {
+                        cancelled_count += 1;
+                        
+                        // Find and mark local order for removal
+                        if let Some((zone_id, _)) = self.pending_orders.iter()
+                            .find(|(_, order)| {
+                                order.ctrader_order_id.as_ref()
+                                    .map(|id| id.parse::<i64>().unwrap_or(-1) == ctrader_order.order_id)
+                                    .unwrap_or(false)
+                            }) {
+                            orders_to_remove.push(zone_id.clone());
+                        }
+                    },
+                    Ok(false) => {
+                        warn!("📋 Failed to cancel order {}", ctrader_order.order_id);
+                    },
+                    Err(e) => {
+                        error!("📋 Error cancelling order {}: {}", ctrader_order.order_id, e);
+                    }
+                }
+            } else {
+                debug!("📋 Order {} kept - Reason: {}", ctrader_order.order_id, reason);
+            }
+        }
+
+        // Remove cancelled orders from local storage
+        for zone_id in orders_to_remove {
+            self.pending_orders.remove(&zone_id);
+            self.booked_orders.remove(&zone_id);
+            info!("📋 Removed cancelled order for zone {} from local storage", zone_id);
+        }
+
+        // Save updated orders
+        if cancelled_count > 0 {
+            if let Err(e) = self.save_pending_orders().await {
+                error!("📋 Failed to save pending orders after cleanup: {}", e);
+            }
+            if let Err(e) = self.save_booked_orders().await {
+                error!("📋 Failed to save booked orders after cleanup: {}", e);
+            }
+        }
+
+        info!("📋 Periodic cleanup completed - Cancelled {} old orders", cancelled_count);
+        Ok(cancelled_count)
+    }
+
+    /// One-off cleanup when blocked by same symbol+timeframe
+    pub async fn cleanup_blocking_orders(&mut self, symbol: &str, timeframe: &str, current_prices: &HashMap<String, f64>) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(false);
+        }
+
+        info!("📋 Checking for blocking orders for {}_{}", symbol, timeframe);
+
+        // Find existing order for this symbol+timeframe
+        let blocking_zone_id = self.pending_orders.iter()
+            .find(|(_, order)| order.symbol == symbol && order.timeframe == timeframe)
+            .map(|(zone_id, _)| zone_id.clone());
+
+        let blocking_zone_id = match blocking_zone_id {
+            Some(id) => id,
+            None => {
+                debug!("📋 No blocking order found for {}_{}", symbol, timeframe);
+                return Ok(false);
+            }
+        };
+
+        let blocking_order = self.pending_orders.get(&blocking_zone_id).unwrap().clone();
+        
+        // Check if this order should be cancelled
+        if let Some(ctrader_order_id) = &blocking_order.ctrader_order_id {
+            let order_id = match ctrader_order_id.parse::<i64>() {
+                Ok(id) => id,
+                Err(_) => {
+                    warn!("📋 Invalid order ID format: {}", ctrader_order_id);
+                    return Ok(false);
+                }
+            };
+
+            // Fetch this specific order from cTrader to get current details
+            let ctrader_orders = self.fetch_ctrader_pending_orders().await?;
+            let ctrader_order = ctrader_orders.iter()
+                .find(|order| order.order_id == order_id);
+
+            if let Some(ctrader_order) = ctrader_order {
+                let (should_cancel, reason) = self.should_cancel_order(ctrader_order, current_prices).await;
+                
+                if should_cancel {
+                    info!("📋 Cancelling blocking order {} for {}_{} - Reason: {}", order_id, symbol, timeframe, reason);
+                    
+                    match self.cancel_ctrader_order(order_id).await {
+                        Ok(true) => {
+                            // Remove from local storage
+                            self.pending_orders.remove(&blocking_zone_id);
+                            self.booked_orders.remove(&blocking_zone_id);
+                            
+                            // Save updated orders
+                            if let Err(e) = self.save_pending_orders().await {
+                                error!("📋 Failed to save pending orders after cleanup: {}", e);
+                            }
+                            if let Err(e) = self.save_booked_orders().await {
+                                error!("📋 Failed to save booked orders after cleanup: {}", e);
+                            }
+                            
+                            info!("✅ Successfully cancelled blocking order for {}_{}", symbol, timeframe);
+                            return Ok(true);
+                        },
+                        Ok(false) => {
+                            warn!("📋 Failed to cancel blocking order {}", order_id);
+                        },
+                        Err(e) => {
+                            error!("📋 Error cancelling blocking order {}: {}", order_id, e);
+                        }
+                    }
+                } else {
+                    info!("📋 Blocking order {} for {}_{} is still valid - Reason: {}", order_id, symbol, timeframe, reason);
+                }
+            } else {
+                warn!("📋 Blocking order {} not found in cTrader, removing from local storage", order_id);
+                self.pending_orders.remove(&blocking_zone_id);
+                self.booked_orders.remove(&blocking_zone_id);
+                
+                if let Err(e) = self.save_pending_orders().await {
+                    error!("📋 Failed to save pending orders after cleanup: {}", e);
+                }
+                if let Err(e) = self.save_booked_orders().await {
+                    error!("📋 Failed to save booked orders after cleanup: {}", e);
+                }
+                
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 }

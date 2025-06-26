@@ -22,6 +22,7 @@ use crate::zones::patterns::{
 };
 use crate::trading::trading::TradeExecutor; // Correct path for TradeExecutor
 use crate::trading::trades::{Trade, TradeConfig, TradeSummary}; // Assuming these are in src/trades.rs
+use crate::trading::backtest::zone_matcher::ZoneMatcher;
 
 // --- Request Structure (BacktestParams) ---
 #[derive(Deserialize, Debug)]
@@ -115,6 +116,7 @@ impl From<(&TradeSummary, f64, f64, f64, f64, f64, f64, i64)> for ApiTradeSummar
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiTrade {
+    pub zone_id: String,
     pub entry_time: String,
     pub entry_price: f64,
     pub exit_time: Option<String>,
@@ -131,6 +133,7 @@ impl From<&Trade> for ApiTrade {
         const PRICE_DP: u32 = 5; // Define decimal places for prices
 
         ApiTrade {
+            zone_id: trade.pattern_id.clone(), // Use pattern_id as zone_id
             entry_time: trade.entry_time.clone(), // Clone existing string
             entry_price: round_dp(trade.entry_price, PRICE_DP),
             exit_time: trade.exit_time.clone(), // Clone existing Option<String>
@@ -382,7 +385,14 @@ pub async fn run_backtest(
         total_days, // Pass the calculated total_days here
     ));
 
-    let api_trades: Vec<ApiTrade> = trades.iter().map(ApiTrade::from).collect();
+    // --- Zone Matching and ID Reconciliation ---
+    let api_trades: Vec<ApiTrade> = match apply_zone_matching(&trades, &symbol, &request_params.timeframe) {
+        Ok(matched_trades) => matched_trades,
+        Err(e) => {
+            log::warn!("Zone matching failed: {}, using original zone IDs", e);
+            trades.iter().map(ApiTrade::from).collect()
+        }
+    };
 
     let response = BacktestResponse {
         summary: api_summary, // This summary now includes avg_pips_per_day
@@ -535,4 +545,70 @@ fn calculate_pips(trades: &[Trade]) -> (f64, f64, f64) {
         round_dp(total_winning_pips, 1), // Round total winning pips
         round_dp(total_losing_pips, 1),  // Round total losing pips
     )
+}
+
+/// Apply zone matching to reconcile backtest zones with cached zones
+fn apply_zone_matching(
+    trades: &[Trade], 
+    symbol: &str, 
+    timeframe: &str
+) -> Result<Vec<ApiTrade>, Box<dyn std::error::Error>> {
+    // Initialize zone matcher
+    let mut zone_matcher = ZoneMatcher::new();
+    zone_matcher.load_cache_data()?;
+    
+    let mut matched_trades = Vec::new();
+    let mut matches_found = 0;
+    let mut total_trades = 0;
+    
+    for trade in trades {
+        total_trades += 1;
+        
+        // Extract zone information from trade (we need to parse this from the pattern data)
+        // Since we don't have direct access to zone data here, we'll use the existing pattern_id
+        // and try to match based on entry time and price levels
+        
+        // For now, create ApiTrade with original zone ID
+        let mut api_trade = ApiTrade::from(trade);
+        
+        // Match based on trade entry price being within cached zone boundaries
+        let match_result = zone_matcher.match_trade_to_zones(
+            symbol,
+            timeframe,
+            if trade.direction == crate::trading::trades::TradeDirection::Short { "supply" } else { "demand" },
+            trade.entry_price,
+            Some(&trade.entry_time),
+        );
+        
+        if match_result.matched {
+            if let Some(cached_zone_id) = match_result.cached_zone_id {
+                log::info!(
+                    "Zone match found for trade {}: {} -> {} (score: {:.4})", 
+                    trade.id, 
+                    api_trade.zone_id, 
+                    cached_zone_id,
+                    match_result.match_score
+                );
+                api_trade.zone_id = cached_zone_id;
+                matches_found += 1;
+            }
+        }
+        
+        matched_trades.push(api_trade);
+    }
+    
+    let match_percentage = if total_trades > 0 { 
+        (matches_found as f64 / total_trades as f64) * 100.0 
+    } else { 
+        0.0 
+    };
+    
+    log::info!(
+        "Zone matching complete: {}/{} trades matched ({:.1}%)", 
+        matches_found, 
+        total_trades, 
+        match_percentage
+    );
+    
+    Ok(matched_trades)
 }

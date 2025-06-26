@@ -162,6 +162,7 @@ impl MonitorState {
         self.start_zone_reset_task().await;
         self.start_zone_interaction_save_task().await;
         self.start_zone_interaction_midnight_cleanup().await;
+        self.start_pending_order_cleanup_task().await;
 
         // Test notifications if configured
         if self.notification_manager.is_configured() {
@@ -318,6 +319,45 @@ impl MonitorState {
                     } else {
                         tracing::info!("🌅 Midnight cleanup: Zone interactions data reset successfully");
                     }
+                }
+            }
+        });
+    }
+
+    async fn start_pending_order_cleanup_task(&self) {
+        let pending_order_manager = Arc::clone(&self.pending_order_manager);
+        let latest_prices = Arc::clone(&self.latest_prices);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Check every hour
+
+            loop {
+                interval.tick().await;
+                
+                // Get current prices for cleanup evaluation
+                let current_prices = {
+                    let prices = latest_prices.read().await;
+                    prices.iter().map(|(symbol, price_update)| {
+                        let mid_price = (price_update.bid + price_update.ask) / 2.0;
+                        (symbol.clone(), mid_price)
+                    }).collect::<HashMap<String, f64>>()
+                };
+
+                // Only run cleanup if we have current prices
+                if !current_prices.is_empty() {
+                    let mut manager = pending_order_manager.write().await;
+                    match manager.periodic_cleanup_old_orders(&current_prices).await {
+                        Ok(cancelled_count) => {
+                            if cancelled_count > 0 {
+                                info!("📋 Periodic cleanup completed - cancelled {} old orders", cancelled_count);
+                            }
+                        },
+                        Err(e) => {
+                            error!("📋 Error during periodic order cleanup: {}", e);
+                        }
+                    }
+                } else {
+                    info!("📋 Skipping periodic cleanup - no current prices available");
                 }
             }
         });
