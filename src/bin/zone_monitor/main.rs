@@ -1,6 +1,7 @@
 // src/bin/zone_monitor/main.rs
 // Clean, organized zone monitor entry point with notifications and CSV logging
 
+mod active_order_manager;
 mod html;
 mod notifications;
 mod pending_order_manager;
@@ -8,6 +9,7 @@ mod proximity;
 mod proximity_logger;
 mod sound_notifier;
 mod state;
+mod strategy_manager;
 mod trade_rules;
 mod trading_engine;
 mod types;
@@ -121,6 +123,51 @@ async fn zone_interactions_api(State(state): State<MonitorState>) -> Json<serde_
 async fn cooldown_stats_api(State(state): State<MonitorState>) -> Json<serde_json::Value> {
     let stats = state.get_cooldown_stats().await;
     Json(stats)
+}
+
+async fn strategies_api(State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    let stats = state.strategy_manager.get_strategy_stats().await;
+    Json(serde_json::json!(stats))
+}
+
+async fn strategies_by_symbol_api(State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    match state.strategy_manager.load_strategies_from_file().await {
+        Ok(strategies_file) => {
+            Json(serde_json::json!({
+                "strategies_by_symbol": strategies_file.strategies_by_symbol,
+                "total_strategies": strategies_file.total_strategies,
+                "symbols_with_strategies": strategies_file.strategies_by_symbol.len()
+            }))
+        }
+        Err(_) => {
+            Json(serde_json::json!({
+                "strategies_by_symbol": {},
+                "total_strategies": 0,
+                "symbols_with_strategies": 0
+            }))
+        }
+    }
+}
+
+async fn refresh_strategies_api(State(state): State<MonitorState>) -> (StatusCode, Json<serde_json::Value>) {
+    match state.strategy_manager.refresh_strategies().await {
+        Ok(count) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Successfully refreshed {} strategies", count),
+                "count": count
+            });
+            (StatusCode::OK, Json(response))
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "message": format!("Failed to refresh strategies: {}", e),
+                "error": e
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
+        }
+    }
 }
 
 async fn health_check(State(state): State<MonitorState>) -> (StatusCode, Json<serde_json::Value>) {
@@ -312,6 +359,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/trading/stats", get(trading_stats_api))
         .route("/api/trading/history", get(trade_history_api))
         .route("/api/trading/manual", post(manual_trade_api))
+        .route("/api/strategies", get(strategies_api))
+        .route("/api/strategies/by-symbol", get(strategies_by_symbol_api))
+        .route("/api/strategies/refresh", post(refresh_strategies_api))
         .route("/health", get(health_check))
         .with_state(state);
 
