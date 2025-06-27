@@ -1,6 +1,7 @@
 // src/bin/zone_monitor/state.rs
 // Core state management with zone state tracking, trading, and CSV logging
 
+use crate::active_order_manager::ActiveOrderManager;
 use crate::csv_logger::CsvLogger;
 use crate::notifications::NotificationManager;
 use crate::pending_order_manager::PendingOrderManager;
@@ -10,14 +11,13 @@ use crate::strategy_manager::StrategyManager;
 use crate::telegram_notifier::TelegramNotifier;
 use crate::trading_engine::TradeResult;
 use crate::trading_engine::TradingEngine;
-use crate::active_order_manager::ActiveOrderManager;
 use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
 use crate::websocket::WebSocketClient;
 use crate::zone_state_manager::ProcessResult;
 use crate::zone_state_manager::ZoneStateManager;
-use pattern_detector::zone_interactions::{ZoneInteractionContainer, InteractionConfig};
 use chrono::Timelike;
 use chrono::{DateTime, Utc};
+use pattern_detector::zone_interactions::{InteractionConfig, ZoneInteractionContainer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -121,11 +121,13 @@ impl MonitorState {
 
         // Initialize zone interaction tracking
         let interaction_config = InteractionConfig::default();
-        let zone_interactions = ZoneInteractionContainer::load_from_file(&interaction_config.file_path)
-            .unwrap_or_else(|e| {
-                tracing::warn!("Failed to load zone interactions: {}, starting fresh", e);
-                ZoneInteractionContainer::new()
-            });
+        let zone_interactions = ZoneInteractionContainer::load_from_file(
+            &interaction_config.file_path,
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to load zone interactions: {}, starting fresh", e);
+            ZoneInteractionContainer::new()
+        });
 
         Self {
             zone_cache: Arc::new(RwLock::new(ZoneCache::default())),
@@ -150,31 +152,96 @@ impl MonitorState {
     }
 
     pub async fn initialize(&self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("🚀 MonitorState::initialize() starting...");
+
         // Load initial zones from file
+        info!("📄 Loading zones from cache file...");
         self.load_zones_from_file().await?;
+        info!("✅ Zones loaded successfully");
 
         // Initialize pending order manager
+        info!("📋 Initializing pending order manager...");
         {
             let mut pending_order_manager = self.pending_order_manager.write().await;
+
+            info!("🔄 Loading pending orders from file...");
             if let Err(e) = pending_order_manager.load_pending_orders().await {
-                error!("📋 Failed to load pending orders: {}", e);
+                error!("❌ Failed to load pending orders: {}", e);
+                info!("📋 Starting with empty pending orders");
+            } else {
+                let total_count = pending_order_manager.get_total_orders_count();
+                let pending_count = pending_order_manager.get_pending_orders_count();
+                
+                info!("✅ Loaded {} total orders ({} PENDING) from file", total_count, pending_count);
+
+                // Debug: Log some of the loaded orders by status
+                if total_count > 0 {
+                    info!("📋 Sample loaded orders:");
+                    
+                    // Show PENDING orders first
+                    let pending_orders = pending_order_manager.get_orders_by_status("PENDING");
+                    for order in pending_orders.iter().take(3) {
+                        info!(
+                            "   → {} -> {} {} PENDING (Order: {})",
+                            order.zone_id,
+                            order.symbol,
+                            order.timeframe,
+                            order.ctrader_order_id.as_deref().unwrap_or("N/A")
+                        );
+                    }
+                    
+                    // Show other statuses
+                    let filled_orders = pending_order_manager.get_orders_by_status("FILLED");
+                    if !filled_orders.is_empty() {
+                        info!("   → {} FILLED orders", filled_orders.len());
+                    }
+                    
+                    let cancelled_orders = pending_order_manager.get_orders_by_status("CANCELLED");
+                    if !cancelled_orders.is_empty() {
+                        info!("   → {} CANCELLED orders", cancelled_orders.len());
+                    }
+                    
+                    if total_count > 3 {
+                        info!("   ... and {} more orders", total_count - 3);
+                    }
+                } else {
+                    info!("📋 No existing orders found");
+                }
             }
-            
-            // Synchronize local pending orders with broker's actual pending orders
-            info!("📋 Synchronizing pending orders with broker...");
+
+            // Synchronize order STATUS with broker (don't remove, just update status)
+            info!("🔄 Synchronizing order status with broker...");
             match pending_order_manager.synchronize_pending_orders().await {
-                Ok(removed_count) => {
-                    if removed_count > 0 {
-                        info!("✅ Synchronized pending orders - removed {} stale orders", removed_count);
+                Ok(updated_count) => {
+                    if updated_count > 0 {
+                        info!(
+                            "✅ Synchronized order status - updated {} orders",
+                            updated_count
+                        );
+                        
+                        // Log updated counts after sync
+                        let total_count = pending_order_manager.get_total_orders_count();
+                        let pending_count = pending_order_manager.get_pending_orders_count();
+                        info!(
+                            "📋 After sync: {} total orders, {} PENDING",
+                            total_count, pending_count
+                        );
                     } else {
-                        info!("✅ Pending orders already synchronized");
+                        info!("✅ Order status already synchronized");
                     }
                 }
                 Err(e) => {
-                    warn!("⚠️ Failed to synchronize pending orders: {}", e);
+                    warn!("⚠️ Failed to synchronize order status: {}", e);
                     // Don't fail initialization if sync fails
                 }
             }
+
+            let final_pending_count = pending_order_manager.get_pending_orders_count();
+            let final_total_count = pending_order_manager.get_total_orders_count();
+            info!(
+                "📋 Final counts: {} PENDING orders, {} total orders tracked",
+                final_pending_count, final_total_count
+            );
         }
 
         // Load initial strategies
@@ -190,6 +257,7 @@ impl MonitorState {
         }
 
         // Start background tasks
+        info!("🔄 Starting background tasks...");
         self.start_cache_refresh_task().await;
         self.start_websocket_task().await;
         self.start_notification_cleanup_task().await;
@@ -199,6 +267,7 @@ impl MonitorState {
         self.start_pending_order_cleanup_task().await;
         self.start_strategy_refresh_task().await;
         self.start_active_order_matching_task().await;
+        info!("✅ Background tasks started");
 
         // Test notifications if configured
         if self.notification_manager.is_configured() {
@@ -225,6 +294,7 @@ impl MonitorState {
             }
         }
 
+        info!("🎉 MonitorState initialization completed successfully!");
         Ok(())
     }
 
@@ -314,7 +384,7 @@ impl MonitorState {
 
             loop {
                 interval.tick().await;
-                
+
                 let interactions = zone_interactions.read().await;
                 if let Err(e) = interactions.save_to_file(&interaction_config.file_path) {
                     tracing::error!("Failed to save zone interactions: {}", e);
@@ -336,24 +406,30 @@ impl MonitorState {
                     .and_hms_opt(0, 0, 0)
                     .unwrap()
                     .and_utc();
-                let duration_until_midnight = (next_midnight - now).to_std().unwrap_or(Duration::from_secs(24 * 3600));
-                
-                tracing::info!("🕐 Zone interactions midnight cleanup scheduled in {:.1} hours", 
-                              duration_until_midnight.as_secs_f64() / 3600.0);
-                
+                let duration_until_midnight = (next_midnight - now)
+                    .to_std()
+                    .unwrap_or(Duration::from_secs(24 * 3600));
+
+                tracing::info!(
+                    "🕐 Zone interactions midnight cleanup scheduled in {:.1} hours",
+                    duration_until_midnight.as_secs_f64() / 3600.0
+                );
+
                 // Wait until midnight
                 tokio::time::sleep(duration_until_midnight).await;
-                
+
                 // Reset all zone interaction data
                 {
                     let mut interactions = zone_interactions.write().await;
                     interactions.reset_all_data();
-                    
+
                     // Save the reset state
                     if let Err(e) = interactions.save_to_file(&interaction_config.file_path) {
                         tracing::error!("Failed to save reset zone interactions: {}", e);
                     } else {
-                        tracing::info!("🌅 Midnight cleanup: Zone interactions data reset successfully");
+                        tracing::info!(
+                            "🌅 Midnight cleanup: Zone interactions data reset successfully"
+                        );
                     }
                 }
             }
@@ -369,31 +445,54 @@ impl MonitorState {
 
             loop {
                 interval.tick().await;
-                
+
                 // Get current prices for cleanup evaluation
                 let current_prices = {
                     let prices = latest_prices.read().await;
-                    prices.iter().map(|(symbol, price_update)| {
-                        let mid_price = (price_update.bid + price_update.ask) / 2.0;
-                        (symbol.clone(), mid_price)
-                    }).collect::<HashMap<String, f64>>()
+                    prices
+                        .iter()
+                        .map(|(symbol, price_update)| {
+                            let mid_price = (price_update.bid + price_update.ask) / 2.0;
+                            (symbol.clone(), mid_price)
+                        })
+                        .collect::<HashMap<String, f64>>()
                 };
 
                 // Only run cleanup if we have current prices
                 if !current_prices.is_empty() {
                     let mut manager = pending_order_manager.write().await;
+                    
+                    // Run periodic cleanup (cancels old moved orders)
                     match manager.periodic_cleanup_old_orders(&current_prices).await {
                         Ok(cancelled_count) => {
                             if cancelled_count > 0 {
-                                info!("📋 Periodic cleanup completed - cancelled {} old orders", cancelled_count);
+                                info!(
+                                    "📋 Periodic cleanup completed - cancelled {} old orders",
+                                    cancelled_count
+                                );
                             }
-                        },
+                        }
                         Err(e) => {
                             error!("📋 Error during periodic order cleanup: {}", e);
                         }
                     }
+                    
+                    // Also run very old cleanup (removes 30+ day old non-pending orders)
+                    match manager.cleanup_very_old_orders().await {
+                        Ok(removed_count) => {
+                            if removed_count > 0 {
+                                info!(
+                                    "📋 Very old cleanup completed - removed {} ancient orders",
+                                    removed_count
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!("📋 Error during very old order cleanup: {}", e);
+                        }
+                    }
                 } else {
-                    info!("📋 Skipping periodic cleanup - no current prices available");
+                    info!("📋 Skipping cleanup - no current prices available");
                 }
             }
         });
@@ -407,10 +506,13 @@ impl MonitorState {
 
             loop {
                 interval.tick().await;
-                
+
                 match strategy_manager.refresh_strategies().await {
                     Ok(count) => {
-                        info!("📋 Strategy refresh completed - {} strategies retrieved", count);
+                        info!(
+                            "📋 Strategy refresh completed - {} strategies retrieved",
+                            count
+                        );
                     }
                     Err(e) => {
                         warn!("📋 Strategy refresh failed: {}", e);
@@ -428,7 +530,7 @@ impl MonitorState {
 
             loop {
                 interval.tick().await;
-                
+
                 match active_order_manager.update_booked_orders().await {
                     Ok(_) => {
                         debug!("📋 Active order matching completed");
@@ -453,7 +555,7 @@ impl MonitorState {
             let mut interactions = self.zone_interactions.write().await;
             let timestamp = price_update.timestamp.to_rfc3339();
             let price = (price_update.bid + price_update.ask) / 2.0; // Use mid price
-            
+
             interactions.update_all_zones_with_price(
                 &price_update.symbol,
                 price,
@@ -470,31 +572,32 @@ impl MonitorState {
                 .get(&price_update.symbol)
                 .cloned()
                 .unwrap_or_default();
-            
+
             // Initialize zone interaction metrics only for zones within 50 pips of proximal line
             if !zones.is_empty() {
                 let mut interactions = self.zone_interactions.write().await;
                 let current_price = (price_update.bid + price_update.ask) / 2.0;
                 let max_distance_pips = 50.0;
                 let pip_value = get_pip_value(&price_update.symbol);
-                
+
                 for zone in &zones {
                     let zone_type = if zone.zone_type.contains("supply") {
                         "supply_zone"
                     } else {
                         "demand_zone"
                     };
-                    
+
                     // Calculate proximal line for this zone
                     let proximal_line = if zone_type == "supply_zone" {
                         zone.low // For supply zones, proximal is low
                     } else {
                         zone.high // For demand zones, proximal is high
                     };
-                    
+
                     // Calculate distance from current price to proximal line
-                    let distance_to_proximal_pips = (current_price - proximal_line).abs() / pip_value;
-                    
+                    let distance_to_proximal_pips =
+                        (current_price - proximal_line).abs() / pip_value;
+
                     // Only create/track zones within 50 pips of their proximal line
                     if distance_to_proximal_pips <= max_distance_pips {
                         interactions.get_or_create_zone_metrics(
@@ -508,7 +611,7 @@ impl MonitorState {
                     }
                 }
             }
-            
+
             zones
         };
 
@@ -523,13 +626,17 @@ impl MonitorState {
             // Log proximity data for debugging and verification
             {
                 let mut proximity_logger = self.proximity_logger.write().await;
-                proximity_logger.log_proximity(&price_update, &zones, Some(&*zone_interactions_guard)).await;
+                proximity_logger
+                    .log_proximity(&price_update, &zones, Some(&*zone_interactions_guard))
+                    .await;
             }
 
             // Check and place pending orders for eligible zones
             {
                 let mut pending_order_manager = self.pending_order_manager.write().await;
-                pending_order_manager.check_and_place_orders(&price_update, &zones).await;
+                pending_order_manager
+                    .check_and_place_orders(&price_update, &zones)
+                    .await;
             }
 
             self.handle_new_notifications(&result).await;
@@ -613,7 +720,7 @@ impl MonitorState {
                             self.csv_logger
                                 .log_trading_signal(&signal, "TRADE_EXECUTED")
                                 .await;
-                            
+
                             // Save to JSON with complete status - no Telegram here, JSON system handles it
                             self.save_trading_signal_with_status(
                                 &signal,
@@ -658,7 +765,7 @@ impl MonitorState {
                             false, // trade_executed
                             Some(trade_result.execution_result),
                             trade_result.rejection_reason,
-                            None, // no order ID for failed trades
+                            None,               // no order ID for failed trades
                             "sent".to_string(), // Will be handled by JSON notification system
                         )
                         .await;
@@ -1220,12 +1327,16 @@ impl MonitorState {
             } else {
                 match notification.execution_result.as_deref() {
                     Some("rejected") => "TRADE_REJECTED",
-                    Some("failed") => "TRADE_FAILED", 
+                    Some("failed") => "TRADE_FAILED",
                     _ => "TRADE_ERROR",
                 }
             };
 
-            match self.telegram_notifier.send_trading_signal(signal, telegram_status_msg).await {
+            match self
+                .telegram_notifier
+                .send_trading_signal(signal, telegram_status_msg)
+                .await
+            {
                 Ok(_) => {
                     notification.telegram_sent = Some(true);
                     notification.telegram_filtered = Some(false);

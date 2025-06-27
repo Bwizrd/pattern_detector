@@ -1,0 +1,137 @@
+[2m2025-06-26T12:43:08.518894Z[0m [32m INFO[0m 🚀 Starting Zone Monitor Dashboard with Notifications and CSV Logging...
+[2m2025-06-26T12:43:08.519011Z[0m [32m INFO[0m ⚙️  Configuration:
+[2m2025-06-26T12:43:08.519019Z[0m [32m INFO[0m    📄 Cache file: shared_zones.json
+[2m2025-06-26T12:43:08.519025Z[0m [32m INFO[0m    🌐 Monitor port: 3003
+[2m2025-06-26T12:43:08.519031Z[0m [32m INFO[0m    📢 Notifications enabled: true
+[2m2025-06-26T12:43:08.519037Z[0m [32m INFO[0m    🔗 Webhook URL: Not configured
+[2m2025-06-26T12:43:08.519041Z[0m [32m INFO[0m    📊 CSV logging: logs/proximity_YYYY-MM-DD.csv & logs/trading_signal_YYYY-MM-DD.csv
+[2m2025-06-26T12:43:08.523177Z[0m [32m INFO[0m [ZoneInteraction] Loaded 63 zone interactions from "zone_interactions.json"    
+[2m2025-06-26T12:43:08.523286Z[0m [32m INFO[0m 🎯 Proximity detector initialized with 10.0 pip threshold
+[2m2025-06-26T12:43:08.523336Z[0m [32m INFO[0m 🔊 Sound notifier initialized for macOS
+[2m2025-06-26T12:43:08.523343Z[0m [32m INFO[0m    Proximity sound: /System/Library/Sounds/Tink.aiff
+[2m2025-06-26T12:43:08.523347Z[0m [32m INFO[0m    Supply zone sound: /System/Library/Sounds/Glass.aiff
+[2m2025-06-26T12:43:08.523351Z[0m [32m INFO[0m    Demand zone sound: /System/Library/Sounds/Purr.aiff
+[2m2025-06-26T12:43:08.523364Z[0m [32m INFO[0m 📢 Notification Manager initialized:
+[2m2025-06-26T12:43:08.523368Z[0m [32m INFO[0m    Environment NOTIFICATIONS_ENABLED: Ok("true")
+[2m2025-06-26T12:43:08.523372Z[0m [32m INFO[0m    Parsed enabled value: true
+[2m2025-06-26T12:43:08.523376Z[0m [32m INFO[0m    Sound notifications: true
+[2m2025-06-26T12:43:08.523390Z[0m [32m INFO[0m 🎯 Zone State Manager initialized:
+[2m2025-06-26T12:43:08.523394Z[0m [32m INFO[0m    Proximity threshold: 10.0 pips
+[2m2025-06-26T12:43:08.523398Z[0m [32m INFO[0m    Trading threshold: 0.0 pips
+[2m2025-06-26T12:43:08.523411Z[0m [32m INFO[0m    Proximity reset: 60 minutes
+[2m2025-06-26T12:43:08.523475Z[0m [32m INFO[0m 🎯 Trade Rules Engine initialized:
+[2m2025-06-26T12:43:08.523480Z[0m [32m INFO[0m    Proximity threshold: 10.0 pips
+[2m2025-06-26T12:43:08.523484Z[0m [32m INFO[0m    Trading threshold: 0.0 pips
+[2m2025-06-26T12:43:08.523487Z[0m [32m INFO[0m    Max touch count: 4
+[2m2025-06-26T12:43:08.523491Z[0m [32m INFO[0m    Min zone strength: 80.0
+[2m2025-06-26T12:43:08.523495Z[0m [32m INFO[0m    Allowed symbols: 24
+[2m2025-06-26T12:43:08.523498Z[0m [32m INFO[0m    Allowed timeframes: ["5m", "15m", "30m", "1h", "4h", "1d"]
+[2m2025-06-26T12:43:08.523507Z[0m [32m INFO[0m    Excluded timeframes: []
+[2m2025-06-26T12:43:08.523561Z[0m [32m INFO[0m 💰 Trading Engine initialized:
+[2m2025-06-26T12:43:08.523577Z[0m [32m INFO[0m    Enabled: true
+[2m2025-06-26T12:43:08.523584Z[0m [32m INFO[0m    Lot size: 1000
+[2m2025-06-26T12:43:08.523588Z[0m [32m INFO[0m    Stop loss: 40.0 pips
+[2m2025-06-26T12:43:08.523592Z[0m [32m INFO[0m    Take profit: 10.0 pips
+[2m2025-06-26T12:43:08.523596Z[0m [32m INFO[0m    Max daily trades: 10
+[2m2025-06-26T12:43:08.523599Z[0m [32m INFO[0m    API Bridge: http://localhost:8000
+[2m2025-06-26T12:43:08.523606Z[0m [32m INFO[0m    Symbols available: 26
+[2m2025-06-26T12:43:08.527424Z[0m [32m INFO[0m 📱 Telegram notifier initialized for zone monitor
+[2m2025-06-26T12:43:08.527467Z[0m [32m INFO[0m 📝 Proximity logger initialized - threshold: 10.0 pips, dir: logs/proximity
+[2m2025-06-26T12:43:08.527484Z[0m [32m INFO[0m 🎯 Trade Rules Engine initialized:
+[2m2025-06-26T12:43:08.527488Z[0m [32m INFO[0m    Proximity threshold: 10.0 pips
+[2m2025-06-26T12:43:08.527493Z[0m [32m INFO[0m    Trading threshold: 0.0 pips
+[2m2025-06-26T12:43:08.527496Z[0m [32m INFO[0m    Max touch count: 4
+[2m2025-06-26T12:43:08.527500Z[0m [32m INFO[0m    Min zone strength: 80.0
+[2m2025-06-26T12:43:08.527504Z[0m [32m INFO[0m    Allowed symbols: 24
+[2m2025-06-26T12:43:08.527507Z[0m [32m INFO[0m    Allowed timeframes: ["5m", "15m", "30m", "1h", "4h", "1d"]
+[2m2025-06-26T12:43:08.527520Z[0m [32m INFO[0m    Excluded timeframes: []
+[2m2025-06-26T12:43:08.527548Z[0m [32m INFO[0m 📋 Pending Order Manager initialized:
+[2m2025-06-26T12:43:08.527552Z[0m [32m INFO[0m    Enabled: true
+[2m2025-06-26T12:43:08.527555Z[0m [32m INFO[0m    Distance threshold: 20.0 pips
+[2m2025-06-26T12:43:08.527568Z[0m [32m INFO[0m    Shared file: shared_pending_orders.json
+[2m2025-06-26T12:43:08.527571Z[0m [32m INFO[0m    Default lot size: 1000
+[2m2025-06-26T12:43:08.527575Z[0m [32m INFO[0m    Default SL: 40.0 pips
+[2m2025-06-26T12:43:08.527578Z[0m [32m INFO[0m    Default TP: 10.0 pips
+[2m2025-06-26T12:43:08.527582Z[0m [32m INFO[0m    cTrader API: http://localhost:8000
+[2m2025-06-26T12:43:08.527585Z[0m [32m INFO[0m    Allowed timeframes: ["5m", "15m", "30m", "1h", "4h", "1d"]
+[2m2025-06-26T12:43:08.527659Z[0m [32m INFO[0m 📋 Strategy Manager initialized:
+[2m2025-06-26T12:43:08.527663Z[0m [32m INFO[0m    API URL: http://localhost:3001/api/strategies
+[2m2025-06-26T12:43:08.527667Z[0m [32m INFO[0m    File path: shared_strategies.json
+[2m2025-06-26T12:43:08.531845Z[0m [32m INFO[0m 📄 Loaded 477 zones from cache file
+[2m2025-06-26T12:43:08.532102Z[0m [32m INFO[0m 📋 Loaded 11 pending orders from shared_pending_orders.json
+[2m2025-06-26T12:43:08.532139Z[0m [32m INFO[0m 📋 Loading initial strategies...
+[2m2025-06-26T12:43:08.532155Z[0m [32m INFO[0m 📋 Fetching strategies from API: http://localhost:3001/api/strategies
+[2m2025-06-26T12:43:08.536709Z[0m [32m INFO[0m ✅ Successfully fetched 2 strategies
+[2m2025-06-26T12:43:08.537382Z[0m [32m INFO[0m ✅ Saved 2 strategies to shared_strategies.json
+[2m2025-06-26T12:43:08.537397Z[0m [32m INFO[0m 🔄 Successfully refreshed 2 strategies
+[2m2025-06-26T12:43:08.537403Z[0m [32m INFO[0m ✅ Successfully loaded 2 strategies
+[2m2025-06-26T12:43:08.537480Z[0m [32m INFO[0m 🧪 Testing notification system...
+[2m2025-06-26T12:43:08.537486Z[0m [32m INFO[0m 🔌 [CTRADER] Attempting to connect to cTrader WebSocket...
+[2m2025-06-26T12:43:08.537498Z[0m [32m INFO[0m 🔌 [CTRADER] Connection attempt #1
+[2m2025-06-26T12:43:08.537502Z[0m [32m INFO[0m 🕐 Zone interactions midnight cleanup scheduled in 11.3 hours
+[2m2025-06-26T12:43:08.537514Z[0m [32m INFO[0m 🔌 [CTRADER] Connecting to cTrader WebSocket at ws://localhost:8081
+[2m2025-06-26T12:43:08.538374Z[0m [32m INFO[0m 📋 Fetching strategies from API: http://localhost:3001/api/strategies
+[2m2025-06-26T12:43:08.538397Z[0m [32m INFO[0m 📋 Skipping periodic cleanup - no current prices available
+[2m2025-06-26T12:43:08.540450Z[0m [32m INFO[0m ✅ Successfully fetched 2 strategies
+[2m2025-06-26T12:43:08.540637Z[0m [32m INFO[0m ✅ Saved 2 strategies to shared_strategies.json
+[2m2025-06-26T12:43:08.540654Z[0m [32m INFO[0m 🔄 Successfully refreshed 2 strategies
+[2m2025-06-26T12:43:08.540661Z[0m [32m INFO[0m 📋 Strategy refresh completed - 2 strategies retrieved
+[2m2025-06-26T12:43:08.542238Z[0m [32m INFO[0m 📄 Loaded 477 zones from cache file
+[2m2025-06-26T12:43:10.421692Z[0m [32m INFO[0m 🔊 Zone monitor startup sound played
+[2m2025-06-26T12:43:10.421762Z[0m [32m INFO[0m 📢 Test notification called - enabled: true, sound enabled: true
+[2m2025-06-26T12:43:10.421780Z[0m [32m INFO[0m 📢 Sending test notification
+[2m2025-06-26T12:43:12.339386Z[0m [32m INFO[0m 🔊 Test sound played successfully
+[2m2025-06-26T12:43:12.339486Z[0m [32m INFO[0m ✅ Notification system test successful
+[2m2025-06-26T12:43:12.339557Z[0m [32m INFO[0m 🧪 Testing Telegram notifications...
+[2m2025-06-26T12:43:12.539817Z[0m [32m INFO[0m 📱 Telegram test message sent successfully
+[2m2025-06-26T12:43:12.539938Z[0m [32m INFO[0m ✅ Telegram test successful
+[2m2025-06-26T12:43:12.540708Z[0m [32m INFO[0m 🌐 Zone Monitor Dashboard starting on http://localhost:3003
+[2m2025-06-26T12:43:12.540766Z[0m [32m INFO[0m 🔗 Available endpoints:
+[2m2025-06-26T12:43:12.540793Z[0m [32m INFO[0m    📊 Dashboard: http://localhost:3003
+[2m2025-06-26T12:43:12.540863Z[0m [32m INFO[0m    📋 Pending Orders: http://localhost:3003/pending-orders
+[2m2025-06-26T12:43:12.540930Z[0m [32m INFO[0m    📈 Zones API: http://localhost:3003/api/zones
+[2m2025-06-26T12:43:12.540959Z[0m [32m INFO[0m    🚨 Alerts API: http://localhost:3003/api/alerts
+[2m2025-06-26T12:43:12.540982Z[0m [32m INFO[0m    📋 Pending Orders API: http://localhost:3003/api/pending-orders
+[2m2025-06-26T12:43:12.541001Z[0m [32m INFO[0m    📢 Notifications Status: http://localhost:3003/api/notifications/status
+[2m2025-06-26T12:43:12.541020Z[0m [32m INFO[0m    🧪 Test Notification: POST http://localhost:3003/api/notifications/test
+[2m2025-06-26T12:43:12.541040Z[0m [32m INFO[0m    ⏱️ Cooldown Stats: http://localhost:3003/api/notifications/cooldowns
+[2m2025-06-26T12:43:12.541089Z[0m [32m INFO[0m    📊 Zone Stats: http://localhost:3003/api/zones/stats
+[2m2025-06-26T12:43:12.541109Z[0m [32m INFO[0m    🔄 Zone Interactions: http://localhost:3003/api/zones/interactions
+[2m2025-06-26T12:43:12.541128Z[0m [32m INFO[0m    💰 Trading Stats: http://localhost:3003/api/trading/stats
+[2m2025-06-26T12:43:12.541147Z[0m [32m INFO[0m    📈 Trade History: http://localhost:3003/api/trading/history
+[2m2025-06-26T12:43:12.541165Z[0m [32m INFO[0m    🧪 Manual Trade: POST http://localhost:3003/api/trading/manual
+[2m2025-06-26T12:43:12.541184Z[0m [32m INFO[0m    ❤️  Health Check: http://localhost:3003/health
+[2m2025-06-26T12:43:12.541202Z[0m [32m INFO[0m ✅ Zone Monitor with Notifications and CSV Logging ready!
+[2m2025-06-26T12:43:16.661404Z[0m [32m INFO[0m 📡 [CTRADER] Sent all subscription requests to server
+[2m2025-06-26T12:43:16.662582Z[0m [32m INFO[0m 🔌 [CTRADER] Connected to cTrader WebSocket
+[2m2025-06-26T12:43:16.752416Z[0m [32m INFO[0m 📍 Zone 3a2e0ea9ce8d4e75 state: NeverAlerted → ProximityAlerted (states in memory: 1)
+[2m2025-06-26T12:43:16.752460Z[0m [32m INFO[0m 🎯 NEW proximity: USDCAD demand_zone zone @ 5.6 pips [15m] (Zone: 3a2e0ea9ce8d4e75, 1 touches)
+[2m2025-06-26T12:43:16.866800Z[0m [32m INFO[0m 📱 Proximity alert sent to Telegram for USDCAD demand_zone @ 1.36824 (5.565180000000058pips from zone) [Zone: 3a2e0ea9ce8d4e75]
+[2m2025-06-26T12:43:16.871323Z[0m [32m INFO[0m 📝 Logged proximity: logs/proximity_2025-06-26.csv
+[2m2025-06-26T12:43:16.871403Z[0m [32m INFO[0m 📢 Zone proximity notification: USDCAD demand_zone zone @ 5.6 pips
+[2m2025-06-26T12:43:17.799684Z[0m [32m INFO[0m 🔊 Played demand_zone zone proximity alert for USDCAD @ 5.6 pips (Zone: 3a2e0ea9ce8d4e75)
+[2m2025-06-26T12:43:18.027909Z[0m [32m INFO[0m 📍 Zone 0413a34852d7b2a8 state: NeverAlerted → ProximityAlerted (states in memory: 2)
+[2m2025-06-26T12:43:18.027933Z[0m [32m INFO[0m 🎯 NEW proximity: USDJPY demand_zone zone @ 5.6 pips [5m] (Zone: 0413a34852d7b2a8, 0 touches)
+[2m2025-06-26T12:43:19.851973Z[0m [32m INFO[0m 📱 Proximity alert sent to Telegram for USDJPY demand_zone @ 144.32200 (5.615260000001854pips from zone) [Zone: 0413a34852d7b2a8]
+[2m2025-06-26T12:43:19.858738Z[0m [32m INFO[0m 📝 Logged proximity: logs/proximity_2025-06-26.csv
+[2m2025-06-26T12:43:19.858898Z[0m [32m INFO[0m 📢 Zone proximity notification: USDJPY demand_zone zone @ 5.6 pips
+[2m2025-06-26T12:43:21.263753Z[0m [32m INFO[0m 🔊 Played demand_zone zone proximity alert for USDJPY @ 5.6 pips (Zone: 0413a34852d7b2a8)
+[2m2025-06-26T12:43:21.309883Z[0m [32m INFO[0m 📍 Zone 46852c614cd57802 state: NeverAlerted → ProximityAlerted (states in memory: 3)
+[2m2025-06-26T12:43:21.309916Z[0m [32m INFO[0m 🎯 NEW proximity: CADJPY demand_zone zone @ 4.7 pips [5m] (Zone: 46852c614cd57802, 0 touches)
+[2m2025-06-26T12:43:22.861159Z[0m [32m INFO[0m 📱 Proximity alert sent to Telegram for CADJPY demand_zone @ 105.48100 (4.691739999999811pips from zone) [Zone: 46852c614cd57802]
+[2m2025-06-26T12:43:22.868130Z[0m [32m INFO[0m 📝 Logged proximity: logs/proximity_2025-06-26.csv
+[2m2025-06-26T12:43:22.868270Z[0m [32m INFO[0m 📢 Zone proximity notification: CADJPY demand_zone zone @ 4.7 pips
+[2m2025-06-26T12:43:24.267228Z[0m [32m INFO[0m 🔊 Played demand_zone zone proximity alert for CADJPY @ 4.7 pips (Zone: 46852c614cd57802)
+[2m2025-06-26T12:43:24.296674Z[0m [32m INFO[0m 📍 Zone e5c2426a3acf10b5 state: NeverAlerted → ProximityAlerted (states in memory: 4)
+[2m2025-06-26T12:43:24.296716Z[0m [32m INFO[0m 🎯 NEW proximity: EURJPY demand_zone zone @ 4.1 pips [5m] (Zone: e5c2426a3acf10b5, 0 touches)
+[2m2025-06-26T12:43:25.834612Z[0m [32m INFO[0m 📱 Proximity alert sent to Telegram for EURJPY demand_zone @ 168.90700 (4.123360000002663pips from zone) [Zone: e5c2426a3acf10b5]
+[2m2025-06-26T12:43:25.841849Z[0m [32m INFO[0m 📝 Logged proximity: logs/proximity_2025-06-26.csv
+[2m2025-06-26T12:43:25.842053Z[0m [32m INFO[0m 📢 Zone proximity notification: EURJPY demand_zone zone @ 4.1 pips
+[2m2025-06-26T12:43:26.738289Z[0m [32m INFO[0m 🔊 Played demand_zone zone proximity alert for EURJPY @ 4.1 pips (Zone: e5c2426a3acf10b5)
+[2m2025-06-26T12:43:26.997615Z[0m [32m INFO[0m 📍 Zone 4ec86094a1c2f208 state: NeverAlerted → ProximityAlerted (states in memory: 5)
+[2m2025-06-26T12:43:26.997634Z[0m [32m INFO[0m 🎯 NEW proximity: GBPCAD supply_zone zone @ 5.2 pips [5m] (Zone: 4ec86094a1c2f208, 0 touches)
+[2m2025-06-26T12:43:28.844748Z[0m [32m INFO[0m 📱 Proximity alert sent to Telegram for GBPCAD supply_zone @ 1.87644 (5.152600000000174pips from zone) [Zone: 4ec86094a1c2f208]
+[2m2025-06-26T12:43:28.853308Z[0m [32m INFO[0m 📝 Logged proximity: logs/proximity_2025-06-26.csv
+[2m2025-06-26T12:43:28.853491Z[0m [32m INFO[0m 📢 Zone proximity notification: GBPCAD supply_zone zone @ 5.2 pips
+[2m2025-06-26T12:43:29.751262Z[0m [32m INFO[0m 🔊 Played supply_zone zone proximity alert for GBPCAD @ 5.2 pips (Zone: 4ec86094a1c2f208)
+[2m2025-06-26T12:44:08.544487Z[0m [32m INFO[0m 📄 Loaded 477 zones from cache file
