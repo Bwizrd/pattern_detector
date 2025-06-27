@@ -8,3 +8,5 @@ stale_zone_checker_log.txt
 
 zone_debug.log
 /tradeszone_conversion_debug.log
+zone_conversion_debug.log
+cache_zones_debug_dynamic

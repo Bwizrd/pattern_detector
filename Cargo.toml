@@ -49,3 +49,7 @@ path = "src/main.rs"
 [[bin]]
 name = "dashboard_proxy"
 path = "src/bin/dashboard_proxy.rs"
+
+[[bin]]
+name = "htf_analyzer"
+path = "src/bin/htf_analyzer/main.rs"
