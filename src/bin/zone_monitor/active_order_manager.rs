@@ -185,7 +185,7 @@ impl ActiveOrderManager {
             positions_response.positions.len(),
             positions_response.orders.len()
         );
-
+        
         // Load existing booked orders
         let mut booked_orders_container: BookedOrdersContainer =
             match fs::read_to_string("shared_booked_orders.json").await {
@@ -198,6 +198,16 @@ impl ActiveOrderManager {
                     booked_orders: HashMap::new(),
                 },
             };
+        
+        info!("📋 DEBUG: Starting enrichment check for {} positions", positions_response.positions.len());
+
+        for position in &positions_response.positions {
+            let position_id_str = position.positionId.to_string();
+            info!("📋 DEBUG: Checking position {} - already tracked: {}", 
+                position_id_str,
+                booked_orders_container.booked_orders.values()
+                    .any(|booked| booked.ctrader_order_id == position_id_str));
+        }
 
         // Load pending orders for enrichment
         let pending_orders_container: Option<PendingOrdersContainer> =
