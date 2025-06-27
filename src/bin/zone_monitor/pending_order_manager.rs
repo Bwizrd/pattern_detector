@@ -49,7 +49,13 @@ pub struct BookedPendingOrder {
     pub take_profit: f64,
     pub ctrader_order_id: String,
     pub booked_at: DateTime<Utc>,
-    pub status: String,            // "PENDING", "FILLED", "CANCELLED"
+    pub status: String,            // "PENDING", "FILLED", "CLOSED", "CANCELLED"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filled_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filled_price: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -388,9 +394,7 @@ impl PendingOrderManager {
         if let Err(e) = self.save_pending_orders().await {
             error!("📋 Failed to save pending orders: {}", e);
         }
-        if let Err(e) = self.save_booked_orders().await {
-            error!("📋 Failed to save booked orders: {}", e);
-        }
+        // Note: booked_orders are now managed by active_order_manager, not here
     }
 
     /// Place a pending order for a specific zone
@@ -509,21 +513,8 @@ impl PendingOrderManager {
             // Store the successful pending order
             self.pending_orders.insert(zone.id.clone(), pending_order.clone());
             
-            // Also record it as a successfully booked order
-            let booked_order = BookedPendingOrder {
-                zone_id: zone.id.clone(),
-                symbol: price_update.symbol.clone(),
-                timeframe: zone.timeframe.clone(),
-                order_type: order_type_str.to_string(),
-                entry_price,
-                lot_size: self.default_lot_size,
-                stop_loss,
-                take_profit,
-                ctrader_order_id: order_id,
-                booked_at: Utc::now(),
-                status: "PENDING".to_string(),
-            };
-            self.booked_orders.insert(zone.id.clone(), booked_order);
+            // Don't add to booked_orders yet - only add when the order is actually FILLED
+            // The active_order_manager will move orders from pending to booked when they fill
             
         } else {
             pending_order.status = "FAILED".to_string();
@@ -830,13 +821,90 @@ impl PendingOrderManager {
             if let Err(e) = self.save_pending_orders().await {
                 error!("📋 Failed to save pending orders after cleanup: {}", e);
             }
-            if let Err(e) = self.save_booked_orders().await {
-                error!("📋 Failed to save booked orders after cleanup: {}", e);
-            }
+            // Note: booked_orders are now managed by active_order_manager, not here
         }
 
         info!("📋 Periodic cleanup completed - Cancelled {} old orders", cancelled_count);
         Ok(cancelled_count)
+    }
+
+    /// Synchronize local pending orders with broker's actual pending orders
+    pub async fn synchronize_pending_orders(&mut self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        if !self.enabled {
+            return Ok(0);
+        }
+
+        info!("📋 Synchronizing local pending orders with broker...");
+
+        // Fetch current orders from cTrader
+        let ctrader_orders = match self.fetch_ctrader_pending_orders().await {
+            Ok(orders) => orders,
+            Err(e) => {
+                error!("📋 Failed to fetch pending orders from cTrader: {}", e);
+                return Err(e);
+            }
+        };
+
+        // Create a set of actual pending order IDs at the broker
+        let broker_order_ids: std::collections::HashSet<i64> = ctrader_orders
+            .iter()
+            .map(|order| order.order_id)
+            .collect();
+
+        info!("📋 Broker has {} pending orders: {:?}", broker_order_ids.len(), broker_order_ids);
+        info!("📋 Local storage has {} pending orders", self.pending_orders.len());
+
+        // Find local orders that are no longer pending at the broker
+        let mut stale_zone_ids = Vec::new();
+        
+        for (zone_id, local_order) in &self.pending_orders {
+            if let Some(ctrader_order_id) = &local_order.ctrader_order_id {
+                match ctrader_order_id.parse::<i64>() {
+                    Ok(order_id) => {
+                        if !broker_order_ids.contains(&order_id) {
+                            info!("📋 Local order {} (cTrader ID: {}) no longer exists at broker - marking for removal", 
+                                  zone_id, order_id);
+                            stale_zone_ids.push(zone_id.clone());
+                        } else {
+                            debug!("📋 Order {} (cTrader ID: {}) confirmed at broker", zone_id, order_id);
+                        }
+                    },
+                    Err(_) => {
+                        warn!("📋 Invalid cTrader order ID format for zone {}: {}", zone_id, ctrader_order_id);
+                        stale_zone_ids.push(zone_id.clone());
+                    }
+                }
+            } else {
+                warn!("📋 Local order {} has no cTrader order ID - marking for removal", zone_id);
+                stale_zone_ids.push(zone_id.clone());
+            }
+        }
+
+        // Remove stale orders from local storage
+        let removed_count = stale_zone_ids.len();
+        for zone_id in stale_zone_ids {
+            if let Some(removed_order) = self.pending_orders.remove(&zone_id) {
+                info!("📋 Removed stale pending order: {} {} {} (cTrader ID: {})", 
+                      removed_order.symbol, 
+                      removed_order.timeframe,
+                      removed_order.order_type,
+                      removed_order.ctrader_order_id.as_deref().unwrap_or("N/A"));
+            }
+            // Also remove from booked orders if it exists there
+            self.booked_orders.remove(&zone_id);
+        }
+
+        // Save updated orders if any were removed
+        if removed_count > 0 {
+            if let Err(e) = self.save_pending_orders().await {
+                error!("📋 Failed to save pending orders after sync: {}", e);
+            }
+            // Note: booked_orders are now managed by active_order_manager, not here
+        }
+
+        info!("📋 Synchronization completed - Removed {} stale orders, {} orders remain", 
+              removed_count, self.pending_orders.len());
+        Ok(removed_count)
     }
 
     /// One-off cleanup when blocked by same symbol+timeframe
@@ -893,9 +961,7 @@ impl PendingOrderManager {
                             if let Err(e) = self.save_pending_orders().await {
                                 error!("📋 Failed to save pending orders after cleanup: {}", e);
                             }
-                            if let Err(e) = self.save_booked_orders().await {
-                                error!("📋 Failed to save booked orders after cleanup: {}", e);
-                            }
+                            // Note: booked_orders are now managed by active_order_manager, not here
                             
                             info!("✅ Successfully cancelled blocking order for {}_{}", symbol, timeframe);
                             return Ok(true);
@@ -918,9 +984,7 @@ impl PendingOrderManager {
                 if let Err(e) = self.save_pending_orders().await {
                     error!("📋 Failed to save pending orders after cleanup: {}", e);
                 }
-                if let Err(e) = self.save_booked_orders().await {
-                    error!("📋 Failed to save booked orders after cleanup: {}", e);
-                }
+                // Note: booked_orders are now managed by active_order_manager, not here
                 
                 return Ok(true);
             }

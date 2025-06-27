@@ -6,9 +6,11 @@ use crate::notifications::NotificationManager;
 use crate::pending_order_manager::PendingOrderManager;
 use crate::proximity::ProximityDetector;
 use crate::proximity_logger::ProximityLogger;
+use crate::strategy_manager::StrategyManager;
 use crate::telegram_notifier::TelegramNotifier;
 use crate::trading_engine::TradeResult;
 use crate::trading_engine::TradingEngine;
+use crate::active_order_manager::ActiveOrderManager;
 use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
 use crate::websocket::WebSocketClient;
 use crate::zone_state_manager::ProcessResult;
@@ -23,7 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Get pip value for a symbol (helper function)
 fn get_pip_value(symbol: &str) -> f64 {
@@ -98,6 +100,8 @@ pub struct MonitorState {
     pub telegram_notifier: Arc<TelegramNotifier>,
     pub proximity_logger: Arc<RwLock<ProximityLogger>>,
     pub pending_order_manager: Arc<RwLock<PendingOrderManager>>,
+    pub strategy_manager: Arc<StrategyManager>,
+    pub active_order_manager: Arc<ActiveOrderManager>,
     pub zone_interactions: Arc<RwLock<ZoneInteractionContainer>>,
     pub interaction_config: InteractionConfig,
     pub cache_file_path: String,
@@ -136,6 +140,8 @@ impl MonitorState {
             telegram_notifier: Arc::new(TelegramNotifier::new()),
             proximity_logger: Arc::new(RwLock::new(ProximityLogger::new())),
             pending_order_manager: Arc::new(RwLock::new(PendingOrderManager::new())),
+            strategy_manager: Arc::new(StrategyManager::new()),
+            active_order_manager: Arc::new(ActiveOrderManager::new()),
             zone_interactions: Arc::new(RwLock::new(zone_interactions)),
             interaction_config,
             cache_file_path,
@@ -153,6 +159,34 @@ impl MonitorState {
             if let Err(e) = pending_order_manager.load_pending_orders().await {
                 error!("📋 Failed to load pending orders: {}", e);
             }
+            
+            // Synchronize local pending orders with broker's actual pending orders
+            info!("📋 Synchronizing pending orders with broker...");
+            match pending_order_manager.synchronize_pending_orders().await {
+                Ok(removed_count) => {
+                    if removed_count > 0 {
+                        info!("✅ Synchronized pending orders - removed {} stale orders", removed_count);
+                    } else {
+                        info!("✅ Pending orders already synchronized");
+                    }
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to synchronize pending orders: {}", e);
+                    // Don't fail initialization if sync fails
+                }
+            }
+        }
+
+        // Load initial strategies
+        info!("📋 Loading initial strategies...");
+        match self.strategy_manager.refresh_strategies().await {
+            Ok(count) => {
+                info!("✅ Successfully loaded {} strategies", count);
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to load initial strategies: {}", e);
+                // Don't fail initialization if strategies can't be loaded
+            }
         }
 
         // Start background tasks
@@ -163,6 +197,8 @@ impl MonitorState {
         self.start_zone_interaction_save_task().await;
         self.start_zone_interaction_midnight_cleanup().await;
         self.start_pending_order_cleanup_task().await;
+        self.start_strategy_refresh_task().await;
+        self.start_active_order_matching_task().await;
 
         // Test notifications if configured
         if self.notification_manager.is_configured() {
@@ -358,6 +394,48 @@ impl MonitorState {
                     }
                 } else {
                     info!("📋 Skipping periodic cleanup - no current prices available");
+                }
+            }
+        });
+    }
+
+    async fn start_strategy_refresh_task(&self) {
+        let strategy_manager = Arc::clone(&self.strategy_manager);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // Check every 5 minutes
+
+            loop {
+                interval.tick().await;
+                
+                match strategy_manager.refresh_strategies().await {
+                    Ok(count) => {
+                        info!("📋 Strategy refresh completed - {} strategies retrieved", count);
+                    }
+                    Err(e) => {
+                        warn!("📋 Strategy refresh failed: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    async fn start_active_order_matching_task(&self) {
+        let active_order_manager = Arc::clone(&self.active_order_manager);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
+
+            loop {
+                interval.tick().await;
+                
+                match active_order_manager.update_booked_orders().await {
+                    Ok(_) => {
+                        debug!("📋 Active order matching completed");
+                    }
+                    Err(e) => {
+                        warn!("📋 Active order matching failed: {}", e);
+                    }
                 }
             }
         });
