@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booked Trades Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #60a5fa;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+        
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .summary-card {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            text-align: center;
+        }
+        
+        .summary-card h3 {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .summary-card .value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #60a5fa;
+        }
+        
+        .positive { color: #10b981 !important; }
+        .negative { color: #ef4444 !important; }
+        
+        .filters {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #334155;
+        }
+        
+        .filter-row {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .filter-group label {
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+        
+        select, input {
+            background: #0f172a;
+            border: 1px solid #475569;
+            color: #e2e8f0;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        
+        select:focus, input:focus {
+            outline: none;
+            border-color: #60a5fa;
+        }
+        
+        .trades-table {
+            background: #1e293b;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #334155;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            background: #334155;
+            padding: 15px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #94a3b8;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #2d3748;
+            font-size: 0.9rem;
+        }
+        
+        tr:hover {
+            background: #2d3748;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .status-filled { background: #10b981; color: white; }
+        .status-closed { background: #6b7280; color: white; }
+        .status-pending { background: #f59e0b; color: white; }
+        
+        .zone-type {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .demand-zone { background: #059669; color: white; }
+        .supply-zone { background: #dc2626; color: white; }
+        .market-trade { background: #6b7280; color: white; }
+        
+        .pending-link {
+            color: #60a5fa;
+            cursor: pointer;
+            text-decoration: underline;
+            font-size: 0.8rem;
+        }
+        
+        .pending-link:hover {
+            color: #93c5fd;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #1e293b;
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #334155;
+        }
+        
+        .modal-title {
+            font-size: 1.5rem;
+            color: #60a5fa;
+            font-weight: 600;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 5px;
+            margin-left: auto;
+        }
+        
+        .close-btn:hover {
+            color: #e2e8f0;
+        }
+        
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .detail-item {
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #475569;
+        }
+        
+        .detail-label {
+            color: #94a3b8;
+            font-size: 0.8rem;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .detail-value {
+            color: #e2e8f0;
+            font-weight: 600;
+            font-size: 1rem;
+        }
+        
+        .no-trades {
+            text-align: center;
+            color: #94a3b8;
+            padding: 40px;
+            font-size: 1.1rem;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #60a5fa;
+            padding: 40px;
+            font-size: 1.1rem;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .summary-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .filter-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            table {
+                font-size: 0.8rem;
+            }
+            
+            th, td {
+                padding: 8px 6px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 Booked Trades Dashboard</h1>
+        
+        <div class="summary-grid" id="summaryGrid">
+            <div class="summary-card">
+                <h3>Total Trades</h3>
+                <div class="value" id="totalTrades">-</div>
+            </div>
+            <div class="summary-card">
+                <h3>Open Trades</h3>
+                <div class="value" id="openTrades">-</div>
+            </div>
+            <div class="summary-card">
+                <h3>Closed Trades</h3>
+                <div class="value" id="closedTrades">-</div>
+            </div>
+            <div class="summary-card">
+                <h3>Enriched Trades</h3>
+                <div class="value" id="enrichedTrades">-</div>
+            </div>
+            <div class="summary-card">
+                <h3>Total P&L</h3>
+                <div class="value" id="totalPnl">-</div>
+            </div>
+            <div class="summary-card">
+                <h3>Win Rate</h3>
+                <div class="value" id="winRate">-</div>
+            </div>
+        </div>
+        
+        <div class="filters">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label>Status:</label>
+                    <select id="statusFilter">
+                        <option value="">All</option>
+                        <option value="FILLED">Filled</option>
+                        <option value="CLOSED">Closed</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Symbol:</label>
+                    <select id="symbolFilter">
+                        <option value="">All Symbols</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Zone Type:</label>
+                    <select id="zoneTypeFilter">
+                        <option value="">All</option>
+                        <option value="demand_zone">Demand Zone</option>
+                        <option value="supply_zone">Supply Zone</option>
+                        <option value="market">Market Trade</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Enriched:</label>
+                    <select id="enrichedFilter">
+                        <option value="">All</option>
+                        <option value="true">Enriched Only</option>
+                        <option value="false">Non-enriched Only</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="trades-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Zone ID</th>
+                        <th>Symbol</th>
+                        <th>Type</th>
+                        <th>Side</th>
+                        <th>Entry</th>
+                        <th>SL/TP</th>
+                        <th>Status</th>
+                        <th>Timeframe</th>
+                        <th>Zone Type</th>
+                        <th>Strength</th>
+                        <th>Duration</th>
+                        <th>P&L</th>
+                        <th>Pending Order</th>
+                    </tr>
+                </thead>
+                <tbody id="tradesTableBody">
+                    <tr>
+                        <td colspan="13" class="loading">Loading trades...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Modal for pending order details -->
+    <div id="pendingModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Pending Order Details</h2>
+                <button class="close-btn" onclick="closePendingModal()">&times;</button>
+            </div>
+            <div id="pendingDetails" class="detail-grid">
+                <!-- Details will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allTrades = [];
+        let filteredTrades = [];
+
+        async function loadTrades() {
+            try {
+                const response = await fetch('/api/booked-trades');
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.message);
+                }
+                
+                allTrades = data.trades;
+                updateSummary(data.summary);
+                populateFilters();
+                applyFilters();
+                
+            } catch (error) {
+                console.error('Error loading trades:', error);
+                document.getElementById('tradesTableBody').innerHTML = 
+                    `<tr><td colspan="13" class="no-trades">Error loading trades: ${error.message}</td></tr>`;
+            }
+        }
+
+        function updateSummary(summary) {
+            document.getElementById('totalTrades').textContent = summary.total_trades;
+            document.getElementById('openTrades').textContent = summary.open_trades;
+            document.getElementById('closedTrades').textContent = summary.closed_trades;
+            document.getElementById('enrichedTrades').textContent = summary.enriched_trades;
+            
+            const pnlElement = document.getElementById('totalPnl');
+            const pnlValue = summary.total_pnl_pips.toFixed(1);
+            pnlElement.textContent = pnlValue + ' pips';
+            pnlElement.className = 'value ' + (summary.total_pnl_pips >= 0 ? 'positive' : 'negative');
+            
+            const winRateElement = document.getElementById('winRate');
+            const winRateValue = summary.win_rate.toFixed(1);
+            winRateElement.textContent = winRateValue + '%';
+            winRateElement.className = 'value ' + (summary.win_rate >= 50 ? 'positive' : 'negative');
+        }
+
+        function populateFilters() {
+            const symbols = [...new Set(allTrades.map(t => t.symbol))].sort();
+            const symbolFilter = document.getElementById('symbolFilter');
+            symbolFilter.innerHTML = '<option value="">All Symbols</option>';
+            symbols.forEach(symbol => {
+                symbolFilter.innerHTML += `<option value="${symbol}">${symbol}</option>`;
+            });
+        }
+
+        function applyFilters() {
+            const statusFilter = document.getElementById('statusFilter').value;
+            const symbolFilter = document.getElementById('symbolFilter').value;
+            const zoneTypeFilter = document.getElementById('zoneTypeFilter').value;
+            const enrichedFilter = document.getElementById('enrichedFilter').value;
+
+            filteredTrades = allTrades.filter(trade => {
+                if (statusFilter && trade.status !== statusFilter) return false;
+                if (symbolFilter && trade.symbol !== symbolFilter) return false;
+                
+                if (zoneTypeFilter) {
+                    if (zoneTypeFilter === 'market' && trade.timeframe !== 'market') return false;
+                    if (zoneTypeFilter !== 'market' && trade.zone_type !== zoneTypeFilter) return false;
+                }
+                
+                if (enrichedFilter) {
+                    const isEnriched = trade.zone_type !== null;
+                    if (enrichedFilter === 'true' && !isEnriched) return false;
+                    if (enrichedFilter === 'false' && isEnriched) return false;
+                }
+                
+                return true;
+            });
+
+            renderTrades();
+        }
+
+        function renderTrades() {
+            const tbody = document.getElementById('tradesTableBody');
+            
+            if (filteredTrades.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="13" class="no-trades">No trades match the current filters</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filteredTrades.map(trade => {
+                const zoneTypeDisplay = trade.zone_type ? 
+                    `<span class="zone-type ${trade.zone_type.replace('_', '-')}">${trade.zone_type.replace('_', ' ')}</span>` :
+                    `<span class="zone-type market-trade">Market</span>`;
+                
+                const strengthDisplay = trade.zone_strength !== null ? 
+                    trade.zone_strength.toFixed(0) + '%' : '-';
+                
+                const durationDisplay = trade.duration_minutes ? 
+                    formatDuration(trade.duration_minutes) : '-';
+                
+                const pnlDisplay = trade.pnl_pips !== null ? 
+                    `<span class="${trade.pnl_pips >= 0 ? 'positive' : 'negative'}">${trade.pnl_pips.toFixed(1)} pips</span>` : '-';
+                
+                const pendingLink = trade.pending_order ? 
+                    `<span class="pending-link" onclick="showPendingDetails('${trade.zone_id}')">View Details</span>` : 
+                    '<span style="color: #6b7280;">No Link</span>';
+                
+                const truncatedZoneId = trade.zone_id.length > 12 ? 
+                    trade.zone_id.substring(0, 12) + '...' : trade.zone_id;
+
+                return `
+                    <tr>
+                        <td title="${trade.zone_id}">${truncatedZoneId}</td>
+                        <td>${trade.symbol}</td>
+                        <td>${trade.order_type}</td>
+                        <td>${trade.order_type.includes('BUY') ? '🟢 BUY' : '🔴 SELL'}</td>
+                        <td>${trade.entry_price.toFixed(5)}</td>
+                        <td>
+                            <div style="font-size: 0.8rem;">
+                                SL: ${trade.stop_loss.toFixed(5)}<br>
+                                TP: ${trade.take_profit.toFixed(5)}
+                            </div>
+                        </td>
+                        <td><span class="status-badge status-${trade.status.toLowerCase()}">${trade.status}</span></td>
+                        <td>${trade.timeframe}</td>
+                        <td>${zoneTypeDisplay}</td>
+                        <td>${strengthDisplay}</td>
+                        <td>${durationDisplay}</td>
+                        <td>${pnlDisplay}</td>
+                        <td>${pendingLink}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function formatDuration(minutes) {
+            if (minutes < 60) {
+                return minutes + 'm';
+            } else if (minutes < 1440) {
+                const hours = Math.floor(minutes / 60);
+                const remainingMinutes = minutes % 60;
+                return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+            } else {
+                const days = Math.floor(minutes / 1440);
+                const remainingHours = Math.floor((minutes % 1440) / 60);
+                return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+            }
+        }
+
+        function showPendingDetails(zoneId) {
+            const trade = allTrades.find(t => t.zone_id === zoneId);
+            if (!trade || !trade.pending_order) {
+                alert('No pending order details available');
+                return;
+            }
+
+            const pending = trade.pending_order;
+            const detailsContainer = document.getElementById('pendingDetails');
+            
+            detailsContainer.innerHTML = `
+                <div class="detail-item">
+                    <div class="detail-label">Zone ID</div>
+                    <div class="detail-value">${pending.zone_id}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">cTrader Order ID</div>
+                    <div class="detail-value">${pending.ctrader_order_id || 'N/A'}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Placed At</div>
+                    <div class="detail-value">${new Date(pending.placed_at).toLocaleString()}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Entry Price</div>
+                    <div class="detail-value">${pending.entry_price.toFixed(5)}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Stop Loss</div>
+                    <div class="detail-value">${pending.stop_loss.toFixed(5)}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Take Profit</div>
+                    <div class="detail-value">${pending.take_profit.toFixed(5)}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Status</div>
+                    <div class="detail-value">
+                        <span class="status-badge status-${pending.status.toLowerCase()}">${pending.status}</span>
+                    </div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Zone Strength</div>
+                    <div class="detail-value">${pending.zone_strength.toFixed(1)}%</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Touch Count</div>
+                    <div class="detail-value">${pending.touch_count}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Distance When Placed</div>
+                    <div class="detail-value">${pending.distance_when_placed.toFixed(2)} pips</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Risk/Reward</div>
+                    <div class="detail-value">${calculateRiskReward(pending).toFixed(2)}:1</div>
+                </div>
+                <div class="detail-item">
+                    <div class="detail-label">Risk (pips)</div>
+                    <div class="detail-value">${calculateRisk(pending).toFixed(1)} pips</div>
+                </div>
+            `;
+
+            document.getElementById('pendingModal').style.display = 'block';
+        }
+
+        function calculateRiskReward(pending) {
+            const risk = Math.abs(pending.entry_price - pending.stop_loss);
+            const reward = Math.abs(pending.take_profit - pending.entry_price);
+            return reward / risk;
+        }
+
+        function calculateRisk(pending) {
+            const risk = Math.abs(pending.entry_price - pending.stop_loss);
+            const pipValue = pending.zone_id.includes('JPY') ? 0.01 : 0.0001;
+            return risk / pipValue;
+        }
+
+        function closePendingModal() {
+            document.getElementById('pendingModal').style.display = 'none';
+        }
+
+        // Event listeners
+        document.getElementById('statusFilter').addEventListener('change', applyFilters);
+        document.getElementById('symbolFilter').addEventListener('change', applyFilters);
+        document.getElementById('zoneTypeFilter').addEventListener('change', applyFilters);
+        document.getElementById('enrichedFilter').addEventListener('change', applyFilters);
+
+        // Close modal when clicking outside
+        document.getElementById('pendingModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closePendingModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closePendingModal();
+            }
+        });
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadTrades, 30000);
+
+        // Load initial data
+        loadTrades();
+    </script>
+</body>
+</html>
