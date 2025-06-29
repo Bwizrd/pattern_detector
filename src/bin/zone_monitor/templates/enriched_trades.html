@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enriched Trading Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #2c3e50;
+            font-size: 2.5rem;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .date-input, .filter-select {
+            padding: 12px 20px;
+            border: 2px solid #e1e8ed;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .date-input:focus, .filter-select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 12px 25px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 1.2rem;
+            color: #666;
+        }
+
+        .error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c33;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-icon {
+            font-size: 1.8rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .stat-value.positive {
+            color: #27ae60;
+        }
+
+        .stat-value.negative {
+            color: #e74c3c;
+        }
+
+        .trades-section {
+            grid-column: 1 / -1;
+        }
+
+        .trades-controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .trades-table-container {
+            margin-top: 20px;
+            overflow-x: auto;
+            border-radius: 10px;
+            border: 1px solid #e1e8ed;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .trades-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+            background: white;
+        }
+
+        .trades-table th {
+            background: #f8f9fa;
+            padding: 12px 8px;
+            text-align: left;
+            font-weight: 600;
+            color: #2c3e50;
+            border-bottom: 2px solid #e1e8ed;
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .trades-table td {
+            padding: 10px 8px;
+            border-bottom: 1px solid #f0f0f0;
+            white-space: nowrap;
+        }
+
+        .trades-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .trades-table tr:nth-child(even) {
+            background: #fafbfc;
+        }
+
+        .trades-table tr:nth-child(even):hover {
+            background: #f1f3f4;
+        }
+
+        .trade-buy {
+            color: #27ae60;
+            font-weight: 600;
+        }
+
+        .trade-sell {
+            color: #e74c3c;
+            font-weight: 600;
+        }
+
+        .profit-positive {
+            color: #27ae60;
+            font-weight: bold;
+        }
+
+        .profit-negative {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .enriched {
+            background-color: #e8f5e8 !important;
+            border-left: 4px solid #27ae60;
+        }
+
+        .partial {
+            background-color: #fff8e1 !important;
+            border-left: 4px solid #f39c12;
+        }
+
+        .not-found {
+            background-color: #ffeaea !important;
+            border-left: 4px solid #e74c3c;
+        }
+
+        .zone-strength {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 0.8rem;
+        }
+
+        .zone-strength.high {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .zone-strength.medium {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .zone-strength.low {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .timeframe-badge {
+            padding: 3px 8px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            background: #667eea;
+            color: white;
+        }
+
+        .zone-analysis {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .zone-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+        }
+
+        .zone-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .zone-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Enriched Trading Dashboard</h1>
+            <div class="controls">
+                <input type="date" id="dateInput" class="date-input" />
+                <button onclick="loadData()" class="btn">Load Trading Data</button>
+                <button onclick="loadToday()" class="btn">Today</button>
+            </div>
+            <div class="controls">
+                <select id="enrichmentFilter" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Trades</option>
+                    <option value="enriched">Enriched Only</option>
+                    <option value="partial">Partial Only</option>
+                    <option value="not_found">Not Found Only</option>
+                </select>
+                <select id="timeframeFilter" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Timeframes</option>
+                    <option value="M1">M1</option>
+                    <option value="M5">M5</option>
+                    <option value="M15">M15</option>
+                    <option value="H1">H1</option>
+                    <option value="H4">H4</option>
+                    <option value="D1">D1</option>
+                </select>
+                <select id="strengthFilter" class="filter-select" onchange="applyFilters()">
+                    <option value="all">All Strengths</option>
+                    <option value="high">High (8.0+)</option>
+                    <option value="medium">Medium (5.0-7.9)</option>
+                    <option value="low">Low (<5.0)</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            Loading enriched trading data...
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="dashboard" style="display: none;">
+            <div class="dashboard">
+                <!-- Performance Overview -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">📊</span>
+                        Performance Overview
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Total Trades</div>
+                            <div class="stat-value" id="totalTrades">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Win Rate</div>
+                            <div class="stat-value" id="winRate">0%</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Net Profit</div>
+                            <div class="stat-value" id="netProfit">$0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Average Trade</div>
+                            <div class="stat-value" id="avgTrade">$0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Enrichment Status -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">💎</span>
+                        Enrichment Status
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Enrichment Rate</div>
+                            <div class="stat-value" id="enrichmentRate">0%</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Enriched</div>
+                            <div class="stat-value positive" id="enrichedCount">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Partial</div>
+                            <div class="stat-value" id="partialCount">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Not Found</div>
+                            <div class="stat-value negative" id="notFoundCount">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Zone Performance -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🎯</span>
+                        Zone Performance
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">High Strength Zones</div>
+                            <div class="stat-value positive" id="highStrengthWins">0/0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Medium Strength Zones</div>
+                            <div class="stat-value" id="mediumStrengthWins">0/0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Best Timeframe</div>
+                            <div class="stat-value" id="bestTimeframe">-</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Avg Zone Strength</div>
+                            <div class="stat-value" id="avgZoneStrength">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Metrics -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">⚖️</span>
+                        Risk Metrics
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Largest Win</div>
+                            <div class="stat-value positive" id="largestWin">$0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Largest Loss</div>
+                            <div class="stat-value negative" id="largestLoss">$0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Total Volume</div>
+                            <div class="stat-value" id="totalVolume">0 lots</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Total Fees</div>
+                            <div class="stat-value" id="totalFees">$0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- All Trades -->
+                <div class="card trades-section">
+                    <div class="card-title">
+                        <span class="card-icon">💼</span>
+                        Enriched Trades Analysis
+                        <span id="filteredCount" style="font-size: 0.9rem; color: #666; margin-left: auto;"></span>
+                    </div>
+                    
+                    <div class="zone-analysis" id="zoneAnalysis">
+                        <!-- Zone analysis cards will be populated here -->
+                    </div>
+
+                    <div class="trades-table-container">
+                        <table class="trades-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Symbol</th>
+                                    <th>Type</th>
+                                    <th>Volume</th>
+                                    <th>Entry</th>
+                                    <th>Exit</th>
+                                    <th>Pips</th>
+                                    <th>P&L</th>
+                                    <th>Zone</th>
+                                    <th>TF</th>
+                                    <th>Strength</th>
+                                    <th>Touches</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tradesTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Symbol mapping
+        const symbolNames = {
+            185: "EURUSD", 175: "EURGBP", 199: "GBPUSD", 226: "USDJPY",
+            222: "USDCHF", 158: "AUDUSD", 221: "USDCAD", 211: "NZDUSD",
+            177: "EURJPY", 173: "EURCHF", 171: "EURAUD", 172: "EURCAD",
+            180: "EURNZD", 192: "GBPJPY", 191: "GBPCHF", 189: "GBPAUD",
+            190: "GBPCAD", 195: "GBPNZD", 155: "AUDJPY", 156: "AUDNZD",
+            153: "AUDCAD", 210: "NZDJPY", 162: "CADJPY", 163: "CHFJPY"
+        };
+
+        let allTrades = [];
+        let filteredTrades = [];
+
+        // Set today's date as default
+        document.getElementById('dateInput').valueAsDate = new Date();
+
+        function loadToday() {
+            document.getElementById('dateInput').valueAsDate = new Date();
+            loadData();
+        }
+
+        async function loadData() {
+            const date = document.getElementById('dateInput').value;
+            if (!date) {
+                showError('Please select a date');
+                return;
+            }
+
+            showLoading(true);
+            hideError();
+
+            try {
+                const response = await fetch(`http://localhost:3003/api/enriched-trades/${date}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                allTrades = data.deals || [];
+                displayData(data);
+                applyFilters();
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showError('Failed to load trading data. Make sure your Rust server is running on localhost:3003');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayData(data) {
+            const { deals, enrichmentSummary } = data;
+            
+            // Calculate summary from enriched deals
+            const summary = {
+                totalTrades: deals.length,
+                profitable: deals.filter(d => d.netProfit > 0).length,
+                losing: deals.filter(d => d.netProfit < 0).length,
+                breakeven: deals.filter(d => d.netProfit === 0).length,
+                totalNetProfit: deals.reduce((sum, d) => sum + d.netProfit, 0),
+                totalGrossProfit: deals.reduce((sum, d) => sum + d.grossProfit, 0),
+                totalSwap: deals.reduce((sum, d) => sum + d.swap, 0),
+                totalCommission: deals.reduce((sum, d) => sum + d.commission, 0),
+                totalVolume: deals.reduce((sum, d) => sum + d.volume, 0),
+                totalVolumeInLots: deals.reduce((sum, d) => sum + d.volumeInLots, 0),
+                averageTradeProfit: deals.length > 0 ? deals.reduce((sum, d) => sum + d.netProfit, 0) / deals.length : 0,
+                winRate: deals.length > 0 ? (deals.filter(d => d.netProfit > 0).length / deals.length) * 100 : 0,
+                largestWin: deals.length > 0 ? Math.max(...deals.map(d => d.netProfit)) : 0,
+                largestLoss: deals.length > 0 ? Math.min(...deals.map(d => d.netProfit)) : 0,
+            };
+
+            // Update performance overview
+            document.getElementById('totalTrades').textContent = summary.totalTrades;
+            document.getElementById('winRate').textContent = `${summary.winRate.toFixed(1)}%`;
+            document.getElementById('netProfit').textContent = formatCurrency(summary.totalNetProfit);
+            document.getElementById('netProfit').className = `stat-value ${summary.totalNetProfit >= 0 ? 'positive' : 'negative'}`;
+            document.getElementById('avgTrade').textContent = formatCurrency(summary.averageTradeProfit);
+            document.getElementById('avgTrade').className = `stat-value ${summary.averageTradeProfit >= 0 ? 'positive' : 'negative'}`;
+
+            // Update enrichment status
+            updateEnrichmentStatus(enrichmentSummary);
+
+            // Update zone performance
+            updateZonePerformance(deals);
+
+            // Update risk metrics
+            document.getElementById('largestWin').textContent = formatCurrency(summary.largestWin);
+            document.getElementById('largestLoss').textContent = formatCurrency(summary.largestLoss);
+            document.getElementById('totalVolume').textContent = `${summary.totalVolumeInLots.toFixed(2)} lots`;
+            document.getElementById('totalFees').textContent = formatCurrency(summary.totalCommission + summary.totalSwap);
+
+            document.getElementById('dashboard').style.display = 'block';
+        }
+
+        function updateEnrichmentStatus(enrichmentSummary) {
+            if (enrichmentSummary) {
+                document.getElementById('enrichmentRate').textContent = `${enrichmentSummary.enrichmentRate.toFixed(1)}%`;
+                document.getElementById('enrichedCount').textContent = enrichmentSummary.enrichedCount;
+                document.getElementById('partialCount').textContent = enrichmentSummary.partialCount;
+                document.getElementById('notFoundCount').textContent = enrichmentSummary.notFoundCount;
+                
+                // Update enrichment rate color
+                const enrichmentEl = document.getElementById('enrichmentRate');
+                if (enrichmentSummary.enrichmentRate >= 80) {
+                    enrichmentEl.className = 'stat-value positive';
+                } else if (enrichmentSummary.enrichmentRate >= 50) {
+                    enrichmentEl.className = 'stat-value';
+                } else {
+                    enrichmentEl.className = 'stat-value negative';
+                }
+            }
+        }
+
+        function updateZonePerformance(trades) {
+            const enrichedTrades = trades.filter(t => t.enrichmentStatus === 'enriched' && t.zoneStrength);
+            
+            if (enrichedTrades.length === 0) {
+                document.getElementById('highStrengthWins').textContent = '-';
+                document.getElementById('mediumStrengthWins').textContent = '-';
+                document.getElementById('bestTimeframe').textContent = '-';
+                document.getElementById('avgZoneStrength').textContent = '-';
+                return;
+            }
+
+            // Zone strength analysis
+            const highStrength = enrichedTrades.filter(t => t.zoneStrength >= 8.0);
+            const mediumStrength = enrichedTrades.filter(t => t.zoneStrength >= 5.0 && t.zoneStrength < 8.0);
+            
+            const highWins = highStrength.filter(t => t.netProfit > 0).length;
+            const mediumWins = mediumStrength.filter(t => t.netProfit > 0).length;
+            
+            document.getElementById('highStrengthWins').textContent = `${highWins}/${highStrength.length}`;
+            document.getElementById('mediumStrengthWins').textContent = `${mediumWins}/${mediumStrength.length}`;
+
+            // Best timeframe
+            const timeframePerf = {};
+            enrichedTrades.forEach(t => {
+                if (t.timeframe) {
+                    if (!timeframePerf[t.timeframe]) {
+                        timeframePerf[t.timeframe] = { wins: 0, total: 0, profit: 0 };
+                    }
+                    timeframePerf[t.timeframe].total++;
+                    timeframePerf[t.timeframe].profit += t.netProfit;
+                    if (t.netProfit > 0) timeframePerf[t.timeframe].wins++;
+                }
+            });
+
+            let bestTF = '-';
+            let bestProfit = -Infinity;
+            for (const [tf, data] of Object.entries(timeframePerf)) {
+                if (data.profit > bestProfit) {
+                    bestProfit = data.profit;
+                    bestTF = tf;
+                }
+            }
+            document.getElementById('bestTimeframe').textContent = bestTF;
+
+            // Average zone strength
+            const avgStrength = enrichedTrades.reduce((sum, t) => sum + t.zoneStrength, 0) / enrichedTrades.length;
+            document.getElementById('avgZoneStrength').textContent = avgStrength.toFixed(1);
+        }
+
+        function applyFilters() {
+            const enrichmentFilter = document.getElementById('enrichmentFilter').value;
+            const timeframeFilter = document.getElementById('timeframeFilter').value;
+            const strengthFilter = document.getElementById('strengthFilter').value;
+
+            filteredTrades = allTrades.filter(trade => {
+                // Enrichment filter
+                if (enrichmentFilter !== 'all' && trade.enrichmentStatus !== enrichmentFilter) {
+                    return false;
+                }
+
+                // Timeframe filter
+                if (timeframeFilter !== 'all' && trade.timeframe !== timeframeFilter) {
+                    return false;
+                }
+
+                // Strength filter
+                if (strengthFilter !== 'all') {
+                    if (!trade.zoneStrength) return false;
+                    if (strengthFilter === 'high' && trade.zoneStrength < 8.0) return false;
+                    if (strengthFilter === 'medium' && (trade.zoneStrength < 5.0 || trade.zoneStrength >= 8.0)) return false;
+                    if (strengthFilter === 'low' && trade.zoneStrength >= 5.0) return false;
+                }
+
+                return true;
+            });
+
+            updateFilteredCount();
+            updateTradesTable(filteredTrades);
+            updateZoneAnalysis(filteredTrades);
+        }
+
+        function updateFilteredCount() {
+            document.getElementById('filteredCount').textContent = 
+                `Showing ${filteredTrades.length} of ${allTrades.length} trades`;
+        }
+
+        function updateZoneAnalysis(trades) {
+            const container = document.getElementById('zoneAnalysis');
+            container.innerHTML = '';
+
+            const enrichedTrades = trades.filter(t => t.enrichmentStatus === 'enriched');
+            if (enrichedTrades.length === 0) return;
+
+            // Group by timeframe
+            const timeframeGroups = {};
+            enrichedTrades.forEach(trade => {
+                if (trade.timeframe) {
+                    if (!timeframeGroups[trade.timeframe]) {
+                        timeframeGroups[trade.timeframe] = [];
+                    }
+                    timeframeGroups[trade.timeframe].push(trade);
+                }
+            });
+
+            // Create cards for each timeframe
+            Object.entries(timeframeGroups).forEach(([timeframe, tfTrades]) => {
+                const profitable = tfTrades.filter(t => t.netProfit > 0).length;
+                const totalProfit = tfTrades.reduce((sum, t) => sum + t.netProfit, 0);
+                const avgStrength = tfTrades.reduce((sum, t) => sum + (t.zoneStrength || 0), 0) / tfTrades.length;
+                const winRate = (profitable / tfTrades.length) * 100;
+
+                const card = document.createElement('div');
+                card.className = 'zone-card';
+                card.innerHTML = `
+                    <div class="zone-title">${timeframe} Timeframe</div>
+                    <div class="zone-stats">
+                        <div>Trades: ${tfTrades.length}</div>
+                        <div>Win Rate: ${winRate.toFixed(1)}%</div>
+                        <div>Profit: ${formatCurrency(totalProfit)}</div>
+                        <div>Avg Strength: ${avgStrength.toFixed(1)}</div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function updateTradesTable(trades) {
+            const tbody = document.getElementById('tradesTableBody');
+            tbody.innerHTML = '';
+
+            // Sort trades by close time (most recent first)
+            const sortedTrades = [...trades].sort((a, b) => b.closeTime - a.closeTime);
+
+            sortedTrades.forEach(trade => {
+                const symbolName = symbolNames[trade.symbolId] || `Symbol ${trade.symbolId}`;
+                const tradeType = trade.originalTradeSide === 1 ? 'BUY' : 'SELL';
+                const profitClass = trade.netProfit >= 0 ? 'profit-positive' : 'profit-negative';
+                const typeClass = trade.originalTradeSide === 1 ? 'trade-buy' : 'trade-sell';
+                const closeTime = new Date(trade.closeTime);
+                
+                const row = document.createElement('tr');
+                
+                // Add enrichment status styling
+                row.className = trade.enrichmentStatus;
+                
+                const strengthBadge = trade.zoneStrength ? 
+                    `<span class="zone-strength ${getStrengthClass(trade.zoneStrength)}">${trade.zoneStrength.toFixed(1)}</span>` : 
+                    '-';
+
+                const timeframeBadge = trade.timeframe ? 
+                    `<span class="timeframe-badge">${trade.timeframe}</span>` : 
+                    '-';
+
+                row.innerHTML = `
+                    <td>${closeTime.toLocaleString()}</td>
+                    <td>${symbolName}</td>
+                    <td class="${typeClass}">${tradeType}</td>
+                    <td>${trade.volumeInLots.toFixed(2)}</td>
+                    <td>${trade.entryPrice.toFixed(5)}</td>
+                    <td>${trade.exitPrice.toFixed(5)}</td>
+                    <td>${trade.pipsProfit.toFixed(1)}</td>
+                    <td class="${profitClass}">${formatCurrency(trade.netProfit)}</td>
+                    <td>${trade.zoneId || '-'}</td>
+                    <td>${timeframeBadge}</td>
+                    <td>${strengthBadge}</td>
+                    <td>${trade.touchCount || '-'}</td>
+                    <td>${getEnrichmentBadge(trade.enrichmentStatus)}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function getStrengthClass(strength) {
+            if (strength >= 8.0) return 'high';
+            if (strength >= 5.0) return 'medium';
+            return 'low';
+        }
+
+        function getEnrichmentBadge(status) {
+            const badges = {
+                'enriched': '<span style="color: #27ae60;">✅ Full</span>',
+                'partial': '<span style="color: #f39c12;">⚠️ Partial</span>',
+                'not_found': '<span style="color: #e74c3c;">❌ None</span>'
+            };
+            return badges[status] || status;
+        }
+
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 2
+            }).format(amount);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('dashboard').style.display = show ? 'none' : 'block';
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+            document.getElementById('dashboard').style.display = 'none';
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        // Load today's data on page load
+        window.addEventListener('load', loadToday);
+    </script>
+</body>
+</html>
