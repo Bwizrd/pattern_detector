@@ -150,16 +150,15 @@ impl Trade {
         // Determine pip_value based on a field that reliably contains the symbol.
         // Assuming self.pattern_id is the best candidate (e.g., "EURUSD_SB-zone-123")
         // If pattern_id does NOT contain the symbol, this logic needs a reliable source for it.
-        let identifier_to_check_for_symbol = &self.pattern_id; // Or self.id / self.pattern_type
-
-        if identifier_to_check_for_symbol.contains("JPY_SB") {
+    
+        if identifier_to_check_for_symbol.contains("JPY") {
             pip_value = 0.01;
-        } else if identifier_to_check_for_symbol.contains("NAS100_SB")
-            || identifier_to_check_for_symbol.contains("US500_SB")
-            || identifier_to_check_for_symbol.contains("XAU_SB")
+        } else if identifier_to_check_for_symbol.contains("NAS100")
+            || identifier_to_check_for_symbol.contains("US500")
+            || identifier_to_check_for_symbol.contains("XAU")
         {
-            // Assuming XAU_SB for gold
-            pip_value = 1.0; // If SL/TP for these are in points/dollar values, and 1 point = 1.0 price change
+            // For indices and commodities
+            pip_value = 1.0;
         } else {
             pip_value = 0.0001; // Default for standard FX
         }
