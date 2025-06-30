@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::env;
 use tokio::fs;
 use tracing::{debug, error, info, warn};
+use crate::types::ZoneAlert;
+use crate::csv_logger::CsvLogger;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrder {
@@ -376,7 +378,8 @@ impl PendingOrderManager {
     }
 
     /// Simplified duplicate check - only check for PENDING orders by zone ID
-    pub async fn check_and_place_orders(&mut self, price_update: &PriceUpdate, zones: &[Zone]) {
+    /// Now includes CSV logging for every zone proximity hit
+    pub async fn check_and_place_orders(&mut self, price_update: &PriceUpdate, zones: &[Zone], csv_logger: &CsvLogger) {
         if !self.enabled {
             return;
         }
@@ -388,43 +391,93 @@ impl PendingOrderManager {
                 continue;
             }
 
-            // SIMPLIFIED: Check if we already have ANY order for this zone (regardless of status initially)
-            if let Some(existing_order) = self.pending_orders.get(&zone.id) {
-                // Only skip if the order is still PENDING
-                if existing_order.status == "PENDING" {
+            let distance_pips = self.calculate_distance_to_zone(current_price, zone);
+
+            // Check if zone is within our distance threshold - LOG THIS regardless of booking attempt
+            if distance_pips <= self.distance_threshold_pips {
+                // Create zone alert for CSV logging
+                let zone_alert = ZoneAlert {
+                    zone_id: zone.id.clone(),
+                    symbol: price_update.symbol.clone(),
+                    zone_type: zone.zone_type.clone(),
+                    current_price,
+                    zone_high: zone.high,
+                    zone_low: zone.low,
+                    distance_pips,
+                    strength: zone.strength,
+                    touch_count: zone.touch_count,
+                    timeframe: zone.timeframe.clone(),
+                    timestamp: chrono::Utc::now(),
+                };
+
+                // Check if we already have ANY order for this zone
+                if let Some(existing_order) = self.pending_orders.get(&zone.id) {
+                    // Zone already has an order - skip without logging (this is normal)
+                    if existing_order.status == "PENDING" {
+                        debug!(
+                            "📋 Zone {} already has PENDING order ({}), skipping",
+                            zone.id,
+                            existing_order.ctrader_order_id.as_deref().unwrap_or("N/A")
+                        );
+                        continue;
+                    } else {
+                        // Order exists but not pending (FILLED, CANCELLED, FAILED)
+                        debug!(
+                            "📋 Zone {} already has order with status '{}', skipping",
+                            zone.id, existing_order.status
+                        );
+                        continue;
+                    }
+                }
+
+                // Skip if zone timeframe is not in allowed timeframes
+                if !self.allowed_timeframes.contains(&zone.timeframe) {
+                    // Skip without logging (this is normal filtering)
                     debug!(
-                        "📋 Zone {} already has PENDING order ({}), skipping",
-                        zone.id,
-                        existing_order.ctrader_order_id.as_deref().unwrap_or("N/A")
+                        "📋 Zone {} timeframe {} not in allowed timeframes, skipping",
+                        zone.id, zone.timeframe
                     );
                     continue;
                 }
-                // If status is FILLED, CANCELLED, or FAILED, we could potentially place a new order
-                // But for now, let's keep it simple: one order per zone ever
-                debug!(
-                    "📋 Zone {} already has order with status '{}', skipping",
-                    zone.id, existing_order.status
-                );
-                continue;
-            }
 
-            // Skip if zone timeframe is not in allowed timeframes
-            if !self.allowed_timeframes.contains(&zone.timeframe) {
-                continue;
-            }
-
-            let distance_pips = self.calculate_distance_to_zone(current_price, zone);
-
-            // Check if zone is within our distance threshold
-            if distance_pips <= self.distance_threshold_pips {
-                if let Err(e) = self
+                // Attempt to place the order
+                match self
                     .place_pending_order_for_zone(price_update, zone, distance_pips)
                     .await
                 {
-                    error!(
-                        "📋 Failed to place pending order for zone {}: {}",
-                        zone.id, e
-                    );
+                    Ok(()) => {
+                        // Success - get the newly created order for logging
+                        if let Some(new_order) = self.pending_orders.get(&zone.id) {
+                            csv_logger.log_booking_attempt(
+                                &zone_alert,
+                                "success",
+                                new_order.ctrader_order_id.as_deref(),
+                                None,
+                            ).await;
+                        } else {
+                            // This shouldn't happen, but handle it gracefully
+                            csv_logger.log_booking_attempt(
+                                &zone_alert,
+                                "success",
+                                None,
+                                None,
+                            ).await;
+                        }
+                    }
+                    Err(e) => {
+                        // Failed to place order
+                        error!(
+                            "📋 Failed to place pending order for zone {}: {}",
+                            zone.id, e
+                        );
+                        
+                        csv_logger.log_booking_attempt(
+                            &zone_alert,
+                            "failed",
+                            None,
+                            Some(&e.to_string()),
+                        ).await;
+                    }
                 }
             }
         }

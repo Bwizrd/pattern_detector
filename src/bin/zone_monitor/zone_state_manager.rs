@@ -3,6 +3,7 @@
 
 use crate::types::{PriceUpdate, Zone, ZoneAlert};
 use crate::trade_rules::TradeRulesEngine;
+use crate::csv_logger::CsvLogger;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -47,6 +48,7 @@ pub struct ZoneStateManager {
     trading_threshold_pips: f64,
     proximity_reset_minutes: i64,
     trade_rules: TradeRulesEngine,
+    csv_logger: Arc<CsvLogger>,
 }
 
 impl Clone for ZoneStateManager {
@@ -58,12 +60,13 @@ impl Clone for ZoneStateManager {
             trading_threshold_pips: self.trading_threshold_pips,
             proximity_reset_minutes: self.proximity_reset_minutes,
             trade_rules: TradeRulesEngine::new(),
+            csv_logger: Arc::clone(&self.csv_logger),
         }
     }
 }
 
 impl ZoneStateManager {
-    pub fn new() -> Self {
+    pub fn new(csv_logger: Arc<CsvLogger>) -> Self {
         let proximity_threshold_pips = std::env::var("PROXIMITY_THRESHOLD_PIPS")
             .unwrap_or_else(|_| "10.0".to_string())
             .parse()
@@ -94,6 +97,7 @@ impl ZoneStateManager {
             trading_threshold_pips,
             proximity_reset_minutes,
             trade_rules: TradeRulesEngine::new(),
+            csv_logger,
         }
     }
 
@@ -234,7 +238,10 @@ impl ZoneStateManager {
                             .await;
 
                         let alert = self.create_zone_alert(price_update, zone, distance_pips);
-                        result.proximity_alerts.push(alert);
+                        result.proximity_alerts.push(alert.clone());
+
+                        // Log proximity alert to CSV
+                        self.csv_logger.log_booking_attempt(&alert, "proximity_detected", None, None).await;
 
                         let timeframe = self.get_timeframe(zone);
                         info!(
@@ -261,7 +268,10 @@ impl ZoneStateManager {
                             .await;
 
                             let alert = self.create_zone_alert(price_update, zone, distance_pips);
-                            result.trading_signals.push(alert);
+                            result.trading_signals.push(alert.clone());
+
+                            // Log trading signal to CSV
+                            self.csv_logger.log_booking_attempt(&alert, "trading_signal_generated", None, None).await;
 
                             let timeframe = self.get_timeframe(zone);
                             let trade_direction = evaluation.trade_direction.unwrap_or_else(|| "UNKNOWN".to_string());

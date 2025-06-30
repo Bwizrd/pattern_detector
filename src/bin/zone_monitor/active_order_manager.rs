@@ -291,10 +291,46 @@ impl ActiveOrderManager {
                         ))
                     )
                 } else {
-                    // Fallback to generated data for positions without matching pending orders
+                // Improved fallback: Try to infer timeframe from existing pending orders for this symbol
+                    let position_timestamp = DateTime::from_timestamp((position.openTimestamp / 1000) as i64, 0)
+                        .unwrap_or(Utc::now());
+                    
+                    let fallback_timeframe = if let Some(ref pending_container) = pending_orders_container {
+                        // Look for any recent pending orders for the same symbol to infer likely timeframe
+                        let mut timeframe_candidates: Vec<&str> = pending_container.orders.values()
+                            .filter(|order| order.symbol == symbol_name)
+                            .filter(|order| {
+                                // Only consider orders from the past 7 days
+                                let days_diff = position_timestamp
+                                    .signed_duration_since(order.placed_at)
+                                    .num_days();
+                                days_diff.abs() <= 7
+                            })
+                            .map(|order| order.timeframe.as_str())
+                            .collect();
+                        
+                        // Sort by frequency and pick most common timeframe
+                        timeframe_candidates.sort();
+                        timeframe_candidates.dedup();
+                        
+                        if !timeframe_candidates.is_empty() {
+                            // Pick the first (alphabetically) as a reasonable default
+                            // This tends to favor shorter timeframes like "1H" over "4H"
+                            timeframe_candidates[0].to_string()
+                        } else {
+                            // No recent orders found - use "unknown" instead of "market"
+                            "unknown".to_string()
+                        }
+                    } else {
+                        "unknown".to_string()
+                    };
+                    
+                    warn!("⚠️ Creating fallback entry for position {} with timeframe '{}' (no matching pending order found)", 
+                          position.positionId, fallback_timeframe);
+                    
                     (
                         format!("pos_{}_{}", position.positionId, symbol_name),
-                        "market".to_string(),
+                        fallback_timeframe,
                         None
                     )
                 };
@@ -484,6 +520,7 @@ impl ActiveOrderManager {
     }
 
     /// Find matching pending order for a position to enrich the booked order
+    /// Uses improved flexible matching based on symbol, direction, price, and timing
     fn find_matching_pending_order<'a>(
         &self,
         pending_container: &'a PendingOrdersContainer,
@@ -496,8 +533,8 @@ impl ActiveOrderManager {
         let position_timestamp = DateTime::from_timestamp((position.openTimestamp / 1000) as i64, 0)
             .unwrap_or(Utc::now());
         
-        info!("🔍 Looking for pending order match for {} {} position at {:.5} (opened: {})", 
-              symbol_name, position_side, position_price, 
+        info!("🔍 Looking for pending order match for {} {} position {} at {:.5} (opened: {})", 
+              symbol_name, position_side, position.positionId, position_price, 
               position_timestamp.format("%H:%M:%S"));
 
         let mut best_match: Option<&crate::pending_order_manager::PendingOrder> = None;
@@ -515,8 +552,13 @@ impl ActiveOrderManager {
                 continue;
             }
             
-            // 3. Order must have been placed BEFORE position opened
-            if pending_order.placed_at > position_timestamp {
+            // 3. Order must have been placed BEFORE position opened (with some tolerance)
+            let time_diff_seconds = position_timestamp
+                .signed_duration_since(pending_order.placed_at)
+                .num_seconds();
+            
+            // Allow orders placed up to 10 minutes after position time to account for timing differences
+            if time_diff_seconds < -600 {
                 continue;
             }
             
@@ -531,31 +573,56 @@ impl ActiveOrderManager {
             let price_diff_pips = price_diff / pip_value;
             
             // 6. Calculate time proximity score (closer in time = better match)
-            let time_diff_minutes = position_timestamp
-                .signed_duration_since(pending_order.placed_at)
-                .num_minutes();
+            let time_diff_minutes = time_diff_seconds.abs() / 60;
             
-            // Create composite matching score
-            // Price difference (pips) + time penalty
+            // Create composite matching score with improved weighting
+            // Price difference (pips) is the primary factor
             let mut match_score = price_diff_pips;
             
-            // Add time penalty: 0.1 points per minute difference
-            if time_diff_minutes > 0 {
-                match_score += (time_diff_minutes as f64) * 0.1;
-            }
+            // Add time penalty: 0.05 points per minute difference (reduced from 0.1)
+            match_score += (time_diff_minutes as f64) * 0.05;
             
-            info!("   📊 Candidate: {} order at {:.5} (placed: {}, price_diff: {:.2} pips, time_diff: {}min, score: {:.2})",
+            // Bonus for exact cTrader order ID match (if available)
+            let ctrader_id_bonus = if let Some(ref pending_ctrader_id) = pending_order.ctrader_order_id {
+                let position_id_str = position.positionId.to_string();
+                if pending_ctrader_id == &position_id_str {
+                    // Exact match - heavily favor this
+                    match_score -= 100.0;
+                    true
+                } else {
+                    // Check for numerically close IDs (within 1000 of each other)
+                    if let (Ok(pending_id_num), Ok(position_id_num)) = 
+                        (pending_ctrader_id.parse::<u64>(), position_id_str.parse::<u64>()) {
+                        let id_diff = (pending_id_num as i64 - position_id_num as i64).abs();
+                        if id_diff <= 1000 {
+                            // Close numeric IDs - give bonus
+                            match_score -= 50.0 - (id_diff as f64 * 0.05);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            
+            info!("   📊 Candidate: {} order at {:.5} (placed: {}, ctrader_id: {:?}, price_diff: {:.2} pips, time_diff: {}min, score: {:.2}, id_bonus: {})",
                   pending_order.zone_id,
                   pending_order.entry_price,
                   pending_order.placed_at.format("%H:%M:%S"),
+                  pending_order.ctrader_order_id,
                   price_diff_pips,
                   time_diff_minutes,
-                  match_score
+                  match_score,
+                  ctrader_id_bonus
             );
             
-            // Accept matches within reasonable tolerance
-            let max_price_diff_pips = 5.0; // Allow up to 5 pips difference
-            let max_time_diff_hours = 24; // Allow matches within 24 hours
+            // More lenient acceptance criteria - focus on price and time proximity
+            let max_price_diff_pips = 10.0; // Increased from 5.0 pips
+            let max_time_diff_hours = 48; // Increased from 24 hours
             
             if price_diff_pips <= max_price_diff_pips && 
                time_diff_minutes <= (max_time_diff_hours * 60) &&
@@ -563,19 +630,22 @@ impl ActiveOrderManager {
                 best_match = Some(pending_order);
                 best_score = match_score;
                 
-                info!("   ⭐ New best match found! Score: {:.2}", match_score);
+                info!("   ⭐ New best match found! Score: {:.2} (price_diff: {:.2} pips, time_diff: {}min)", 
+                      match_score, price_diff_pips, time_diff_minutes);
             }
         }
         
         if let Some(matched_order) = best_match {
-            info!("🔗 Best match found: {} order {} -> position {} (score: {:.2})", 
+            info!("🔗 MATCH FOUND: {} order {} -> position {} (score: {:.2}, zone_id: {}, timeframe: {})", 
                   symbol_name,
-                  matched_order.zone_id, 
+                  matched_order.ctrader_order_id.as_ref().unwrap_or(&"unknown".to_string()),
                   position.positionId,
-                  best_score);
+                  best_score,
+                  matched_order.zone_id,
+                  matched_order.timeframe);
             Some(matched_order)
         } else {
-            warn!("🔍 No matching pending order found for {} position {} at {:.5}", 
+            warn!("🔍 NO MATCH: No suitable pending order found for {} position {} at {:.5} - will create fallback entry", 
                   symbol_name, position.positionId, position_price);
             None
         }
@@ -590,5 +660,157 @@ impl ActiveOrderManager {
                 _ => 0.0001,
             }
         }
+    }
+    
+    /// Retroactively enrich existing booked orders that have "market" or "unknown" timeframes
+    /// This is useful for fixing historical data after matching algorithm improvements
+    pub async fn retroactive_enrichment(&self) -> Result<usize, String> {
+        info!("🔄 Starting retroactive enrichment of existing booked orders...");
+        
+        // Load existing booked orders
+        let mut booked_orders_container: BookedOrdersContainer =
+            match fs::read_to_string("shared_booked_orders.json").await {
+                Ok(content) => serde_json::from_str(&content).map_err(|e| {
+                    format!("Failed to parse booked orders: {}", e)
+                })?,
+                Err(e) => {
+                    return Err(format!("Failed to read booked orders file: {}", e));
+                }
+            };
+            
+        // Load pending orders for enrichment
+        let pending_orders_container: PendingOrdersContainer =
+            match fs::read_to_string("shared_pending_orders.json").await {
+                Ok(content) => serde_json::from_str(&content).map_err(|e| {
+                    format!("Failed to parse pending orders: {}", e)
+                })?,
+                Err(e) => {
+                    return Err(format!("Failed to read pending orders file: {}", e));
+                }
+            };
+            
+        let mut enriched_count = 0;
+        
+        // Find booked orders that need enrichment (those with "market" or "unknown" timeframes)
+        let orders_to_enrich: Vec<(String, BookedPendingOrder)> = booked_orders_container
+            .booked_orders
+            .iter()
+            .filter(|(_, order)| {
+                order.timeframe == "market" || order.timeframe == "unknown" || order.zone_type.is_none()
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+            
+        info!("📋 Found {} booked orders that could benefit from retroactive enrichment", orders_to_enrich.len());
+        
+        for (zone_id, mut booked_order) in orders_to_enrich {
+            // Skip if this order doesn't look like a fallback position entry
+            if !zone_id.starts_with("pos_") && booked_order.zone_type.is_some() {
+                continue;
+            }
+            
+            info!("🔍 Attempting to enrich order: {} (symbol: {}, timeframe: {}, ctrader_id: {})", 
+                  zone_id, booked_order.symbol, booked_order.timeframe, booked_order.ctrader_order_id);
+            
+            // Create a mock position from the booked order data to use with our matching logic
+            let mock_position = Position {
+                positionId: booked_order.ctrader_order_id.parse::<u64>().unwrap_or(0),
+                symbolId: self.symbol_id_mapping.iter()
+                    .find(|(_, symbol)| symbol.replace("_SB", "") == booked_order.symbol)
+                    .map(|(id, _)| *id)
+                    .unwrap_or(0),
+                volume: (booked_order.lot_size as u32) * 100, // Convert back to volume
+                tradeSide: if booked_order.order_type == "BUY" { 1 } else { 2 },
+                price: booked_order.entry_price,
+                openTimestamp: booked_order.filled_at
+                    .unwrap_or(booked_order.booked_at)
+                    .timestamp() as u64 * 1000, // Convert to milliseconds
+                status: 1,
+                swap: 0.0,
+                commission: 0.0,
+                usedMargin: 0.0,
+                stopLoss: if booked_order.stop_loss != 0.0 { Some(booked_order.stop_loss) } else { None },
+                takeProfit: if booked_order.take_profit != 0.0 { Some(booked_order.take_profit) } else { None },
+            };
+            
+            // Try to find a matching pending order using our improved algorithm
+            if let Some(matching_pending) = self.find_matching_pending_order(
+                &pending_orders_container, 
+                &booked_order.symbol, 
+                &mock_position
+            ) {
+                // Enrich the booked order with data from the matching pending order
+                booked_order.timeframe = matching_pending.timeframe.clone();
+                booked_order.zone_type = Some(matching_pending.zone_type.clone());
+                booked_order.zone_high = Some(matching_pending.zone_high);
+                booked_order.zone_low = Some(matching_pending.zone_low);
+                booked_order.zone_strength = Some(matching_pending.zone_strength);
+                booked_order.touch_count = Some(matching_pending.touch_count);
+                booked_order.distance_when_placed = Some(matching_pending.distance_when_placed);
+                booked_order.original_zone_id = Some(matching_pending.zone_id.clone());
+                
+                // Update the zone_id to match the pending order if it was a fallback
+                let new_zone_id = if zone_id.starts_with("pos_") {
+                    matching_pending.zone_id.clone()
+                } else {
+                    zone_id.clone()
+                };
+                
+                // IMPORTANT: Update the zone_id field in the booked_order itself
+                booked_order.zone_id = new_zone_id.clone();
+                
+                // Remove old entry and add enriched entry
+                booked_orders_container.booked_orders.remove(&zone_id);
+                booked_orders_container.booked_orders.insert(new_zone_id.clone(), booked_order);
+                
+                enriched_count += 1;
+                
+                info!("✅ Successfully enriched order {} -> {} with timeframe '{}', zone_type: '{}'", 
+                      zone_id, new_zone_id, matching_pending.timeframe, matching_pending.zone_type);
+            } else {
+                // Try to infer timeframe from other orders for the same symbol
+                let inferred_timeframe = pending_orders_container.orders.values()
+                    .filter(|order| order.symbol == booked_order.symbol)
+                    .filter(|order| {
+                        let time_diff = booked_order.booked_at
+                            .signed_duration_since(order.placed_at)
+                            .num_days()
+                            .abs();
+                        time_diff <= 7 // Within 7 days
+                    })
+                    .map(|order| order.timeframe.as_str())
+                    .next(); // Take the first one found
+                    
+                if let Some(timeframe) = inferred_timeframe {
+                    if booked_order.timeframe == "market" || booked_order.timeframe == "unknown" {
+                        booked_order.timeframe = timeframe.to_string();
+                        booked_orders_container.booked_orders.insert(zone_id.clone(), booked_order);
+                        enriched_count += 1;
+                        
+                        info!("📊 Inferred timeframe '{}' for order {} based on nearby orders", 
+                              timeframe, zone_id);
+                    }
+                } else {
+                    info!("❌ Could not enrich order {}: no matching pending order or nearby timeframe found", zone_id);
+                }
+            }
+        }
+        
+        // Save the updated booked orders if any changes were made
+        if enriched_count > 0 {
+            booked_orders_container.last_updated = Utc::now();
+            let json_content = serde_json::to_string_pretty(&booked_orders_container)
+                .map_err(|e| format!("Failed to serialize booked orders: {}", e))?;
+
+            fs::write("shared_booked_orders.json", json_content)
+                .await
+                .map_err(|e| format!("Failed to write booked orders file: {}", e))?;
+
+            info!("💾 Retroactive enrichment completed: {} orders enhanced", enriched_count);
+        } else {
+            info!("📋 No orders needed retroactive enrichment");
+        }
+        
+        Ok(enriched_count)
     }
 }

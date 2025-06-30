@@ -136,7 +136,7 @@ impl MonitorState {
             websocket_client: Arc::new(WebSocketClient::new()),
             proximity_detector: Arc::new(ProximityDetector::new(proximity_threshold)),
             notification_manager: Arc::new(NotificationManager::new()),
-            zone_state_manager: Arc::new(ZoneStateManager::new()),
+            zone_state_manager: Arc::new(ZoneStateManager::new(Arc::new(CsvLogger::new()))),
             trading_engine: Arc::new(TradingEngine::new()),
             csv_logger: Arc::new(CsvLogger::new()),
             telegram_notifier: Arc::new(TelegramNotifier::new()),
@@ -267,6 +267,7 @@ impl MonitorState {
         self.start_pending_order_cleanup_task().await;
         self.start_strategy_refresh_task().await;
         self.start_active_order_matching_task().await;
+        self.start_csv_logger_cleanup_task().await;
         info!("✅ Background tasks started");
 
         // Test notifications if configured
@@ -543,6 +544,27 @@ impl MonitorState {
         });
     }
 
+    async fn start_csv_logger_cleanup_task(&self) {
+        let csv_logger = Arc::clone(&self.csv_logger);
+
+        // Start the logging interval (flush buffer every second)
+        let csv_logger_for_interval = Arc::clone(&self.csv_logger);
+        tokio::spawn(async move {
+            csv_logger_for_interval.start_logging_interval().await;
+        });
+
+        // Optional cleanup task (can clear buffer if needed)
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Clean up every hour
+
+            loop {
+                interval.tick().await;
+                // Clear buffer if it gets too large (safety measure)
+                csv_logger.clear_buffer().await;
+            }
+        });
+    }
+
     async fn handle_price_update(&self, price_update: PriceUpdate) {
         // Store the latest price
         {
@@ -635,7 +657,7 @@ impl MonitorState {
             {
                 let mut pending_order_manager = self.pending_order_manager.write().await;
                 pending_order_manager
-                    .check_and_place_orders(&price_update, &zones)
+                    .check_and_place_orders(&price_update, &zones, &self.csv_logger)
                     .await;
             }
 

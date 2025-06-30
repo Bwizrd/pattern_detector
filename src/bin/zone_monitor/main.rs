@@ -242,6 +242,33 @@ async fn pending_orders_json() -> (StatusCode, Json<serde_json::Value>) {
     }
 }
 
+async fn retroactive_enrichment_api(
+    State(state): State<MonitorState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    info!("🔄 Starting retroactive enrichment API call...");
+    
+    match state.active_order_manager.retroactive_enrichment().await {
+        Ok(enriched_count) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Successfully enriched {} historical trades", enriched_count),
+                "enriched_count": enriched_count
+            });
+            info!("✅ Retroactive enrichment completed: {} orders enhanced", enriched_count);
+            (StatusCode::OK, Json(response))
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "message": format!("Failed to enrich historical trades: {}", e),
+                "error": e
+            });
+            tracing::error!("❌ Retroactive enrichment failed: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
+        }
+    }
+}
+
 async fn manual_trade_api(
     State(_state): State<MonitorState>,
     Json(request): Json<ManualTradeRequest>,
@@ -414,6 +441,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(enriched_trades_by_date_api),
         )
         .route("/api/enriched-trades", get(enriched_trades_by_range_api))
+        .route("/api/enriched-trades/retroactive-fix", post(retroactive_enrichment_api))
         .layer(cors)
         .with_state(state);
 
@@ -482,6 +510,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!(
         "   💰 Booked Trades API: http://localhost:{}/api/booked-trades",
+        monitor_port
+    );
+    info!(
+        "   🔄 Retroactive Enrichment: POST http://localhost:{}/api/enriched-trades/retroactive-fix",
         monitor_port
     );
 
