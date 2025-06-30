@@ -322,32 +322,31 @@ async fn run_single_symbol_timeframe_backtest(
     let pattern_data = recognizer.detect(&primary_candles);
     info!("Pattern recognition complete for {}: found patterns", symbol);
 
-    // --- 4. Trade Configuration ---
+    // --- 4. Trade Configuration (IDENTICAL TO SINGLE BACKTEST) ---
     let trade_config = TradeConfig {
         enabled: true,
         lot_size: params.get_lot_size(),
         default_stop_loss_pips: params.get_stop_loss_pips(),
         default_take_profit_pips: params.get_take_profit_pips(),
         risk_percent: 1.0,
-        max_trades_per_zone: params.get_max_trades_per_zone(),
-        min_zone_strength: None, // Will be handled by environment variables
-        max_touch_count: None,   // Will be handled by environment variables
-        ..Default::default()
+        max_trades_per_zone: 1, // Same as single backtest default
+        min_zone_strength: None,
+        max_touch_count: None,
     };
 
     info!(
-        "Trade config for {}: lot_size={}, sl={}, tp={}, max_per_zone={}",
+        "Trade config for {}: lot_size={}, sl={}, tp={}",
         symbol,
         trade_config.lot_size,
         trade_config.default_stop_loss_pips,
         trade_config.default_take_profit_pips,
-        trade_config.max_trades_per_zone,
     );
 
-    // --- 5. Trade Execution ---
+    // --- 5. Trade Execution (IDENTICAL TO SINGLE BACKTEST) ---
+    let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
     let mut trade_executor = TradeExecutor::new(
         trade_config,
-        symbol, // Use clean symbol name without _SB
+        default_symbol_for_recognizer_trade, // Use same placeholder as single backtest
         None,   // allowed_days
         None,   // trade_end_hour
     );
@@ -356,8 +355,6 @@ async fn run_single_symbol_timeframe_backtest(
         trade_executor.set_minute_candles(minute_candles);
         info!("TradeExecutor configured with 1m data for {}", symbol);
     }
-
-    trade_executor.set_timeframe(timeframe.to_string());
 
     // Execute trades using the OLD METHOD (use_old_method = true) for consistency
     let trades = trade_executor.execute_trades_for_pattern(

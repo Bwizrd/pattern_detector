@@ -27,9 +27,80 @@
         .last-updated {
             text-align: center;
             color: #666;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             font-style: italic;
         }
+        
+        /* Filter Section */
+        .filter-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #e9ecef;
+        }
+        .filter-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .filter-title::before {
+            content: "🔍";
+            margin-right: 8px;
+        }
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            align-items: end;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .filter-label {
+            font-size: 12px;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .filter-input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+        }
+        .filter-input:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+        }
+        .clear-filters-btn {
+            padding: 8px 16px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        .clear-filters-btn:hover {
+            background: #5a6268;
+        }
+        .filter-results {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+            text-align: center;
+        }
+        
         .orders-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -160,6 +231,18 @@
             80% { opacity: 1; transform: translateY(0); }
             100% { opacity: 0; transform: translateY(-20px); }
         }
+        .no-results {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 16px;
+        }
+        .no-results::before {
+            content: "📋";
+            display: block;
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -171,202 +254,14 @@
     </div>
 
     <script>
-        // Embedded JSON data to avoid CORS issues
-        const pendingOrdersData = {
-  "last_updated": "2025-06-25T06:50:36.422701Z",
-  "orders": {
-    "6212cf042a17929a": {
-      "zone_id": "6212cf042a17929a",
-      "symbol": "GBPCHF",
-      "timeframe": "30m",
-      "zone_type": "demand_zone",
-      "order_type": "BUY_LIMIT",
-      "entry_price": 1.095138984,
-      "lot_size": 1000,
-      "stop_loss": 1.093138984,
-      "take_profit": 1.097138984,
-      "ctrader_order_id": "46567226",
-      "placed_at": "2025-06-24T16:07:26.511471Z",
-      "status": "PENDING",
-      "zone_high": 1.095138984,
-      "zone_low": 1.09369,
-      "zone_strength": 90.0,
-      "touch_count": 1,
-      "distance_when_placed": 11.110159999998537
-    },
-    "4d32c2512ccdbbc8": {
-      "zone_id": "4d32c2512ccdbbc8",
-      "symbol": "AUDNZD",
-      "timeframe": "30m",
-      "zone_type": "supply_zone",
-      "order_type": "SELL_LIMIT",
-      "entry_price": 1.082223512,
-      "lot_size": 1000,
-      "stop_loss": 1.084223512,
-      "take_profit": 1.080223512,
-      "ctrader_order_id": "46567225",
-      "placed_at": "2025-06-24T16:07:26.363561Z",
-      "status": "PENDING",
-      "zone_high": 1.08317,
-      "zone_low": 1.082223512,
-      "zone_strength": 100.0,
-      "touch_count": 0,
-      "distance_when_placed": 17.93512000000108
-    },
-    "c2ecc931ac24f466": {
-      "zone_id": "c2ecc931ac24f466",
-      "symbol": "GBPCHF",
-      "timeframe": "1h",
-      "zone_type": "demand_zone",
-      "order_type": "BUY_LIMIT",
-      "entry_price": 1.095138984,
-      "lot_size": 1000,
-      "stop_loss": 1.093138984,
-      "take_profit": 1.097138984,
-      "ctrader_order_id": "46567227",
-      "placed_at": "2025-06-24T16:07:26.555848Z",
-      "status": "PENDING",
-      "zone_high": 1.095138984,
-      "zone_low": 1.09362,
-      "zone_strength": 90.0,
-      "touch_count": 1,
-      "distance_when_placed": 11.110159999998537
-    },
-    "878ec5b209c032f2": {
-      "zone_id": "878ec5b209c032f2",
-      "symbol": "NZDJPY",
-      "timeframe": "30m",
-      "zone_type": "demand_zone",
-      "order_type": "BUY_LIMIT",
-      "entry_price": 87.0784122,
-      "lot_size": 1000,
-      "stop_loss": 86.8784122,
-      "take_profit": 87.2784122,
-      "ctrader_order_id": "46567220",
-      "placed_at": "2025-06-24T16:07:20.264868Z",
-      "status": "PENDING",
-      "zone_high": 87.0784122,
-      "zone_low": 86.809,
-      "zone_strength": 90.0,
-      "touch_count": 1,
-      "distance_when_placed": 4.6587799999997515
-    },
-    "2ef1020d32e72bc0": {
-      "zone_id": "2ef1020d32e72bc0",
-      "symbol": "EURNZD",
-      "timeframe": "1h",
-      "zone_type": "supply_zone",
-      "order_type": "SELL_LIMIT",
-      "entry_price": 1.929394044,
-      "lot_size": 1000,
-      "stop_loss": 1.931394044,
-      "take_profit": 1.927394044,
-      "ctrader_order_id": "46567223",
-      "placed_at": "2025-06-24T16:07:26.283086Z",
-      "status": "PENDING",
-      "zone_high": 1.93403,
-      "zone_low": 1.929394044,
-      "zone_strength": 100.0,
-      "touch_count": 0,
-      "distance_when_placed": 12.859560000000323
-    },
-    "34cdeed913267bea": {
-      "zone_id": "34cdeed913267bea",
-      "symbol": "EURCAD",
-      "timeframe": "30m",
-      "zone_type": "supply_zone",
-      "order_type": "SELL_LIMIT",
-      "entry_price": 1.59058182,
-      "lot_size": 1000,
-      "stop_loss": 1.59258182,
-      "take_profit": 1.58858182,
-      "ctrader_order_id": "46567217",
-      "placed_at": "2025-06-24T16:07:20.085707Z",
-      "status": "PENDING",
-      "zone_high": 1.59268,
-      "zone_low": 1.59058182,
-      "zone_strength": 80.0,
-      "touch_count": 2,
-      "distance_when_placed": 16.68180000000019
-    },
-    "41f11e2614d7c679": {
-      "zone_id": "41f11e2614d7c679",
-      "symbol": "USDCHF",
-      "timeframe": "1h",
-      "zone_type": "supply_zone",
-      "order_type": "SELL_LIMIT",
-      "entry_price": 0.807578452,
-      "lot_size": 1000,
-      "stop_loss": 0.809578452,
-      "take_profit": 0.805578452,
-      "ctrader_order_id": "46568050",
-      "placed_at": "2025-06-24T16:26:30.903759Z",
-      "status": "PENDING",
-      "zone_high": 0.80943,
-      "zone_low": 0.807578452,
-      "zone_strength": 100.0,
-      "touch_count": 0,
-      "distance_when_placed": 19.88451999999974
-    },
-    "5a63858d7df478e4": {
-      "zone_id": "5a63858d7df478e4",
-      "symbol": "CHFJPY",
-      "timeframe": "30m",
-      "zone_type": "supply_zone",
-      "order_type": "SELL_LIMIT",
-      "entry_price": 180.3379252,
-      "lot_size": 1000,
-      "stop_loss": 180.7379252,
-      "take_profit": 180.2379252,
-      "ctrader_order_id": "46590899",
-      "placed_at": "2025-06-25T06:44:28.536186Z",
-      "status": "PENDING",
-      "zone_high": 180.617,
-      "zone_low": 180.3379252,
-      "zone_strength": 100.0,
-      "touch_count": 0,
-      "distance_when_placed": 4.207479999999464
-    },
-    "8bbb861b8367b928": {
-      "zone_id": "8bbb861b8367b928",
-      "symbol": "AUDJPY",
-      "timeframe": "30m",
-      "zone_type": "demand_zone",
-      "order_type": "BUY_LIMIT",
-      "entry_price": 94.1318226,
-      "lot_size": 1000,
-      "stop_loss": 93.9318226,
-      "take_profit": 94.3318226,
-      "ctrader_order_id": "46567229",
-      "placed_at": "2025-06-24T16:07:30.224263Z",
-      "status": "PENDING",
-      "zone_high": 94.1318226,
-      "zone_low": 93.855,
-      "zone_strength": 80.0,
-      "touch_count": 2,
-      "distance_when_placed": 1.0177399999989234
-    },
-    "c03b74c53730b70e": {
-      "zone_id": "c03b74c53730b70e",
-      "symbol": "AUDUSD",
-      "timeframe": "30m",
-      "zone_type": "supply_zone",
-      "order_type": "SELL_LIMIT",
-      "entry_price": 0.650729828,
-      "lot_size": 1000,
-      "stop_loss": 0.652729828,
-      "take_profit": 0.648729828,
-      "ctrader_order_id": "46567230",
-      "placed_at": "2025-06-24T16:07:32.980333Z",
-      "status": "PENDING",
-      "zone_high": 0.65194,
-      "zone_low": 0.650729828,
-      "zone_strength": 60.0,
-      "touch_count": 4,
-      "distance_when_placed": 11.49827999999964
-    }
-  }
-};
+        let allOrders = {};
+        let filteredOrders = {};
+        let currentFilters = {
+            symbol: '',
+            timeframe: '',
+            dateFrom: '',
+            dateTo: ''
+        };
 
         async function loadPendingOrders() {
             try {
@@ -375,7 +270,10 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
+                allOrders = data.orders;
+                filteredOrders = { ...allOrders };
                 displayOrders(data);
+                populateFilterOptions();
             } catch (error) {
                 document.getElementById('content').innerHTML = `
                     <div class="error">
@@ -387,106 +285,258 @@
             }
         }
 
+        function populateFilterOptions() {
+            // Get unique symbols and timeframes
+            const symbols = [...new Set(Object.values(allOrders).map(order => order.symbol))].sort();
+            const timeframes = [...new Set(Object.values(allOrders).map(order => order.timeframe))].sort();
+
+            // Custom sort for timeframes to put them in logical order
+            const timeframeOrder = ['5m', '15m', '30m', '1h', '4h', '1d'];
+            timeframes.sort((a, b) => {
+                const indexA = timeframeOrder.indexOf(a);
+                const indexB = timeframeOrder.indexOf(b);
+                if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                return indexA - indexB;
+            });
+
+            // Populate symbol dropdown
+            const symbolSelect = document.getElementById('symbolFilter');
+            if (symbolSelect) {
+                symbolSelect.innerHTML = '<option value="">All Symbols</option>';
+                symbols.forEach(symbol => {
+                    const selected = symbol === currentFilters.symbol ? 'selected' : '';
+                    symbolSelect.innerHTML += `<option value="${symbol}" ${selected}>${symbol}</option>`;
+                });
+            }
+
+            // Populate timeframe dropdown
+            const timeframeSelect = document.getElementById('timeframeFilter');
+            if (timeframeSelect) {
+                timeframeSelect.innerHTML = '<option value="">All Timeframes</option>';
+                timeframes.forEach(timeframe => {
+                    const selected = timeframe === currentFilters.timeframe ? 'selected' : '';
+                    timeframeSelect.innerHTML += `<option value="${timeframe}" ${selected}>${timeframe}</option>`;
+                });
+            }
+
+            // Set date filter values
+            const dateFromInput = document.getElementById('dateFromFilter');
+            const dateToInput = document.getElementById('dateToFilter');
+            if (dateFromInput) dateFromInput.value = currentFilters.dateFrom;
+            if (dateToInput) dateToInput.value = currentFilters.dateTo;
+        }
+
+        function applyFilters() {
+            // Store current filter values
+            currentFilters.symbol = document.getElementById('symbolFilter').value;
+            currentFilters.timeframe = document.getElementById('timeframeFilter').value;
+            currentFilters.dateFrom = document.getElementById('dateFromFilter').value;
+            currentFilters.dateTo = document.getElementById('dateToFilter').value;
+
+            filteredOrders = {};
+
+            for (const [orderId, order] of Object.entries(allOrders)) {
+                let matchesFilters = true;
+
+                // Symbol filter
+                if (currentFilters.symbol && order.symbol !== currentFilters.symbol) {
+                    matchesFilters = false;
+                }
+
+                // Timeframe filter
+                if (currentFilters.timeframe && order.timeframe !== currentFilters.timeframe) {
+                    matchesFilters = false;
+                }
+
+                // Date filters
+                const orderDate = new Date(order.placed_at).toISOString().split('T')[0];
+                
+                if (currentFilters.dateFrom && orderDate < currentFilters.dateFrom) {
+                    matchesFilters = false;
+                }
+
+                if (currentFilters.dateTo && orderDate > currentFilters.dateTo) {
+                    matchesFilters = false;
+                }
+
+                if (matchesFilters) {
+                    filteredOrders[orderId] = order;
+                }
+            }
+
+            // Update display with filtered orders
+            const data = {
+                last_updated: new Date().toISOString(), // Use current time since we don't have access to original timestamp
+                orders: filteredOrders
+            };
+            displayOrders(data);
+        }
+
+        function clearFilters() {
+            currentFilters = {
+                symbol: '',
+                timeframe: '',
+                dateFrom: '',
+                dateTo: ''
+            };
+            
+            filteredOrders = { ...allOrders };
+            const data = {
+                last_updated: new Date().toISOString(), // Use current time since we don't have access to original timestamp
+                orders: filteredOrders
+            };
+            displayOrders(data);
+        }
+
         function displayOrders(data) {
             const lastUpdated = new Date(data.last_updated).toLocaleString();
             const orders = data.orders;
             const orderCount = Object.keys(orders).length;
+            const totalOrders = Object.keys(allOrders).length;
 
             let html = `
                 <div class="last-updated">
-                    Last updated: ${lastUpdated} | Total orders: ${orderCount}
+                    Last updated: ${lastUpdated}
                 </div>
-                <div class="orders-grid">
+                
+                <div class="filter-section">
+                    <div class="filter-title">Filter Orders</div>
+                    <div class="filter-grid">
+                        <div class="filter-group">
+                            <label class="filter-label">Symbol</label>
+                            <select id="symbolFilter" class="filter-input" onchange="applyFilters()">
+                                <option value="">All Symbols</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Timeframe</label>
+                            <select id="timeframeFilter" class="filter-input" onchange="applyFilters()">
+                                <option value="">All Timeframes</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">From Date</label>
+                            <input type="date" id="dateFromFilter" class="filter-input" onchange="applyFilters()">
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">To Date</label>
+                            <input type="date" id="dateToFilter" class="filter-input" onchange="applyFilters()">
+                        </div>
+                        <div class="filter-group">
+                            <button class="clear-filters-btn" onclick="clearFilters()">Clear Filters</button>
+                        </div>
+                    </div>
+                    <div class="filter-results">
+                        Showing ${orderCount} of ${totalOrders} orders
+                    </div>
+                </div>
             `;
 
-            for (const [orderId, order] of Object.entries(orders)) {
-                const orderTypeClass = order.order_type.includes('BUY') ? 'buy' : 'sell';
-                const zoneStrengthClass = order.zone_strength >= 80 ? 'high' : 
-                                        order.zone_strength >= 60 ? 'medium' : 'low';
-
+            if (orderCount === 0) {
                 html += `
-                    <div class="order-card ${orderTypeClass}">
-                        <div class="order-header">
-                            <span class="symbol">${order.symbol}</span>
-                            <span class="order-type ${orderTypeClass}">${order.order_type}</span>
-                        </div>
-                        <div class="order-details">
-                            <div class="detail-item">
-                                <span class="detail-label">Entry Price:</span>
-                                <span class="detail-value">${order.entry_price.toFixed(5)}</span>
+                    <div class="no-results">
+                        <strong>No orders match your filters</strong><br>
+                        Try adjusting your filter criteria or clearing filters to see all orders.
+                    </div>
+                `;
+            } else {
+                html += '<div class="orders-grid">';
+
+                for (const [orderId, order] of Object.entries(orders)) {
+                    const orderTypeClass = order.order_type.includes('BUY') ? 'buy' : 'sell';
+                    const zoneStrengthClass = order.zone_strength >= 80 ? 'high' : 
+                                            order.zone_strength >= 60 ? 'medium' : 'low';
+
+                    html += `
+                        <div class="order-card ${orderTypeClass}">
+                            <div class="order-header">
+                                <span class="symbol">${order.symbol}</span>
+                                <span class="order-type ${orderTypeClass}">${order.order_type}</span>
                             </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Lot Size:</span>
-                                <span class="detail-value">${order.lot_size.toLocaleString()}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Stop Loss:</span>
-                                <span class="detail-value">${order.stop_loss.toFixed(5)}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Take Profit:</span>
-                                <span class="detail-value">${order.take_profit.toFixed(5)}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Timeframe:</span>
-                                <span class="detail-value">${order.timeframe}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Status:</span>
-                                <span class="detail-value"><span class="status">${order.status}</span></span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Order ID:</span>
-                                <span class="detail-value">${order.ctrader_order_id}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Zone ID:</span>
-                                <span class="detail-value">
-                                    <span class="zone-id-clickable" onclick="copyToClipboard('${order.zone_id}')" title="Click to copy Zone ID">${order.zone_id}</span>
-                                </span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Placed:</span>
-                                <span class="detail-value">${new Date(order.placed_at).toLocaleString()}</span>
-                            </div>
-                        </div>
-                        <div class="zone-info">
-                            <h4>Zone Information</h4>
                             <div class="order-details">
                                 <div class="detail-item">
-                                    <span class="detail-label">Zone Type:</span>
-                                    <span class="detail-value">${order.zone_type.replace('_', ' ').toUpperCase()}</span>
+                                    <span class="detail-label">Entry Price:</span>
+                                    <span class="detail-value">${order.entry_price.toFixed(5)}</span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label">Zone Strength:</span>
+                                    <span class="detail-label">Lot Size:</span>
+                                    <span class="detail-value">${order.lot_size.toLocaleString()}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Stop Loss:</span>
+                                    <span class="detail-value">${order.stop_loss.toFixed(5)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Take Profit:</span>
+                                    <span class="detail-value">${order.take_profit.toFixed(5)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Timeframe:</span>
+                                    <span class="detail-value">${order.timeframe}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Status:</span>
+                                    <span class="detail-value"><span class="status">${order.status}</span></span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Order ID:</span>
+                                    <span class="detail-value">${order.ctrader_order_id}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Zone ID:</span>
                                     <span class="detail-value">
-                                        <span class="zone-strength ${zoneStrengthClass}">${order.zone_strength}%</span>
+                                        <span class="zone-id-clickable" onclick="copyToClipboard('${order.zone_id}')" title="Click to copy Zone ID">${order.zone_id}</span>
                                     </span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label">Zone High:</span>
-                                    <span class="detail-value">${order.zone_high.toFixed(5)}</span>
+                                    <span class="detail-label">Placed:</span>
+                                    <span class="detail-value">${new Date(order.placed_at).toLocaleString()}</span>
                                 </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Zone Low:</span>
-                                    <span class="detail-value">${order.zone_low.toFixed(5)}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Touch Count:</span>
-                                    <span class="detail-value">${order.touch_count}</span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Distance:</span>
-                                    <span class="detail-value">${order.distance_when_placed.toFixed(2)} pips</span>
+                            </div>
+                            <div class="zone-info">
+                                <h4>Zone Information</h4>
+                                <div class="order-details">
+                                    <div class="detail-item">
+                                        <span class="detail-label">Zone Type:</span>
+                                        <span class="detail-value">${order.zone_type.replace('_', ' ').toUpperCase()}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Zone Strength:</span>
+                                        <span class="detail-value">
+                                            <span class="zone-strength ${zoneStrengthClass}">${order.zone_strength}%</span>
+                                        </span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Zone High:</span>
+                                        <span class="detail-value">${order.zone_high.toFixed(5)}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Zone Low:</span>
+                                        <span class="detail-value">${order.zone_low.toFixed(5)}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Touch Count:</span>
+                                        <span class="detail-value">${order.touch_count}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Distance:</span>
+                                        <span class="detail-value">${order.distance_when_placed.toFixed(2)} pips</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                `;
+                    `;
+                }
+
+                html += '</div>';
             }
 
-            html += '</div>';
             document.getElementById('content').innerHTML = html;
+            
+            // Re-populate filter options after content is loaded and preserve selections
+            populateFilterOptions();
         }
 
         // Load orders when page loads
