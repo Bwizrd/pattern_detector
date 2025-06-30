@@ -22,10 +22,15 @@ use std::sync::Arc;
 use actix_cors::Cors;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::http::StatusCode;
+use actix_web::web::Json;
+use actix_web::HttpResponse as ActixHttpResponse;
+use actix_web::Result as ActixResult;
 use dotenv::dotenv;
 use log::{error, info};
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
+use std::fs;
 
 // Use tokio::sync::Mutex consistently throughout
 use tokio::sync::Mutex;
@@ -151,6 +156,18 @@ async fn debug_cache_timeframes(
         "total_timeframes": timeframe_counts.len(),
         "timestamp": chrono::Utc::now().to_rfc3339()
     }))
+}
+
+// --- Combined Backtest HTML Handler ---
+async fn combined_backtest_html() -> ActixResult<ActixHttpResponse> {
+    match fs::read_to_string("combined_backtest_ui.html") {
+        Ok(content) => Ok(ActixHttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .body(content)),
+        Err(_) => Ok(ActixHttpResponse::NotFound()
+            .content_type("text/html; charset=utf-8")
+            .body("<h1>Error: combined_backtest_ui.html not found</h1>")),
+    }
 }
 
 // --- Cache Setup Function ---
@@ -300,6 +317,10 @@ async fn main() -> std::io::Result<()> {
                 web::post().to(crate::api::multi_backtest_handler::run_multi_symbol_backtest),
             )
             .route(
+                "/combined-backtest",
+                web::post().to(crate::api::combined_backtest_handler::run_combined_backtest),
+            )
+            .route(
                 "/optimize-parameters",
                 web::post().to(crate::api::optimize_handler::run_parameter_optimization),
             )
@@ -324,6 +345,9 @@ async fn main() -> std::io::Result<()> {
             // === MOBILE DASHBOARD ===
             .route("/dashboard", web::get().to(crate::api::mobile_dashboard::serve_dashboard))
             .route("/api/dashboard-data", web::get().to(crate::api::mobile_dashboard::get_dashboard_data))
+            
+            // === COMBINED BACKTEST UI ===
+            .route("/combined-backtest-ui", web::get().to(combined_backtest_html))
             
             // === BASIC HANDLERS (for compatibility) ===
             .route("/current-prices", web::get().to(get_current_prices_handler))
