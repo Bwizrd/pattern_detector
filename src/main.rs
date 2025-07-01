@@ -29,8 +29,9 @@ use actix_web::Result as ActixResult;
 use dotenv::dotenv;
 use log::{error, info};
 use reqwest::Client as HttpClient;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::collections::HashMap;
 
 // Use tokio::sync::Mutex consistently throughout
 use tokio::sync::Mutex;
@@ -81,6 +82,40 @@ async fn echo(query: web::Query<QueryParams>) -> impl Responder {
 
 async fn health_check() -> impl Responder {
     HttpResponse::Ok().body("OK, Rust server is running on port 8080")
+}
+
+// --- Trading Settings Handler ---
+async fn trading_settings_handler() -> impl Responder {
+    let mut settings = HashMap::new();
+
+    dotenv().ok();
+
+    for (key, value) in std::env::vars() {
+        // Include all trading-related settings
+        if key.contains("TRADING") 
+            || key.contains("STRATEGY") 
+            || key.contains("LOT_SIZE")
+            || key.contains("TP_PIPS")
+            || key.contains("SL_PIPS")
+            || key.contains("SCANNER_")
+            || key.contains("PROXIMITY_")
+            || key.contains("INTENSIVE_ALERT")
+            || key.contains("LIMIT_ORDER")
+            || key.contains("NOTIFICATIONS_")
+            || key.contains("TELEGRAM_")
+            || key.contains("ENABLE_SOUND")
+            || key.contains("CTRADER_")
+            || key == "HOST"
+            || key == "PORT"
+            || key.contains("ENABLE_REALTIME")
+            || key.contains("CACHE_UPDATE")
+            || key.contains("ENABLE_TERMINAL")
+        {
+            settings.insert(key, value);
+        }
+    }
+
+    HttpResponse::Ok().json(settings)
 }
 
 // --- Debug Handlers ---
@@ -167,6 +202,18 @@ async fn combined_backtest_html() -> ActixResult<ActixHttpResponse> {
         Err(_) => Ok(ActixHttpResponse::NotFound()
             .content_type("text/html; charset=utf-8")
             .body("<h1>Error: combined_backtest_ui.html not found</h1>")),
+    }
+}
+
+// --- Trading Settings HTML Handler ---
+async fn trading_settings_html() -> ActixResult<ActixHttpResponse> {
+    match fs::read_to_string("trading_settings.html") {
+        Ok(content) => Ok(ActixHttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .body(content)),
+        Err(_) => Ok(ActixHttpResponse::NotFound()
+            .content_type("text/html; charset=utf-8")
+            .body("<h1>Error: trading_settings.html not found</h1>")),
     }
 }
 
@@ -346,9 +393,13 @@ async fn main() -> std::io::Result<()> {
             .route("/dashboard", web::get().to(crate::api::mobile_dashboard::serve_dashboard))
             .route("/api/dashboard-data", web::get().to(crate::api::mobile_dashboard::get_dashboard_data))
             
-            // === COMBINED BACKTEST UI ===
+// === COMBINED BACKTEST UI ===
             .route("/combined-backtest-ui", web::get().to(combined_backtest_html))
             
+// === TRADING SETTINGS HANDLER ===
+            .route("/api/settings", web::get().to(trading_settings_handler))
+            .route("/trading-settings", web::get().to(trading_settings_html))
+
             // === BASIC HANDLERS (for compatibility) ===
             .route("/current-prices", web::get().to(get_current_prices_handler))
             .route("/test-prices", web::get().to(test_prices_handler))

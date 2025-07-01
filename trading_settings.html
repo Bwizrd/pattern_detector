@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Settings Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        .header .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .refresh-btn {
+            background: #27ae60;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+        
+        .refresh-btn:hover {
+            background: #2ecc71;
+            transform: translateY(-2px);
+        }
+        
+        .status {
+            padding: 20px;
+            text-align: center;
+            font-size: 1.1rem;
+        }
+        
+        .status.loading {
+            color: #3498db;
+        }
+        
+        .status.error {
+            color: #e74c3c;
+        }
+        
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            padding: 30px;
+        }
+        
+        .settings-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .settings-section h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        
+        .setting-item:last-child {
+            border-bottom: none;
+        }
+        
+        .setting-label {
+            font-weight: 500;
+            color: #34495e;
+            flex: 1;
+        }
+        
+        .setting-value {
+            font-weight: 600;
+            color: #2c3e50;
+            background: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            max-width: 60%;
+            text-align: right;
+            word-break: break-all;
+        }
+        
+        .setting-value.enabled {
+            color: #27ae60;
+        }
+        
+        .setting-value.disabled {
+            color: #e74c3c;
+        }
+        
+        .setting-value.number {
+            color: #8e44ad;
+        }
+        
+        .icon {
+            font-size: 1.2rem;
+        }
+        
+        .last-updated {
+            text-align: center;
+            padding: 20px;
+            color: #7f8c8d;
+            font-style: italic;
+            border-top: 1px solid #ecf0f1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Trading Settings Dashboard</h1>
+            <div class="subtitle">Real-time configuration from .env file</div>
+            <button class="refresh-btn" onclick="loadSettings()">🔄 Refresh Settings</button>
+        </div>
+        
+        <div id="status" class="status loading">Loading settings...</div>
+        <div id="settings-container" class="settings-grid" style="display: none;"></div>
+        <div id="last-updated" class="last-updated" style="display: none;"></div>
+    </div>
+
+    <script>
+        async function loadSettings() {
+            const statusEl = document.getElementById('status');
+            const containerEl = document.getElementById('settings-container');
+            const lastUpdatedEl = document.getElementById('last-updated');
+            
+            statusEl.textContent = '🔄 Loading settings...';
+            statusEl.className = 'status loading';
+            containerEl.style.display = 'none';
+            lastUpdatedEl.style.display = 'none';
+            
+            try {
+                const response = await fetch('/api/settings');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const settings = await response.json();
+                displaySettings(settings);
+                
+                statusEl.style.display = 'none';
+                containerEl.style.display = 'grid';
+                lastUpdatedEl.style.display = 'block';
+                lastUpdatedEl.textContent = `Last updated: ${new Date().toLocaleString()}`;
+                
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                statusEl.textContent = '❌ Failed to load settings. Make sure the server is running.';
+                statusEl.className = 'status error';
+            }
+        }
+        
+        function displaySettings(settings) {
+            const container = document.getElementById('settings-container');
+            
+            const sections = {
+                'Trading Core': {
+                    icon: '💰',
+                    color: '#27ae60',
+                    settings: [
+                        'TRADING_ENABLED',
+                        'TRADING_LOT_SIZE',
+                        'TRADING_JPY_LOT_SIZE',
+                        'TRADING_INDEX_LOT_SIZE',
+                        'TRADING_STOP_LOSS_PIPS',
+                        'TRADING_TAKE_PROFIT_PIPS',
+                        'TRADING_MAX_DAILY_TRADES',
+                        'TRADING_MAX_TRADES_PER_SYMBOL',
+                        'TRADING_MIN_ZONE_STRENGTH',
+                        'TRADING_MAX_TRADES_PER_ZONE'
+                    ]
+                },
+                'Risk Management': {
+                    icon: '🛡️',
+                    color: '#e74c3c',
+                    settings: [
+                        'LOT_SIZE',
+                        'TP_PIPS',
+                        'SL_PIPS',
+                        'STRATEGY_SL_PIPS',
+                        'STRATEGY_TP_PIPS',
+                        'STRATEGY_LOT_SIZE',
+                        'TRADING_MIN_RISK_REWARD',
+                        'SCANNER_TP_PIPS',
+                        'SCANNER_SL_PIPS'
+                    ]
+                },
+                'Market Access': {
+                    icon: '🌍',
+                    color: '#3498db',
+                    settings: [
+                        'TRADING_ALLOWED_SYMBOLS',
+                        'TRADING_ALLOWED_TIMEFRAMES',
+                        'SYMBOL_LIST',
+                        'STRATEGY_ALLOWED_DAYS',
+                        'TRADING_START_HOUR',
+                        'TRADING_END_HOUR'
+                    ]
+                },
+                'Proximity & Alerts': {
+                    icon: '📡',
+                    color: '#f39c12',
+                    settings: [
+                        'PROXIMITY_ALERTS_ENABLED',
+                        'PROXIMITY_THRESHOLD_PIPS',
+                        'TRADING_THRESHOLD_PIPS',
+                        'MAX_TOUCH_COUNT_FOR_TRADING',
+                        'ENABLE_INTENSIVE_PROXIMITY_ALERTS',
+                        'INTENSIVE_ALERT_START_PIPS',
+                        'INTENSIVE_ALERT_ALMOST_READY_PIPS',
+                        'INTENSIVE_ALERT_IMMINENT_PIPS'
+                    ]
+                },
+                'System Configuration': {
+                    icon: '⚙️',
+                    color: '#9b59b6',
+                    settings: [
+                        'HOST',
+                        'PORT',
+                        'CTRADER_API_BRIDGE_URL',
+                        'CTRADER_API_TIMEOUT',
+                        'ENABLE_REALTIME_CACHE',
+                        'CACHE_UPDATE_INTERVAL_SECONDS',
+                        'ENABLE_TERMINAL_DASHBOARD'
+                    ]
+                },
+                'Notifications': {
+                    icon: '🔔',
+                    color: '#1abc9c',
+                    settings: [
+                        'NOTIFICATIONS_ENABLED',
+                        'ENABLE_SOUND_NOTIFICATIONS',
+                        'TELEGRAM_CHAT_ID',
+                        'TELEGRAM_MIN_INTERVAL_SECONDS',
+                        'TELEGRAM_MAX_RETRIES'
+                    ]
+                },
+                'Limit Orders': {
+                    icon: '📋',
+                    color: '#34495e',
+                    settings: [
+                        'ENABLE_LIMIT_ORDERS',
+                        'LIMIT_ORDER_DISTANCE_PIPS',
+                        'LIMIT_ORDER_LOT_SIZE',
+                        'LIMIT_ORDER_SL_PIPS',
+                        'LIMIT_ORDER_TP_PIPS',
+                        'LIMIT_ORDER_SHARED_FILE'
+                    ]
+                }
+            };
+            
+            container.innerHTML = '';
+            
+            Object.entries(sections).forEach(([sectionName, config]) => {
+                const sectionEl = document.createElement('div');
+                sectionEl.className = 'settings-section';
+                sectionEl.style.borderLeftColor = config.color;
+                
+                const titleEl = document.createElement('h3');
+                titleEl.innerHTML = `<span class="icon">${config.icon}</span> ${sectionName}`;
+                sectionEl.appendChild(titleEl);
+                
+                config.settings.forEach(key => {
+                    if (settings[key] !== undefined) {
+                        const itemEl = document.createElement('div');
+                        itemEl.className = 'setting-item';
+                        
+                        const labelEl = document.createElement('div');
+                        labelEl.className = 'setting-label';
+                        labelEl.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        
+                        const valueEl = document.createElement('div');
+                        valueEl.className = 'setting-value';
+                        
+                        let value = settings[key];
+                        
+                        // Format different types of values
+                        if (value === 'true') {
+                            valueEl.classList.add('enabled');
+                            valueEl.textContent = '✅ Enabled';
+                        } else if (value === 'false') {
+                            valueEl.classList.add('disabled');
+                            valueEl.textContent = '❌ Disabled';
+                        } else if (!isNaN(value) && value !== '') {
+                            valueEl.classList.add('number');
+                            valueEl.textContent = value;
+                        } else if (value.length > 50) {
+                            valueEl.textContent = value.substring(0, 50) + '...';
+                            valueEl.title = value;
+                        } else {
+                            valueEl.textContent = value;
+                        }
+                        
+                        itemEl.appendChild(labelEl);
+                        itemEl.appendChild(valueEl);
+                        sectionEl.appendChild(itemEl);
+                    }
+                });
+                
+                if (sectionEl.children.length > 1) {
+                    container.appendChild(sectionEl);
+                }
+            });
+        }
+        
+        // Load settings on page load
+        loadSettings();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(loadSettings, 30000);
+    </script>
+</body>
+</html>
