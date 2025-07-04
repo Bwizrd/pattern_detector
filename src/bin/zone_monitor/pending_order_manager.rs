@@ -11,6 +11,8 @@ use tokio::fs;
 use tracing::{debug, error, info, warn};
 use crate::types::ZoneAlert;
 use crate::csv_logger::CsvLogger;
+use crate::db::{OrderDatabase, OrderEventBuilder, OrderStatus};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrder {
@@ -101,6 +103,7 @@ pub struct PendingOrderManager {
     http_client: reqwest::Client,
     symbol_ids: HashMap<String, i32>, // symbol -> symbol_id mapping
     allowed_timeframes: Vec<String>,  // allowed timeframes for trading
+    order_database: Option<Arc<OrderDatabase>>, // InfluxDB for order lifecycle tracking
 }
 
 #[derive(Debug, Serialize)]
@@ -169,6 +172,29 @@ struct CancelOrderResponse {
     message: String,
     #[serde(rename = "errorCode")]
     error_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CTraderPositionsResponse {
+    #[serde(default = "default_true")]
+    success: bool,
+    positions: Vec<CTraderPosition>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+struct CTraderPosition {
+    #[serde(rename = "positionId")]
+    pub positionId: u64,
+    #[serde(rename = "symbolId")]
+    pub symbolId: i32,
+    pub volume: f64,
+    #[serde(rename = "tradeSide")]
+    pub tradeSide: i32,
+    pub price: f64,
 }
 
 impl PendingOrderManager {
@@ -242,7 +268,14 @@ impl PendingOrderManager {
             http_client: reqwest::Client::new(),
             symbol_ids: Self::init_symbol_ids(),
             allowed_timeframes,
+            order_database: None,
         }
+    }
+
+    /// Set the order database for InfluxDB tracking
+    pub fn set_order_database(&mut self, order_database: Arc<OrderDatabase>) {
+        self.order_database = Some(order_database);
+        info!("📋 Order database connected for InfluxDB tracking");
     }
 
     /// Initialize symbol ID mapping (matching Angular CURRENCIES_MAP)
@@ -621,6 +654,36 @@ impl PendingOrderManager {
             self.pending_orders
                 .insert(zone.id.clone(), pending_order.clone());
 
+            // Write to InfluxDB if available
+            if let Some(ref order_db) = self.order_database {
+                let order_event = OrderEventBuilder::new(
+                    zone.id.clone(),
+                    price_update.symbol.clone(),
+                    zone.timeframe.clone(),
+                    zone.zone_type.clone(),
+                    order_type_str.to_string(),
+                    entry_price,
+                    self.default_lot_size,
+                    stop_loss,
+                    take_profit,
+                )
+                .with_zone_metadata(
+                    zone.high,
+                    zone.low,
+                    zone.strength,
+                    zone.touch_count,
+                    distance_pips,
+                )
+                .with_ctrader_order_id(order_id.clone())
+                .build();
+
+                if let Err(e) = order_db.write_order_event(&order_event).await {
+                    warn!("📋 Failed to write PENDING order event to InfluxDB: {}", e);
+                } else {
+                    debug!("📋 PENDING order event written to InfluxDB for zone {}", zone.id);
+                }
+            }
+
             // Don't add to booked_orders yet - only add when the order is actually FILLED
             // The active_order_manager will move orders from pending to booked when they fill
         } else {
@@ -743,11 +806,58 @@ impl PendingOrderManager {
         new_status: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(order) = self.pending_orders.get_mut(zone_id) {
+            let old_status = order.status.clone();
             order.status = new_status.to_string();
             info!(
-                "📋 Updated order status for zone {} to {}",
-                zone_id, new_status
+                "📋 Updated order status for zone {} from {} to {}",
+                zone_id, old_status, new_status
             );
+
+            // Write status change to InfluxDB if available and it's a significant change
+            // if let Some(ref order_db) = self.order_database {
+            //     if new_status == "FILLED" || new_status == "CANCELLED" {
+            //         let order_status = match new_status {
+            //             "FILLED" => OrderStatus::Filled,
+            //             "CANCELLED" => OrderStatus::Cancelled,
+            //             _ => OrderStatus::Pending,
+            //         };
+
+            //         // Create the status update event
+            //         let mut order_event = OrderEventBuilder::new(
+            //             order.zone_id.clone(),
+            //             order.symbol.clone(),
+            //             order.timeframe.clone(),
+            //             order.zone_type.clone(),
+            //             order.order_type.clone(),
+            //             order.entry_price,
+            //             order.lot_size,
+            //             order.stop_loss,
+            //             order.take_profit,
+            //         )
+            //         .with_zone_metadata(
+            //             order.zone_high,
+            //             order.zone_low,
+            //             order.zone_strength,
+            //             order.touch_count,
+            //             order.distance_when_placed,
+            //         )
+            //         .build();
+
+            //         // Override the status
+            //         order_event.status = order_status;
+                    
+            //         if let Some(ref ctrader_id) = order.ctrader_order_id {
+            //             order_event.ctrader_order_id = Some(ctrader_id.clone());
+            //         }
+
+            //         if let Err(e) = order_db.write_order_event(&order_event).await {
+            //             warn!("📋 Failed to write {} order event to InfluxDB: {}", new_status, e);
+            //         } else {
+            //             debug!("📋 {} order event written to InfluxDB for zone {}", new_status, zone_id);
+            //         }
+            //     }
+            // }
+
             self.save_pending_orders().await?;
         }
         Ok(())
@@ -821,6 +931,29 @@ impl PendingOrderManager {
             Ok(api_response.orders)
         } else {
             Err("Failed to fetch pending orders from cTrader".into())
+        }
+    }
+
+    /// Fetch current positions from cTrader API  
+    async fn fetch_ctrader_positions(
+        &self,
+    ) -> Result<Vec<CTraderPosition>, Box<dyn std::error::Error + Send + Sync>> {
+        let api_url = format!("{}/positions", self.ctrader_api_url);
+        let response = self.http_client.get(&api_url).send().await?;
+
+        let response_text = response.text().await?;
+        let api_response: CTraderPositionsResponse = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                format!(
+                    "Failed to parse cTrader positions response: {} - Response: {}",
+                    e, response_text
+                )
+            })?;
+
+        if api_response.success {
+            Ok(api_response.positions)
+        } else {
+            Err("Failed to fetch positions from cTrader".into())
         }
     }
 
@@ -1005,7 +1138,7 @@ impl PendingOrderManager {
         Ok(cancelled_count)
     }
 
-    /// Simplified synchronization - only update status, never remove orders
+    /// Simplified synchronization - distinguish between FILLED and CANCELLED orders
     pub async fn synchronize_pending_orders(
         &mut self,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
@@ -1024,9 +1157,22 @@ impl PendingOrderManager {
             }
         };
 
+        // Fetch current positions to check if orders became positions
+        let ctrader_positions = match self.fetch_ctrader_positions().await {
+            Ok(positions) => positions,
+            Err(e) => {
+                warn!("📋 Failed to fetch positions from cTrader: {}", e);
+                Vec::new() // Continue without position data
+            }
+        };
+
         // Create a set of actual pending order IDs at the broker
         let broker_order_ids: std::collections::HashSet<i64> =
             ctrader_orders.iter().map(|order| order.order_id).collect();
+
+        // Create a set of position IDs to check if orders became positions
+        let broker_position_ids: std::collections::HashSet<String> =
+            ctrader_positions.iter().map(|pos| pos.positionId.to_string()).collect();
 
         info!(
             "📋 Broker has {} pending orders: {:?}",
@@ -1034,14 +1180,19 @@ impl PendingOrderManager {
             broker_order_ids
         );
         info!(
+            "📋 Broker has {} open positions",
+            broker_position_ids.len()
+        );
+        info!(
             "📋 Local storage has {} total orders",
             self.pending_orders.len()
         );
 
         let mut status_updates = 0;
+        let mut orders_to_update = Vec::new();
 
-        // Update status of local orders based on broker state
-        for (zone_id, local_order) in &mut self.pending_orders {
+        // Collect orders that need status updates
+        for (zone_id, local_order) in &self.pending_orders {
             if local_order.status != "PENDING" {
                 continue; // Skip orders that are already processed
             }
@@ -1050,11 +1201,18 @@ impl PendingOrderManager {
                 match ctrader_order_id.parse::<i64>() {
                     Ok(order_id) => {
                         if !broker_order_ids.contains(&order_id) {
-                            // Order no longer pending at broker - it was filled or cancelled
-                            info!("📋 Order {} (cTrader ID: {}) no longer pending - updating status to FILLED", 
-                                  zone_id, order_id);
-                            local_order.status = "FILLED".to_string();
-                            status_updates += 1;
+                            // Order no longer pending at broker - check if it became a position
+                            if broker_position_ids.contains(ctrader_order_id) {
+                                // Order became a position - mark as FILLED
+                                info!("📋 Order {} (cTrader ID: {}) became position - updating status to FILLED", 
+                                      zone_id, order_id);
+                                orders_to_update.push((zone_id.clone(), local_order.clone(), "FILLED"));
+                            } else {
+                                // Order disappeared without becoming position - mark as CANCELLED
+                                info!("📋 Order {} (cTrader ID: {}) disappeared without position - updating status to CANCELLED", 
+                                      zone_id, order_id);
+                                orders_to_update.push((zone_id.clone(), local_order.clone(), "CANCELLED"));
+                            }
                         } else {
                             debug!(
                                 "📋 Order {} (cTrader ID: {}) confirmed pending at broker",
@@ -1069,6 +1227,65 @@ impl PendingOrderManager {
                         );
                     }
                 }
+            }
+        }
+
+        // Apply the status updates with enhanced fill data
+        for (zone_id, mut local_order, new_status) in orders_to_update {
+            if let Some(order_to_update) = self.pending_orders.get_mut(&zone_id) {
+                order_to_update.status = new_status.to_string();
+                status_updates += 1;
+                
+                // Try to get actual fill data from positions API
+                let (actual_fill_price, position_id) = self.get_fill_data_from_positions(&local_order).await
+                    .unwrap_or((local_order.entry_price, None));
+                
+                // Write status change to InfluxDB if available
+                // if let Some(ref order_db) = self.order_database {
+                //     let ctrader_order_id = local_order.ctrader_order_id.clone().unwrap_or_default();
+                    
+                //     // Create a base PENDING order event and convert to FILLED with actual data
+                //     let base_event = crate::db::schema::OrderEvent::new_pending(
+                //         local_order.zone_id.clone(),
+                //         local_order.symbol.clone(),
+                //         local_order.timeframe.clone(),
+                //         local_order.zone_type.clone(),
+                //         local_order.order_type.clone(),
+                //         local_order.entry_price,
+                //         local_order.lot_size,
+                //         local_order.stop_loss,
+                //         local_order.take_profit,
+                //     );
+                    
+                //     // Set zone metadata if available
+                //     let mut filled_event = if position_id.is_some() {
+                //         base_event.to_filled(position_id.unwrap(), actual_fill_price)
+                //     } else {
+                //         base_event.to_filled(ctrader_order_id.clone(), actual_fill_price)
+                //     };
+                    
+                //     // Add zone metadata
+                //     filled_event.zone_high = Some(local_order.zone_high);
+                //     filled_event.zone_low = Some(local_order.zone_low);
+                //     filled_event.zone_strength = Some(local_order.zone_strength);
+                //     filled_event.touch_count = Some(local_order.touch_count);
+                //     filled_event.distance_when_placed = Some(local_order.distance_when_placed);
+                //     filled_event.ctrader_order_id = Some(ctrader_order_id.clone());
+                    
+                //     // Write to InfluxDB async
+                //     let order_db_clone = order_db.clone();
+                //     let order_event_clone = filled_event.clone();
+                //     tokio::spawn(async move {
+                //         if let Err(e) = order_db_clone.write_order_event(&order_event_clone).await {
+                //             warn!("📋 Failed to write FILLED order event to InfluxDB: {}", e);
+                //         } else {
+                //             info!("📋 FILLED order event written to InfluxDB for order {} (position: {:?}, fill_price: {:.5})", 
+                //                   ctrader_order_id, 
+                //                   order_event_clone.ctrader_position_id.as_ref().unwrap_or(&"unknown".to_string()),
+                //                   actual_fill_price);
+                //         }
+                //     });
+                // }
             }
         }
 
@@ -1194,5 +1411,55 @@ impl PendingOrderManager {
             .values()
             .filter(|order| order.status == status)
             .collect()
+    }
+    
+    /// Get actual fill data from positions API for better PENDING->FILLED tracking
+    async fn get_fill_data_from_positions(&self, order: &PendingOrder) -> Option<(f64, Option<String>)> {
+        // Construct positions API URL (modify as needed based on your API setup)
+        let positions_url = self.ctrader_api_url.replace("/placePendingOrder", "/positions").replace("/pendingOrders", "/positions").replace("/cancelOrder", "/positions");
+        if positions_url == self.ctrader_api_url {
+            // No change made, manually construct
+            let base_url = self.ctrader_api_url.trim_end_matches('/'); 
+            let positions_url = format!("{}/positions", base_url);
+        }
+        
+        // Try to fetch positions to get actual fill price and position ID
+        match self.http_client.get(&positions_url).timeout(std::time::Duration::from_secs(5)).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    if let Ok(response_text) = response.text().await {
+                        // Try to parse positions response (structure may vary based on your API)
+                        if let Ok(positions_data) = serde_json::from_str::<serde_json::Value>(&response_text) {
+                            // Look for a position that matches this order
+                            if let Some(positions) = positions_data.get("positions").and_then(|p| p.as_array()) {
+                                for position in positions {
+                                    // Try to match by various fields
+                                    if let (Some(symbol_id), Some(price), Some(position_id)) = (
+                                        position.get("symbolId").and_then(|s| s.as_u64()),
+                                        position.get("price").and_then(|p| p.as_f64()),
+                                        position.get("positionId").and_then(|p| p.as_u64())
+                                    ) {
+                                        // Check if this position matches our order
+                                        if let Some(&order_symbol_id) = self.symbol_ids.get(&order.symbol) {
+                                            if symbol_id as i32 == order_symbol_id {
+                                                // Additional matching criteria could be added here
+                                                let position_id_str = position_id.to_string();
+                                                return Some((price, Some(position_id_str)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("📋 Failed to fetch positions for fill data: {}", e);
+            }
+        }
+        
+        // Return None if we couldn't get fill data
+        None
     }
 }

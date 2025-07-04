@@ -1,0 +1,50 @@
+# docker-compose.yml
+# Redis server with Redis Commander GUI for monitoring
+
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: trading_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: trading_redis_commander
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=tradingpass123
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:
+
+# To start:
+# docker-compose up -d
+
+# Access Redis Commander at: http://localhost:8082
+# Username: admin
+# Password: tradingpass123
+
+# To stop:
+# docker-compose down
+
+# To view logs:
+# docker-compose logs -f redis
+# docker-compose logs -f redis-commander

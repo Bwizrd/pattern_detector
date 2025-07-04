@@ -4,6 +4,7 @@
 mod active_order_manager;
 mod booked_trades;
 mod csv_logger;
+mod db;
 mod html;
 mod notifications;
 mod pending_order_manager;
@@ -20,6 +21,7 @@ mod websocket;
 mod zone_state_manager;
 
 mod enriched_trades;
+use chrono::Utc;
 
 // Add this import to your use statements
 use enriched_trades::{enriched_trades_by_date_api, enriched_trades_by_range_api};
@@ -35,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use state::MonitorState;
 use std::fs;
 use tracing::info;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use types::{ZoneAlert, ZoneCache};
 
 // Request/Response structs for manual trading
@@ -242,32 +245,7 @@ async fn pending_orders_json() -> (StatusCode, Json<serde_json::Value>) {
     }
 }
 
-async fn retroactive_enrichment_api(
-    State(state): State<MonitorState>,
-) -> (StatusCode, Json<serde_json::Value>) {
-    info!("🔄 Starting retroactive enrichment API call...");
-    
-    match state.active_order_manager.retroactive_enrichment().await {
-        Ok(enriched_count) => {
-            let response = serde_json::json!({
-                "success": true,
-                "message": format!("Successfully enriched {} historical trades", enriched_count),
-                "enriched_count": enriched_count
-            });
-            info!("✅ Retroactive enrichment completed: {} orders enhanced", enriched_count);
-            (StatusCode::OK, Json(response))
-        }
-        Err(e) => {
-            let response = serde_json::json!({
-                "success": false,
-                "message": format!("Failed to enrich historical trades: {}", e),
-                "error": e
-            });
-            tracing::error!("❌ Retroactive enrichment failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
-        }
-    }
-}
+
 
 async fn manual_trade_api(
     State(_state): State<MonitorState>,
@@ -362,6 +340,56 @@ async fn manual_trade_api(
     }
 }
 
+// Initialize logging with both console and file output
+fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
+    // Create logs directory if it doesn't exist
+    std::fs::create_dir_all("logs")?;
+    
+    // Create a file appender with rotation
+    let file_appender = tracing_appender::rolling::daily("logs", "zone_monitor");
+    
+    // Also create a timestamped log file for this session
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let session_log_path = format!("logs/zone_monitor_{}.log", timestamp);
+    let session_file = std::fs::File::create(&session_log_path)?;
+    
+    // Configure the subscriber with multiple outputs
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stdout)  // Console output
+                .with_target(false)
+                .with_level(true)
+                .compact()
+        )
+        .with(
+            fmt::layer()
+                .with_writer(file_appender)  // Daily rotating file
+                .with_target(true)
+                .with_level(true)
+                .with_ansi(false)  // No color codes in file
+        )
+        .with(
+            fmt::layer()
+                .with_writer(session_file)  // Session-specific file
+                .with_target(true)
+                .with_level(true)
+                .with_ansi(false)
+        )
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
+        .init();
+    
+    println!("📋 Logging initialized:");
+    println!("   📄 Daily logs: logs/zone_monitor.YYYY-MM-DD");
+    println!("   📄 Session log: {}", session_log_path);
+    println!("   📺 Console: enabled");
+    
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env file from current directory (root of project)
@@ -369,11 +397,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Warning: Could not load .env file: {}", e);
     }
 
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .with_level(true)
-        .init();
+    // Initialize logging with file output
+    if let Err(e) = init_logging() {
+        eprintln!("Failed to initialize logging: {}", e);
+        // Fall back to simple console logging
+        tracing_subscriber::fmt()
+            .with_target(false)
+            .with_level(true)
+            .init();
+    }
 
     info!("🚀 Starting Zone Monitor Dashboard with Notifications and CSV Logging...");
 
@@ -441,7 +473,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(enriched_trades_by_date_api),
         )
         .route("/api/enriched-trades", get(enriched_trades_by_range_api))
-        .route("/api/enriched-trades/retroactive-fix", post(retroactive_enrichment_api))
         .layer(cors)
         .with_state(state);
 

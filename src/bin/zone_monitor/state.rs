@@ -3,13 +3,13 @@
 
 use crate::active_order_manager::ActiveOrderManager;
 use crate::csv_logger::CsvLogger;
+use crate::db::OrderDatabase;
 use crate::notifications::NotificationManager;
 use crate::pending_order_manager::PendingOrderManager;
 use crate::proximity::ProximityDetector;
 use crate::proximity_logger::ProximityLogger;
 use crate::strategy_manager::StrategyManager;
 use crate::telegram_notifier::TelegramNotifier;
-use crate::trading_engine::TradeResult;
 use crate::trading_engine::TradingEngine;
 use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
 use crate::websocket::WebSocketClient;
@@ -106,6 +106,7 @@ pub struct MonitorState {
     pub interaction_config: InteractionConfig,
     pub cache_file_path: String,
     pub websocket_url: String,
+    pub order_database: Arc<OrderDatabase>,
 }
 
 impl MonitorState {
@@ -129,6 +130,22 @@ impl MonitorState {
             ZoneInteractionContainer::new()
         });
 
+        // Initialize InfluxDB order database
+        let influx_host = std::env::var("INFLUXDB_HOST")
+            .unwrap_or_else(|_| "http://localhost:8086".to_string());
+        let influx_org = std::env::var("INFLUXDB_ORG")
+            .unwrap_or_else(|_| "pattern_detector".to_string());
+        let influx_token = std::env::var("INFLUXDB_TOKEN")
+            .unwrap_or_else(|_| "dev-token-please-change".to_string());
+        let influx_bucket = "trading_orders".to_string();
+        
+        let order_database = OrderDatabase::new(
+            influx_host,
+            influx_org,
+            influx_token,
+            influx_bucket,
+        );
+
         Self {
             zone_cache: Arc::new(RwLock::new(ZoneCache::default())),
             latest_prices: Arc::new(RwLock::new(HashMap::new())),
@@ -148,6 +165,7 @@ impl MonitorState {
             interaction_config,
             cache_file_path,
             websocket_url,
+            order_database: Arc::new(order_database),
         }
     }
 
@@ -164,6 +182,17 @@ impl MonitorState {
         {
             let mut pending_order_manager = self.pending_order_manager.write().await;
 
+            // Set up InfluxDB order tracking
+            // pending_order_manager.set_order_database(self.order_database.clone());
+        }
+        
+        // Initialize active order manager with InfluxDB connection
+        info!("📋 Connecting ActiveOrderManager to InfluxDB...");
+        // self.active_order_manager.set_order_database(self.order_database.clone()).await;
+        
+        {
+            let mut pending_order_manager = self.pending_order_manager.write().await;
+            
             info!("🔄 Loading pending orders from file...");
             if let Err(e) = pending_order_manager.load_pending_orders().await {
                 error!("❌ Failed to load pending orders: {}", e);
@@ -265,8 +294,9 @@ impl MonitorState {
         self.start_zone_interaction_save_task().await;
         self.start_zone_interaction_midnight_cleanup().await;
         self.start_pending_order_cleanup_task().await;
+        self.start_pending_order_sync_task().await; // NEW: PENDING→FILLED sync
         self.start_strategy_refresh_task().await;
-        self.start_active_order_matching_task().await;
+        // self.start_active_order_matching_task().await;
         self.start_csv_logger_cleanup_task().await;
         info!("✅ Background tasks started");
 
@@ -437,6 +467,33 @@ impl MonitorState {
         });
     }
 
+    async fn start_pending_order_sync_task(&self) {
+        let pending_order_manager = Arc::clone(&self.pending_order_manager);
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); // Check every 30 seconds
+
+            loop {
+                interval.tick().await;
+
+                let mut manager = pending_order_manager.write().await;
+                match manager.synchronize_pending_orders().await {
+                    Ok(updated_count) => {
+                        if updated_count > 0 {
+                            info!(
+                                "📋 PENDING→FILLED sync: {} orders updated",
+                                updated_count
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("📋 PENDING→FILLED sync failed: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
     async fn start_pending_order_cleanup_task(&self) {
         let pending_order_manager = Arc::clone(&self.pending_order_manager);
         let latest_prices = Arc::clone(&self.latest_prices);
@@ -532,7 +589,7 @@ impl MonitorState {
             loop {
                 interval.tick().await;
 
-                match active_order_manager.update_booked_orders().await {
+                match active_order_manager.process_order_updates().await {
                     Ok(_) => {
                         debug!("📋 Active order matching completed");
                     }
@@ -1308,7 +1365,7 @@ impl MonitorState {
         execution_result: Option<String>,
         rejection_reason: Option<String>,
         ctrader_order_id: Option<String>,
-        telegram_status: String,
+        _telegram_status: String,
     ) {
         let notifications_file = "shared_notifications.json";
         const MAX_NOTIFICATIONS: usize = 100;

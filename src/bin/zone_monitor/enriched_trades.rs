@@ -1,10 +1,12 @@
 // src/bin/zone_monitor/enriched_trades.rs
 // Module for enriching trade data with booked order information
 
-use axum::{extract::Path, extract::Query, http::StatusCode, Json};
+use axum::{extract::Path, extract::Query, extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, warn, debug};
+use crate::state::MonitorState;
+use chrono::{DateTime, Utc};
 
 // Structures for the Node.js API response
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -238,6 +240,7 @@ pub struct MatchingDebug {
 
 // API endpoint for enriched trades by date
 pub async fn enriched_trades_by_date_api(
+    State(state): State<MonitorState>,
     Path(date): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -246,7 +249,7 @@ pub async fn enriched_trades_by_date_api(
     
     info!("📈 Getting enriched trades for date: {} (maxRows: {})", date, max_rows);
     
-    match get_enriched_trades_for_date(&date, max_rows).await {
+    match get_enriched_trades_for_date(&state, &date, max_rows).await {
         Ok(enriched_response) => {
             info!("✅ Successfully enriched {} trades for {}", 
                   enriched_response.deals.len(), date);
@@ -266,6 +269,7 @@ pub async fn enriched_trades_by_date_api(
 
 // API endpoint for enriched trades by date range
 pub async fn enriched_trades_by_range_api(
+    State(state): State<MonitorState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     
@@ -296,7 +300,7 @@ pub async fn enriched_trades_by_range_api(
     info!("📈 Getting enriched trades for range: {} to {} (maxRows: {})", 
           start_date, end_date, max_rows);
     
-    match get_enriched_trades_for_range(start_date, end_date, max_rows).await {
+    match get_enriched_trades_for_range(&state, start_date, end_date, max_rows).await {
         Ok(enriched_response) => {
             info!("✅ Successfully enriched {} trades for range {} to {}", 
                   enriched_response.deals.len(), start_date, end_date);
@@ -317,7 +321,7 @@ pub async fn enriched_trades_by_range_api(
 }
 
 // Core function to get enriched trades for a specific date
-async fn get_enriched_trades_for_date(date: &str, max_rows: i32) -> Result<EnrichedTradesResponse, String> {
+async fn get_enriched_trades_for_date(state: &MonitorState, date: &str, max_rows: i32) -> Result<EnrichedTradesResponse, String> {
     // Get the cTrader API bridge URL from environment
     let ctrader_api_url = std::env::var("CTRADER_API_BRIDGE_URL")
         .unwrap_or_else(|_| "http://localhost:8000".to_string());
@@ -344,9 +348,9 @@ async fn get_enriched_trades_for_date(date: &str, max_rows: i32) -> Result<Enric
     
     info!("📊 Retrieved {} deals from API", deals_data.deals.len());
     
-    // Load booked orders data
-    let booked_orders = load_booked_orders().await?;
-    info!("📋 Loaded {} booked orders for enrichment", booked_orders.len());
+    // Load booked orders data from both JSON and InfluxDB
+    let booked_orders = load_combined_order_data(state, date).await?;
+    info!("📋 Loaded {} combined order records for enrichment", booked_orders.len());
     
     // Enrich the deals
     let enriched_deals = enrich_deals(deals_data.deals, &booked_orders);
@@ -368,7 +372,7 @@ async fn get_enriched_trades_for_date(date: &str, max_rows: i32) -> Result<Enric
 }
 
 // Core function to get enriched trades for a date range
-async fn get_enriched_trades_for_range(start_date: &str, end_date: &str, max_rows: i32) -> Result<EnrichedTradesResponse, String> {
+async fn get_enriched_trades_for_range(state: &MonitorState, start_date: &str, end_date: &str, max_rows: i32) -> Result<EnrichedTradesResponse, String> {
     let ctrader_api_url = std::env::var("CTRADER_API_BRIDGE_URL")
         .unwrap_or_else(|_| "http://localhost:8000".to_string());
     
@@ -394,8 +398,8 @@ async fn get_enriched_trades_for_range(start_date: &str, end_date: &str, max_row
     
     info!("📊 Retrieved {} deals from API", deals_data.deals.len());
     
-    let booked_orders = load_booked_orders().await?;
-    info!("📋 Loaded {} booked orders for enrichment", booked_orders.len());
+    let booked_orders = load_combined_order_data_range(state, start_date, end_date).await?;
+    info!("📋 Loaded {} combined order records for enrichment", booked_orders.len());
     
     let enriched_deals = enrich_deals(deals_data.deals, &booked_orders);
     let enrichment_summary = calculate_enrichment_summary(&enriched_deals, &booked_orders);
@@ -413,7 +417,107 @@ async fn get_enriched_trades_for_range(start_date: &str, end_date: &str, max_row
     })
 }
 
-// Load booked orders from the JSON file
+// Load combined order data from both JSON files and InfluxDB for a specific date
+async fn load_combined_order_data(state: &MonitorState, date: &str) -> Result<HashMap<String, BookedOrder>, String> {
+    // Parse the date to create a date range (start of day to end of day)
+    let start_date = if date.contains('T') {
+        format!("{}Z", date)
+    } else {
+        format!("{}T00:00:00Z", date)
+    };
+    let end_date = if date.contains('T') {
+        format!("{}Z", date)
+    } else {
+        format!("{}T23:59:59Z", date)
+    };
+    
+    load_combined_order_data_range(state, &start_date, &end_date).await
+}
+
+// Load combined order data from both JSON files and InfluxDB for a date range
+async fn load_combined_order_data_range(state: &MonitorState, start_date: &str, end_date: &str) -> Result<HashMap<String, BookedOrder>, String> {
+    let mut combined_orders = HashMap::new();
+    
+    // First, load from JSON file (legacy fallback)
+    if let Ok(json_orders) = load_booked_orders().await {
+        info!("📄 Loaded {} orders from JSON file", json_orders.len());
+        combined_orders.extend(json_orders);
+    }
+    
+    // Then, load from InfluxDB (primary source)
+    if let Ok(influx_orders) = load_orders_from_influxdb(state, start_date, end_date).await {
+        info!("🗄️  Loaded {} orders from InfluxDB", influx_orders.len());
+        // InfluxDB data takes precedence - overwrites JSON data for matching keys
+        combined_orders.extend(influx_orders);
+    } else {
+        warn!("⚠️  Failed to load from InfluxDB, using JSON data only");
+    }
+    
+    info!("🔄 Combined total: {} order records", combined_orders.len());
+    Ok(combined_orders)
+}
+
+// Load orders from InfluxDB for the given date range
+async fn load_orders_from_influxdb(state: &MonitorState, start_date: &str, end_date: &str) -> Result<HashMap<String, BookedOrder>, String> {
+    // Parse dates for InfluxDB query
+    let start_dt = start_date.parse::<DateTime<Utc>>()
+        .map_err(|e| format!("Invalid start date format: {}", e))?;
+    let end_dt = end_date.parse::<DateTime<Utc>>()
+        .map_err(|e| format!("Invalid end date format: {}", e))?;
+    
+    // Query InfluxDB for order events in the date range
+    match state.order_database.get_orders_by_date(start_dt, end_dt).await {
+        Ok(order_events) => {
+            info!("📊 Retrieved {} order events from InfluxDB", order_events.len());
+            
+            // Convert InfluxDB order events to BookedOrder format
+            let mut orders = HashMap::new();
+            for event in order_events {
+                let booked_order = convert_order_event_to_booked_order(event);
+                orders.insert(booked_order.zone_id.clone(), booked_order);
+            }
+            
+            Ok(orders)
+        }
+        Err(e) => {
+            warn!("❌ Failed to query InfluxDB: {}", e);
+            Err(format!("InfluxDB query failed: {}", e))
+        }
+    }
+}
+
+// Convert InfluxDB OrderEvent to BookedOrder format
+fn convert_order_event_to_booked_order(event: crate::db::schema::OrderEvent) -> BookedOrder {
+    let zone_id = event.zone_id.clone(); // Clone early to avoid borrow issues
+    
+    BookedOrder {
+        zone_id: event.zone_id,
+        symbol: event.symbol,
+        timeframe: event.timeframe,
+        order_type: event.order_type,
+        entry_price: event.entry_price,
+        lot_size: event.lot_size as f64,
+        stop_loss: Some(event.stop_loss),
+        take_profit: Some(event.take_profit),
+        ctrader_order_id: event.ctrader_order_id.unwrap_or_default(),
+        booked_at: event.timestamp.to_rfc3339(),
+        status: event.status.to_string(),
+        filled_at: event.fill_price.map(|_| event.timestamp.to_rfc3339()),
+        filled_price: event.fill_price,
+        closed_at: event.close_price.map(|_| event.timestamp.to_rfc3339()),
+        
+        // Zone metadata from InfluxDB
+        zone_type: Some(event.zone_type),
+        zone_high: event.zone_high,
+        zone_low: event.zone_low,
+        zone_strength: event.zone_strength,
+        touch_count: event.touch_count,
+        distance_when_placed: event.distance_when_placed,
+        original_zone_id: Some(zone_id), // Use the cloned value
+    }
+}
+
+// Load booked orders from the JSON file (legacy fallback)
 async fn load_booked_orders() -> Result<HashMap<String, BookedOrder>, String> {
     match tokio::fs::read_to_string("shared_booked_orders.json").await {
         Ok(content) => {
