@@ -1,15 +1,6 @@
 {
-  "last_updated": "2025-06-27T16:26:59.331956Z",
+  "last_updated": "2025-07-07T14:22:30.965540Z",
   "strategies_by_symbol": {
-    "GBPUSD_SB": {
-      "id": "2f888d0f-aa39-46df-8186-66d91ff6214a",
-      "symbol": "GBPUSD_SB",
-      "type": "Day Trading Shorts",
-      "description": "",
-      "createdAt": "2025-06-26 12:02:06.604 +00:00",
-      "updatedAt": "2025-06-26 12:02:06.604 +00:00",
-      "direction": "short"
-    },
     "NZDUSD_SB": {
       "id": "5cc7e501-ae55-41b6-ba36-21505c45a693",
       "symbol": "NZDUSD_SB",
@@ -17,6 +8,15 @@
       "description": "",
       "createdAt": "2025-06-26 12:44:24.668 +00:00",
       "updatedAt": "2025-06-26 12:44:24.668 +00:00",
+      "direction": "short"
+    },
+    "GBPUSD_SB": {
+      "id": "2f888d0f-aa39-46df-8186-66d91ff6214a",
+      "symbol": "GBPUSD_SB",
+      "type": "Day Trading Shorts",
+      "description": "",
+      "createdAt": "2025-06-26 12:02:06.604 +00:00",
+      "updatedAt": "2025-06-26 12:02:06.604 +00:00",
       "direction": "short"
     },
     "EURJPY_SB": {

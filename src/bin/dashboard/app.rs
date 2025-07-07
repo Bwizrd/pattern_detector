@@ -1,17 +1,20 @@
 // src/bin/dashboard/app.rs - Complete app state and business logic with independent timeframe filters
 use chrono::{DateTime, Utc};
 use log;
-use reqwest::Client;
+use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
 use std::io::Write;
 use std::process::Command;
-use tokio::fs;
 use tokio::time::{Duration, Instant}; // Add this line with your other imports
 
+use redis::{Client as RedisClient, Commands};
+use std::sync::{Arc, Mutex};
+
 use crate::types::{
-    AppPage, LiveTrade, TradeNotificationDisplay, TradeStatus, ValidatedTradeDisplay, ZoneDistanceInfo, ZoneStatus,
+    AppPage, LiveTrade, TradeNotificationDisplay, TradeStatus, ValidatedTradeDisplay,
+    ZoneDistanceInfo, ZoneStatus,
 };
 use pattern_detector::zone_interactions::ZoneInteractionContainer;
 use serde::{Deserialize, Serialize};
@@ -23,14 +26,14 @@ pub struct PendingOrder {
     pub symbol: String,
     pub timeframe: String,
     pub zone_type: String,
-    pub order_type: String,        // "BUY_LIMIT" or "SELL_LIMIT"
-    pub entry_price: f64,          // The limit price
+    pub order_type: String, // "BUY_LIMIT" or "SELL_LIMIT"
+    pub entry_price: f64,   // The limit price
     pub lot_size: i32,
     pub stop_loss: f64,
     pub take_profit: f64,
     pub ctrader_order_id: Option<String>, // Order ID returned by cTrader
     pub placed_at: DateTime<Utc>,
-    pub status: String,            // "PENDING", "FILLED", "CANCELLED", "FAILED"
+    pub status: String, // "PENDING", "FILLED", "CANCELLED", "FAILED"
     pub zone_high: f64,
     pub zone_low: f64,
     pub zone_strength: f64,
@@ -58,7 +61,7 @@ pub struct PriceStreamData {
 }
 
 pub struct App {
-    pub client: Client,
+    pub client: HttpClient,
     pub api_base_url: String,
     pub pip_values: HashMap<String, f64>,
     pub current_page: AppPage,
@@ -99,11 +102,11 @@ pub struct App {
 
     // Zone interaction data
     pub zone_interactions: Option<ZoneInteractionContainer>,
-    
+
     // Display options
-    pub show_indices: bool, // Toggle for showing NAS100, US500 etc.
+    pub show_indices: bool,     // Toggle for showing NAS100, US500 etc.
     pub show_start_dates: bool, // Toggle for showing zone start dates
-    
+
     // Live trading
     pub live_trades: Vec<LiveTrade>,
     pub trading_sl_pips: f64,
@@ -113,17 +116,37 @@ pub struct App {
     pub last_processed_notification_time: Option<DateTime<Utc>>,
     pub trading_enabled: bool, // Manual toggle for enabling/disabling trade creation
     pub show_trading_reminder: bool, // Show reminder popup to enable trading
-    
+
     // Symbol filtering
-    pub symbol_filter: String, // Current symbol filter text
+    pub symbol_filter: String,    // Current symbol filter text
     pub symbol_filter_mode: bool, // Whether we're in symbol filter input mode
-    
+
     // Pending orders
     pub pending_orders: HashMap<String, PendingOrder>, // zone_id -> PendingOrder
+
+    pub redis_client: Option<RedisClient>,
+    pub redis_connection: Option<Arc<Mutex<redis::Connection>>>,
 }
 
 impl App {
     pub fn new() -> Self {
+        let (redis_client, redis_connection) = match RedisClient::open("redis://127.0.0.1:6379/") {
+            Ok(client) => match client.get_connection() {
+                Ok(conn) => {
+                    log::info!("📊 Dashboard Redis connected for pending orders");
+                    (Some(client), Some(Arc::new(Mutex::new(conn))))
+                }
+                Err(e) => {
+                    log::warn!("📊 Dashboard Redis connection failed: {}", e);
+                    (None, None)
+                }
+            },
+            Err(e) => {
+                log::warn!("📊 Dashboard Redis client creation failed: {}", e);
+                (None, None)
+            }
+        };
+
         let mut pip_values = HashMap::new();
 
         // Major pairs
@@ -185,7 +208,7 @@ impl App {
         notification_timeframe_filters.insert("1d".to_string(), true);
 
         Self {
-            client: Client::new(),
+            client: HttpClient::new(),
             api_base_url,
             pip_values,
             current_page: AppPage::Dashboard,
@@ -212,11 +235,11 @@ impl App {
             selected_notification_validation: None,
             notification_validator: NotificationRuleValidator::new(),
             zone_interactions: None,
-            
+
             // Display options - indices off by default
             show_indices: false,
             show_start_dates: false, // Start dates off by default
-            
+
             // Live trading - get from environment variables
             live_trades: Vec::new(),
             trading_sl_pips: std::env::var("TRADING_STOP_LOSS_PIPS")
@@ -237,13 +260,37 @@ impl App {
             },
             websocket_connected: false,
             last_processed_notification_time: None,
-            trading_enabled: false, // Trading disabled by default
+            trading_enabled: false,       // Trading disabled by default
             show_trading_reminder: false, // Will show after websocket connects
-            
+
             // Symbol filtering - empty by default (shows all symbols)
             symbol_filter: String::new(),
             symbol_filter_mode: false,
             pending_orders: HashMap::new(),
+            redis_client,
+            redis_connection,
+        }
+    }
+
+    async fn ensure_redis_available(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match &self.redis_connection {
+            Some(conn_arc) => {
+                let mut conn = conn_arc
+                    .lock()
+                    .map_err(|e| format!("Redis lock error: {}", e))?;
+
+                match conn.set::<&str, &str, ()>("dashboard_health_check", "ok") {
+                    Ok(_) => {
+                        let _: Result<(), _> = conn.del("dashboard_health_check");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        log::warn!("🚨 Dashboard Redis health check failed: {}", e);
+                        Err(format!("Redis unavailable: {}", e).into())
+                    }
+                }
+            }
+            None => Err("Redis connection not available".into()),
         }
     }
 
@@ -304,14 +351,14 @@ impl App {
     pub fn toggle_indices(&mut self) {
         self.show_indices = !self.show_indices;
     }
-    
+
     pub fn toggle_start_dates(&mut self) {
         self.show_start_dates = !self.show_start_dates;
     }
 
     pub fn toggle_trading(&mut self) {
         self.trading_enabled = !self.trading_enabled;
-        
+
         // When turning trading ON, set last processed time to NOW to prevent
         // processing old notifications
         if self.trading_enabled {
@@ -329,25 +376,34 @@ impl App {
         self.show_trading_reminder = false;
     }
 
-    // Live trading methods  
+    // Live trading methods
     pub fn create_trade_from_zone_trigger(&mut self, zone: &ZoneDistanceInfo) {
-        let direction = if zone.zone_type == "supply_zone" { "SELL" } else { "BUY" };
-        let trade_id = format!("{}_{}_{}", zone.symbol, zone.zone_id, Utc::now().timestamp_millis());
-        
+        let direction = if zone.zone_type == "supply_zone" {
+            "SELL"
+        } else {
+            "BUY"
+        };
+        let trade_id = format!(
+            "{}_{}_{}",
+            zone.symbol,
+            zone.zone_id,
+            Utc::now().timestamp_millis()
+        );
+
         // Get current price from WebSocket
         if let Some(price_data) = self.current_prices.get(&zone.symbol) {
             let current_price = (price_data.bid + price_data.ask) / 2.0;
             let pip_value = self.get_pip_value(&zone.symbol);
-            
+
             let (stop_loss, take_profit) = if direction == "BUY" {
                 (
                     current_price - (self.trading_sl_pips * pip_value),
-                    current_price + (self.trading_tp_pips * pip_value)
+                    current_price + (self.trading_tp_pips * pip_value),
                 )
             } else {
                 (
                     current_price + (self.trading_sl_pips * pip_value),
-                    current_price - (self.trading_tp_pips * pip_value)
+                    current_price - (self.trading_tp_pips * pip_value),
                 )
             };
 
@@ -367,18 +423,28 @@ impl App {
             };
 
             self.live_trades.push(trade);
-            log::info!("✅ Trade created: {} {} @ {:.4} Zone:{}", direction, zone.symbol, current_price, &zone.zone_id[..8]);
+            log::info!(
+                "✅ Trade created: {} {} @ {:.4} Zone:{}",
+                direction,
+                zone.symbol,
+                current_price,
+                &zone.zone_id[..8]
+            );
         }
     }
 
     pub fn create_trade_from_trigger(&mut self, notification: &TradeNotificationDisplay) {
         // Only create trade if it's a trading signal (not proximity alert)
         if notification.notification_type == "trading_signal" {
-            let trade_id = format!("{}_{}", notification.symbol, notification.timestamp.timestamp_millis());
-            
+            let trade_id = format!(
+                "{}_{}",
+                notification.symbol,
+                notification.timestamp.timestamp_millis()
+            );
+
             let direction = notification.action.clone();
             let entry_price = notification.price;
-            
+
             // Calculate SL and TP based on direction and environment variables
             let pip_value = self.get_pip_value(&notification.symbol);
             let (stop_loss, take_profit) = if direction == "BUY" {
@@ -414,15 +480,15 @@ impl App {
 
     pub fn update_live_trades_with_price(&mut self, symbol: &str, price: f64) {
         let pip_value = self.get_pip_value(symbol);
-        
+
         for trade in &mut self.live_trades {
             if trade.symbol == symbol && trade.status == TradeStatus::Open {
                 trade.current_price = price;
-                
+
                 // Calculate unrealized P&L in pips
                 if trade.direction == "BUY" {
                     trade.unrealized_pips = (price - trade.entry_price) / pip_value;
-                    
+
                     // Check for SL/TP hits
                     if price <= trade.stop_loss {
                         trade.status = TradeStatus::StoppedOut;
@@ -431,9 +497,10 @@ impl App {
                         trade.status = TradeStatus::TakenProfit;
                         trade.unrealized_pips = self.trading_tp_pips;
                     }
-                } else { // SELL
+                } else {
+                    // SELL
                     trade.unrealized_pips = (trade.entry_price - price) / pip_value;
-                    
+
                     // Check for SL/TP hits
                     if price >= trade.stop_loss {
                         trade.status = TradeStatus::StoppedOut;
@@ -448,14 +515,16 @@ impl App {
     }
 
     pub fn get_total_unrealized_pips(&self) -> f64 {
-        self.live_trades.iter()
+        self.live_trades
+            .iter()
             .filter(|t| t.status == TradeStatus::Open)
             .map(|t| t.unrealized_pips)
             .sum()
     }
 
     pub fn get_closed_trades_total_pips(&self) -> f64 {
-        self.live_trades.iter()
+        self.live_trades
+            .iter()
             .filter(|t| t.status == TradeStatus::StoppedOut || t.status == TradeStatus::TakenProfit)
             .map(|t| t.unrealized_pips)
             .sum()
@@ -477,7 +546,7 @@ impl App {
         }
 
         let now = Utc::now();
-        
+
         // SAFETY: Don't process any signals if trading was just enabled (within last 10 seconds)
         // This prevents processing triggers when user first turns on trading
         if let Some(last_processed) = self.last_processed_notification_time {
@@ -489,26 +558,33 @@ impl App {
             return; // No baseline set yet
         }
 
-        let triggers: Vec<ZoneDistanceInfo> = self.zones.iter()
+        let triggers: Vec<ZoneDistanceInfo> = self
+            .zones
+            .iter()
             .filter(|zone| zone.zone_status == ZoneStatus::AtProximal)
             .cloned()
             .collect();
-        
+
         if !triggers.is_empty() {
             log::info!("🎯 Found {} zone triggers on dashboard", triggers.len());
         }
 
         for zone in triggers {
             // Check if we already have a trade for this zone
-            let exists = self.live_trades.iter().any(|t| t.id.contains(&zone.zone_id));
-            
+            let exists = self
+                .live_trades
+                .iter()
+                .any(|t| t.id.contains(&zone.zone_id));
+
             if !exists {
                 // Check if we have current price for this symbol
                 if self.current_prices.contains_key(&zone.symbol) {
-                    log::info!("🚨 Creating trade from zone trigger: {} {} Zone:{}", 
-                        zone.symbol, 
+                    log::info!(
+                        "🚨 Creating trade from zone trigger: {} {} Zone:{}",
+                        zone.symbol,
                         zone.zone_type,
-                        &zone.zone_id[..8]);
+                        &zone.zone_id[..8]
+                    );
                     self.create_trade_from_zone_trigger(&zone);
                 } else {
                     log::info!("⚠️ No current price for symbol: {}", zone.symbol);
@@ -607,12 +683,16 @@ impl App {
                 };
 
                 // Create the formatted string: Type,High,Low,Date,Time
-                let zone_details = format!("{},{:.4},{:.4},{}", zone_type_display, high, low, date_time_str);
+                let zone_details = format!(
+                    "{},{:.4},{:.4},{}",
+                    zone_type_display, high, low, date_time_str
+                );
 
                 // Try to copy to system clipboard
                 match self.copy_to_clipboard(&zone_details) {
                     Ok(()) => {
-                        self.last_copied_zone_id = Some(format!("✅ Zone Details: {}", zone_details));
+                        self.last_copied_zone_id =
+                            Some(format!("✅ Zone Details: {}", zone_details));
                     }
                     Err(_) => {
                         // Fallback: just show the details
@@ -884,11 +964,11 @@ impl App {
         if self.symbol_filter.is_empty() {
             return true; // No filter means show all
         }
-        
+
         // Case-insensitive partial matching
         let filter_upper = self.symbol_filter.to_uppercase();
         let symbol_upper = symbol.to_uppercase();
-        
+
         // Support intelligent matching - if user types "JPY", show all JPY pairs
         symbol_upper.contains(&filter_upper)
     }
@@ -909,12 +989,12 @@ impl App {
 
     pub async fn update_data(&mut self) {
         self.error_message = None;
-        
+
         // Check WebSocket connection status based on recent price updates
         if let Some(last_update) = self.last_price_update {
             let now = tokio::time::Instant::now();
             let elapsed = now.duration_since(last_update);
-            
+
             // Mark as disconnected if no price updates for more than 30 seconds
             if elapsed.as_secs() > 30 {
                 self.websocket_connected = false;
@@ -976,10 +1056,10 @@ impl App {
         // Process all data with WebSocket prices
         self.zones = self.process_zones_response(zones_response, current_prices)?;
         let new_notifications = self.process_api_notifications_response(notifications_response)?;
-        
+
         // Check for zone triggers and create trades (independent from notifications)
         self.check_for_zone_triggers();
-        
+
         self.all_notifications = new_notifications;
         self.validated_trades =
             self.process_validated_signals_response(validated_signals_response)?;
@@ -1296,16 +1376,16 @@ impl App {
             .insert(price_update.symbol.clone(), price_stream_data);
         self.price_update_count += 1;
         self.last_price_update = Some(tokio::time::Instant::now());
-        
+
         // Mark WebSocket as connected when we receive prices
         let was_connected = self.websocket_connected;
         self.websocket_connected = true;
-        
+
         // Show trading reminder popup when WebSocket first connects (and trading is disabled)
         if !was_connected && !self.trading_enabled {
             self.show_trading_reminder = true;
         }
-        
+
         // Update live trades with new price
         let mid_price = (price_update.bid + price_update.ask) / 2.0;
         self.update_live_trades_with_price(&price_update.symbol, mid_price);
@@ -1336,13 +1416,16 @@ impl App {
                     }
 
                     // Filter out indices if disabled
-                    if !self.show_indices && (zone_info.symbol == "NAS100" || zone_info.symbol == "US500") {
+                    if !self.show_indices
+                        && (zone_info.symbol == "NAS100" || zone_info.symbol == "US500")
+                    {
                         continue;
                     }
 
                     // Filter by symbol (only on dashboard)
-                    if matches!(self.current_page, AppPage::Dashboard) 
-                        && !self.symbol_matches_filter(&zone_info.symbol) {
+                    if matches!(self.current_page, AppPage::Dashboard)
+                        && !self.symbol_matches_filter(&zone_info.symbol)
+                    {
                         continue;
                     }
 
@@ -1363,7 +1446,8 @@ impl App {
             let a_priority = a.zone_status.priority();
             let b_priority = b.zone_status.priority();
 
-            match b_priority.cmp(&a_priority) { // Note: reversed for descending order (higher priority first)
+            match b_priority.cmp(&a_priority) {
+                // Note: reversed for descending order (higher priority first)
                 Ordering::Equal => {
                     // Same status, sort by distance (closest first)
                     a.distance_pips
@@ -1590,7 +1674,7 @@ impl App {
         pip_value: f64,
     ) -> ZoneStatus {
         let proximity_threshold = 2.0 * pip_value;
-        
+
         // Extend the zone boundary by TRADING_THRESHOLD_PIPS
         let extended_proximal_line = if is_supply {
             // Supply zone: extend lower (reduce proximal line)
@@ -1611,14 +1695,14 @@ impl App {
             } else if current_price > extended_proximal_line && current_price <= distal_line {
                 ZoneStatus::InsideZone
             } else if current_price >= extended_proximal_line {
-                ZoneStatus::AtProximal  // Price has reached/crossed the extended proximal line (zone entry)
+                ZoneStatus::AtProximal // Price has reached/crossed the extended proximal line (zone entry)
             } else {
                 // Check distance to determine if truly approaching
                 let distance_to_proximal = (current_price - proximal_line).abs() / pip_value;
                 if distance_to_proximal < 10.0 {
                     ZoneStatus::Approaching
                 } else {
-                    ZoneStatus::FreshZone  // Too far to be approaching
+                    ZoneStatus::FreshZone // Too far to be approaching
                 }
             }
         } else {
@@ -1632,14 +1716,14 @@ impl App {
             } else if current_price < extended_proximal_line && current_price >= distal_line {
                 ZoneStatus::InsideZone
             } else if current_price <= extended_proximal_line {
-                ZoneStatus::AtProximal  // Price has reached/crossed the extended proximal line (zone entry)
+                ZoneStatus::AtProximal // Price has reached/crossed the extended proximal line (zone entry)
             } else {
                 // Check distance to determine if truly approaching
                 let distance_to_proximal = (proximal_line - current_price).abs() / pip_value;
                 if distance_to_proximal < 10.0 {
                     ZoneStatus::Approaching
                 } else {
-                    ZoneStatus::FreshZone  // Too far to be approaching
+                    ZoneStatus::FreshZone // Too far to be approaching
                 }
             }
         }
@@ -1741,10 +1825,10 @@ impl App {
         // Positive = inside zone (past proximal), Negative = outside zone (before proximal)
         let signed_distance_pips = if is_supply {
             // Supply zone: proximal = low, price enters from below
-            (current_price - proximal_line) / pip_value  // + when above proximal (inside), - when below (outside)
+            (current_price - proximal_line) / pip_value // + when above proximal (inside), - when below (outside)
         } else {
-            // Demand zone: proximal = high, price enters from above  
-            (proximal_line - current_price) / pip_value  // + when below proximal (inside), - when above (outside)
+            // Demand zone: proximal = high, price enters from above
+            (proximal_line - current_price) / pip_value // + when below proximal (inside), - when above (outside)
         };
 
         let distance_to_proximal = signed_distance_pips.abs();
@@ -1767,21 +1851,27 @@ impl App {
             .as_ref()
             .and_then(|interactions| interactions.metrics.get(&zone_id));
 
-        let (has_ever_entered, total_time_inside_seconds, zone_entries, 
-             last_crossing_time, is_zone_active) = 
-            if let Some(metrics) = interaction_metrics {
-                (
-                    metrics.has_ever_entered,
-                    metrics.total_time_inside_seconds,
-                    metrics.zone_entries,
-                    metrics.last_crossing_time.as_ref()
-                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                        .map(|dt| dt.with_timezone(&Utc)),
-                    metrics.is_zone_active,
-                )
-            } else {
-                (false, 0, 0, None, true)
-            };
+        let (
+            has_ever_entered,
+            total_time_inside_seconds,
+            zone_entries,
+            last_crossing_time,
+            is_zone_active,
+        ) = if let Some(metrics) = interaction_metrics {
+            (
+                metrics.has_ever_entered,
+                metrics.total_time_inside_seconds,
+                metrics.zone_entries,
+                metrics
+                    .last_crossing_time
+                    .as_ref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc)),
+                metrics.is_zone_active,
+            )
+        } else {
+            (false, 0, 0, None, true)
+        };
 
         // Enhance zone status based on interaction history
         let enhanced_zone_status = self.determine_enhanced_zone_status(
@@ -1807,7 +1897,7 @@ impl App {
             touch_count,
             strength_score,
             created_at,
-            
+
             // Zone interaction metrics
             has_ever_entered,
             total_time_inside_seconds,
@@ -1828,12 +1918,12 @@ impl App {
         // CRITICAL: Match zone_monitor logic exactly - check distance threshold AND first-time entry
         let is_first_time_entry = !has_ever_entered && zone_entries == 0;
         let distance_pips = signed_distance_pips.abs();
-        
+
         // Zone can only trigger if BOTH conditions are met (matching zone_monitor):
         // 1. distance_pips <= trading_threshold_pips
         // 2. is_first_time_entry = true
         let can_trigger = distance_pips <= self.trading_threshold_pips && is_first_time_entry;
-        
+
         // For zones that are at proximal or inside, apply the exact trigger logic
         if matches!(base_status, ZoneStatus::AtProximal | ZoneStatus::InsideZone) {
             if can_trigger {
@@ -1888,30 +1978,89 @@ impl App {
         }
     }
 
-    /// Load pending orders from shared file
     pub async fn load_pending_orders(&mut self) {
-        let pending_orders_file = std::env::var("LIMIT_ORDER_SHARED_FILE")
-            .unwrap_or_else(|_| "shared_pending_orders.json".to_string());
+        self.pending_orders = HashMap::new();
 
-        match fs::read_to_string(&pending_orders_file).await {
-            Ok(content) => {
-                match serde_json::from_str::<PendingOrdersContainer>(&content) {
-                    Ok(container) => {
-                        self.pending_orders = container.orders;
-                        log::info!("📋 Dashboard loaded {} pending orders", self.pending_orders.len());
+        if self.ensure_redis_available().await.is_err() {
+            log::debug!("📋 Dashboard Redis unavailable, no pending orders loaded");
+            return;
+        }
+
+        if let Some(conn_arc) = &self.redis_connection {
+            if let Ok(mut conn) = conn_arc.lock() {
+                match conn.keys::<&str, Vec<String>>("pending_order:*") {
+                    Ok(keys) => {
+                        let mut loaded_count = 0;
+
+                        for key in keys {
+                            if let Some(zone_id) = key.strip_prefix("pending_order:") {
+                                match conn.get::<&str, String>(&key) {
+                                    Ok(order_json) => {
+                                        match serde_json::from_str::<PendingOrder>(&order_json) {
+                                            Ok(order) => {
+                                                self.pending_orders
+                                                    .insert(zone_id.to_string(), order);
+                                                loaded_count += 1;
+                                            }
+                                            Err(e) => {
+                                                log::warn!("📋 Dashboard failed to parse pending order {}: {}", zone_id, e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "📋 Dashboard failed to get pending order {}: {}",
+                                            zone_id,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        if loaded_count > 0 {
+                            log::info!(
+                                "📋 Dashboard loaded {} pending orders from Redis",
+                                loaded_count
+                            );
+                        } else {
+                            log::debug!("📋 Dashboard found no pending orders in Redis");
+                        }
                     }
                     Err(e) => {
-                        log::warn!("📋 Failed to parse pending orders file: {}", e);
-                        self.pending_orders = HashMap::new();
+                        log::warn!(
+                            "📋 Dashboard failed to get pending order keys from Redis: {}",
+                            e
+                        );
                     }
                 }
-            }
-            Err(_) => {
-                // File doesn't exist yet, that's OK
-                log::debug!("📋 No pending orders file found, starting with empty orders");
-                self.pending_orders = HashMap::new();
+            } else {
+                log::warn!("📋 Dashboard failed to acquire Redis lock for pending orders");
             }
         }
+    }
+
+    pub async fn get_redis_stats(&self) -> (usize, usize) {
+        if self.ensure_redis_available().await.is_err() {
+            return (0, 0);
+        }
+
+        if let Some(conn_arc) = &self.redis_connection {
+            if let Ok(mut conn) = conn_arc.lock() {
+                let pending_orders: Result<Vec<String>, _> = conn.keys("pending_order:*");
+                let lookups: Result<Vec<String>, _> = conn.keys("order_lookup:*");
+
+                return (
+                    pending_orders.map(|v| v.len()).unwrap_or(0),
+                    lookups.map(|v| v.len()).unwrap_or(0),
+                );
+            }
+        }
+        (0, 0)
+    }
+
+    pub fn is_redis_connected(&self) -> bool {
+        self.redis_connection.is_some()
     }
 
     /// Check if a zone has a pending order

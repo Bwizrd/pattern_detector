@@ -86,7 +86,7 @@ pub struct SharedNotificationsFile {
     pub notifications: VecDeque<SharedNotification>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MonitorState {
     pub zone_cache: Arc<RwLock<ZoneCache>>,
     pub latest_prices: Arc<RwLock<HashMap<String, PriceUpdate>>>,

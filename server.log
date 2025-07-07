@@ -1,0 +1,840 @@
+18:06:32 +01:00 - INFO - Starting Trading API Server (Clean Version)...
+18:06:32 +01:00 - INFO - Setting up cache system...
+18:06:32 +01:00 - INFO - 🧪 [CACHE] Creating minimal zone cache with dynamic dates (matching frontend 90-day calculation)...
+18:06:32 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:06:32 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.050ms)
+18:06:39 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:06:39 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.64s (7637ms)
+18:06:39 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:06:39 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:06:39 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:06:39 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:06:39 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:06:39 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:06:39 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766468
+18:06:39 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:06:39 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:06:39 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:06:39 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.05s (92.3%)
+18:06:39 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.6%)
+18:06:39 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:06:39 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:06:39 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:06:39 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:06:39 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:06:39 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 100361
+18:06:39 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1037.3
+18:06:39 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:06:39 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:06:39 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.64s)
+18:06:39 +01:00 - INFO - 📊 [CACHE] Created cache with dynamic dates (2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z): 474 total (126 supply, 348 demand)
+18:06:39 +01:00 - INFO - Cache loaded: 474 zones (126 supply, 348 demand)
+18:06:39 +01:00 - INFO - Initial zone cache written to shared_zones.json
+18:06:39 +01:00 - INFO - 🚀 [CACHE_UPDATER] Starting real-time cache updates every 60s
+18:06:39 +01:00 - INFO - Cache updater started (updates every 60 seconds)
+18:06:39 +01:00 - INFO - 📱 Mobile dashboard price feed started
+18:06:39 +01:00 - INFO - API Server starting on http://127.0.0.1:8080
+18:06:39 +01:00 - INFO - 📊 Endpoints: Core, Zone Analysis, Backtest, Debug
+18:06:39 +01:00 - INFO - starting 14 workers
+18:06:39 +01:00 - INFO - Actix runtime found; starting in Actix runtime
+18:06:39 +01:00 - INFO - starting service: "actix-web-service-127.0.0.1:8080", workers: 14, listening on: 127.0.0.1:8080
+18:06:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #1
+18:06:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:06:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.004ms)
+18:06:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:06:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.74s (7743ms)
+18:06:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:06:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:06:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:06:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:06:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:06:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:06:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766468
+18:06:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:06:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:06:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:06:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.14s (92.3%)
+18:06:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.59s (7.7%)
+18:06:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:06:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:06:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 50ms
+18:06:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:06:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:06:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 98982
+18:06:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1023.1
+18:06:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:06:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:06:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.74s)
+18:06:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #1 completed in 7.75s: 474 zones (126 supply, 348 demand)
+18:07:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #2
+18:07:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:07:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.016ms)
+18:07:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:07:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.71s (7705ms)
+18:07:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:07:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:07:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:07:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:07:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:07:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:07:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766468
+18:07:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:07:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:07:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:07:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.12s (92.4%)
+18:07:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.5%)
+18:07:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:07:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:07:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:07:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:07:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:07:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99471
+18:07:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1028.1
+18:07:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:07:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:07:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.71s)
+18:07:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #2 completed in 7.71s: 474 zones (126 supply, 348 demand)
+18:08:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #3
+18:08:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:08:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.013ms)
+18:08:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:08:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.59s (7588ms)
+18:08:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:08:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:08:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:08:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:08:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:08:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:08:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766468
+18:08:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:08:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:08:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:08:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.04s (92.7%)
+18:08:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.55s (7.2%)
+18:08:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.00s (0.1%)
+18:08:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:08:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:08:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:08:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:08:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 101009
+18:08:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1044.0
+18:08:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:08:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:08:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.59s)
+18:08:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #3 completed in 7.60s: 474 zones (126 supply, 348 demand)
+18:09:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #4
+18:09:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:09:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.020ms)
+18:09:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:09:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.59s (7591ms)
+18:09:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:09:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:09:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:09:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:09:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:09:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:09:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766468
+18:09:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:09:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:09:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:09:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.02s (92.5%)
+18:09:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.56s (7.4%)
+18:09:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.00s (0.1%)
+18:09:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:09:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:09:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:09:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:09:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 100969
+18:09:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1043.6
+18:09:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:09:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:09:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.59s)
+18:09:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #4 completed in 7.60s: 474 zones (126 supply, 348 demand)
+18:10:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #5
+18:10:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:10:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.010ms)
+18:10:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:10:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.81s (7810ms)
+18:10:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:10:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:10:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:10:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:10:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:10:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:10:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766490
+18:10:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:10:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:10:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:10:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.23s (92.6%)
+18:10:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.4%)
+18:10:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:10:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:10:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 50ms
+18:10:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:10:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:10:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 98141
+18:10:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1014.3
+18:10:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:10:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:10:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.81s)
+18:10:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #5 completed in 7.82s: 474 zones (126 supply, 348 demand)
+18:11:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #6
+18:11:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:11:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.021ms)
+18:11:48 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:11:48 +01:00 - INFO - 📊 [CACHE] Total Duration: 8.68s (8681ms)
+18:11:48 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:11:48 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:11:48 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:11:48 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:11:48 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:11:48 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:11:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766490
+18:11:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:11:48 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:11:48 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:11:48 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 8.06s (92.8%)
+18:11:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.62s (7.1%)
+18:11:48 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:11:48 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:11:48 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 56ms
+18:11:48 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 52ms
+18:11:48 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:11:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 88299
+18:11:48 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 912.6
+18:11:48 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:11:48 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:11:48 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 8.68s)
+18:11:48 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #6 completed in 8.69s: 474 zones (126 supply, 348 demand)
+18:12:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #7
+18:12:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:12:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.011ms)
+18:12:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:12:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.75s (7745ms)
+18:12:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:12:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:12:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:12:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:12:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:12:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:12:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766490
+18:12:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:12:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:12:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:12:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.16s (92.5%)
+18:12:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.5%)
+18:12:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:12:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:12:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 50ms
+18:12:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:12:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:12:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 98964
+18:12:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1022.8
+18:12:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:12:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:12:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.75s)
+18:12:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #7 completed in 7.75s: 474 zones (126 supply, 348 demand)
+18:13:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #8
+18:13:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:13:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.010ms)
+18:13:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:13:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.57s (7573ms)
+18:13:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:13:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:13:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:13:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:13:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:13:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:13:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766490
+18:13:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:13:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:13:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:13:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.00s (92.5%)
+18:13:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.56s (7.4%)
+18:13:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:13:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:13:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:13:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:13:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:13:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 101220
+18:13:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1046.1
+18:13:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:13:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:13:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.57s)
+18:13:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #8 completed in 7.58s: 474 zones (126 supply, 348 demand)
+18:14:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #9
+18:14:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:14:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.010ms)
+18:14:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:14:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.73s (7731ms)
+18:14:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:14:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:14:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:14:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:14:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:14:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:14:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766490
+18:14:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:14:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 474
+18:14:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:14:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.15s (92.5%)
+18:14:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.57s (7.4%)
+18:14:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:14:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:14:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 50ms
+18:14:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:14:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:14:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99148
+18:14:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1024.7
+18:14:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:14:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:14:47 +01:00 - INFO - 📝 [CACHE] Wrote 474 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.73s)
+18:14:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #9 completed in 7.74s: 474 zones (126 supply, 348 demand)
+18:15:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #10
+18:15:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:15:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.013ms)
+18:15:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:15:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.77s (7768ms)
+18:15:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:15:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:15:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:15:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:15:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:15:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:15:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766534
+18:15:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:15:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:15:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:15:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.18s (92.4%)
+18:15:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.5%)
+18:15:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:15:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:15:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 50ms
+18:15:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:15:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:15:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 98683
+18:15:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1019.9
+18:15:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:15:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:15:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.77s)
+18:15:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #10 completed in 7.77s: 473 zones (126 supply, 347 demand)
+18:16:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #11
+18:16:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:16:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.010ms)
+18:16:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:16:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.67s (7670ms)
+18:16:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:16:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:16:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:16:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:16:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:16:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:16:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766534
+18:16:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:16:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:16:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:16:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.08s (92.2%)
+18:16:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.59s (7.7%)
+18:16:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:16:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:16:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:16:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:16:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:16:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99937
+18:16:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1032.8
+18:16:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:16:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:16:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.67s)
+18:16:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #11 completed in 7.68s: 473 zones (126 supply, 347 demand)
+18:17:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #12
+18:17:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:17:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.022ms)
+18:17:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:17:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.76s (7761ms)
+18:17:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:17:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:17:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:17:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:17:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:17:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:17:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766534
+18:17:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:17:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:17:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:17:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.16s (92.3%)
+18:17:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.59s (7.7%)
+18:17:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:17:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:17:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 50ms
+18:17:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:17:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:17:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 98773
+18:17:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1020.8
+18:17:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:17:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:17:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.76s)
+18:17:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #12 completed in 7.77s: 473 zones (126 supply, 347 demand)
+18:18:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #13
+18:18:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:18:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.092ms)
+18:18:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:18:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.70s (7699ms)
+18:18:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:18:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:18:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:18:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:18:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:18:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:18:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766534
+18:18:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:18:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:18:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:18:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.09s (92.2%)
+18:18:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.60s (7.8%)
+18:18:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:18:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:18:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:18:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:18:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:18:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99563
+18:18:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1029.0
+18:18:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:18:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:18:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.70s)
+18:18:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #13 completed in 7.71s: 473 zones (126 supply, 347 demand)
+18:19:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #14
+18:19:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:19:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.013ms)
+18:19:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:19:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.72s (7720ms)
+18:19:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:19:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:19:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:19:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:19:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:19:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:19:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766534
+18:19:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:19:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:19:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:19:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.12s (92.2%)
+18:19:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.60s (7.7%)
+18:19:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:19:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:19:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:19:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:19:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:19:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99287
+18:19:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1026.1
+18:19:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:19:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:19:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.72s)
+18:19:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #14 completed in 7.73s: 473 zones (126 supply, 347 demand)
+18:20:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #15
+18:20:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:20:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.016ms)
+18:20:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:20:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.90s (7901ms)
+18:20:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:20:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:20:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:20:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:20:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:20:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:20:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766556
+18:20:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:20:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:20:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:20:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.26s (91.9%)
+18:20:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.63s (8.0%)
+18:20:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:20:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:20:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 51ms
+18:20:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 47ms
+18:20:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:20:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 97023
+18:20:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1002.7
+18:20:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:20:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:20:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.90s)
+18:20:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #15 completed in 7.91s: 473 zones (126 supply, 347 demand)
+18:21:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #16
+18:21:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:21:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.011ms)
+18:21:48 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:21:48 +01:00 - INFO - 📊 [CACHE] Total Duration: 8.07s (8072ms)
+18:21:48 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:21:48 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:21:48 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:21:48 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:21:48 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:21:48 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:21:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766556
+18:21:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:21:48 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:21:48 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:21:48 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.45s (92.4%)
+18:21:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.61s (7.6%)
+18:21:48 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:21:48 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:21:48 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 52ms
+18:21:48 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 48ms
+18:21:48 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:21:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 94966
+18:21:48 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 981.4
+18:21:48 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:21:48 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:21:48 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 8.07s)
+18:21:48 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #16 completed in 8.08s: 473 zones (126 supply, 347 demand)
+18:22:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #17
+18:22:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:22:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.076ms)
+18:22:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:22:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.92s (7916ms)
+18:22:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:22:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:22:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:22:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:22:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:22:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:22:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766556
+18:22:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:22:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:22:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:22:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.29s (92.1%)
+18:22:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.62s (7.8%)
+18:22:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:22:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:22:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 51ms
+18:22:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 47ms
+18:22:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:22:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 96835
+18:22:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1000.7
+18:22:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:22:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:22:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.92s)
+18:22:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #17 completed in 7.92s: 473 zones (126 supply, 347 demand)
+18:23:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #18
+18:23:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:23:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.010ms)
+18:23:48 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:23:48 +01:00 - INFO - 📊 [CACHE] Total Duration: 8.32s (8323ms)
+18:23:48 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:23:48 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:23:48 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:23:48 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:23:48 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:23:48 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:23:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766556
+18:23:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:23:48 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:23:48 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:23:48 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.51s (90.3%)
+18:23:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.80s (9.6%)
+18:23:48 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:23:48 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:23:48 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 53ms
+18:23:48 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 48ms
+18:23:48 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 5ms
+18:23:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 92100
+18:23:48 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 951.8
+18:23:48 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:23:48 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:23:48 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 8.32s)
+18:23:48 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #18 completed in 8.33s: 473 zones (126 supply, 347 demand)
+18:24:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #19
+18:24:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:24:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.014ms)
+18:24:48 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:24:48 +01:00 - INFO - 📊 [CACHE] Total Duration: 8.09s (8089ms)
+18:24:48 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:24:48 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:24:48 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:24:48 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:24:48 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:24:48 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:24:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766556
+18:24:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:24:48 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:24:48 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:24:48 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.46s (92.2%)
+18:24:48 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.63s (7.7%)
+18:24:48 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:24:48 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:24:48 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 52ms
+18:24:48 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 48ms
+18:24:48 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:24:48 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 94767
+18:24:48 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 979.4
+18:24:48 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:24:48 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:24:48 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 8.09s)
+18:24:48 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #19 completed in 8.10s: 473 zones (126 supply, 347 demand)
+18:25:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #20
+18:25:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:25:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.009ms)
+18:25:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:25:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.99s (7988ms)
+18:25:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:25:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:25:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:25:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:25:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:25:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:25:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766578
+18:25:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:25:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:25:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:25:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.37s (92.3%)
+18:25:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.61s (7.7%)
+18:25:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:25:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:25:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 51ms
+18:25:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 47ms
+18:25:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:25:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 95966
+18:25:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 991.7
+18:25:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:25:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:25:48 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.99s)
+18:25:48 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #20 completed in 8.00s: 473 zones (126 supply, 347 demand)
+18:26:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #21
+18:26:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:26:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.013ms)
+18:26:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:26:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.54s (7537ms)
+18:26:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:26:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:26:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:26:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:26:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:26:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:26:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766578
+18:26:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:26:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:26:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:26:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 6.96s (92.4%)
+18:26:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.57s (7.6%)
+18:26:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:26:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:26:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 48ms
+18:26:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:26:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:26:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 101714
+18:26:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1051.1
+18:26:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:26:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:26:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.54s)
+18:26:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #21 completed in 7.54s: 473 zones (126 supply, 347 demand)
+18:27:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #22
+18:27:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:27:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.021ms)
+18:27:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:27:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.68s (7684ms)
+18:27:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:27:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:27:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:27:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:27:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:27:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:27:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766578
+18:27:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:27:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:27:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:27:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.10s (92.5%)
+18:27:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.57s (7.5%)
+18:27:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:27:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:27:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:27:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:27:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:27:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99761
+18:27:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1031.0
+18:27:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:27:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:27:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.68s)
+18:27:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #22 completed in 7.69s: 473 zones (126 supply, 347 demand)
+18:28:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #23
+18:28:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:28:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.013ms)
+18:28:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:28:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.56s (7556ms)
+18:28:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:28:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:28:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:28:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:28:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:28:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:28:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766578
+18:28:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:28:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:28:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:28:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 6.96s (92.2%)
+18:28:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.7%)
+18:28:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:28:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:28:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 48ms
+18:28:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:28:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:28:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 101454
+18:28:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1048.5
+18:28:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:28:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:28:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.56s)
+18:28:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #23 completed in 7.56s: 473 zones (126 supply, 347 demand)
+18:29:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #24
+18:29:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:29:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.009ms)
+18:29:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:29:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.59s (7593ms)
+18:29:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:29:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:29:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:29:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:29:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:29:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:29:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766578
+18:29:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:29:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:29:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:29:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.01s (92.3%)
+18:29:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.6%)
+18:29:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:29:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:29:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:29:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:29:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:29:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 100954
+18:29:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1043.3
+18:29:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:29:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:29:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.59s)
+18:29:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #24 completed in 7.60s: 473 zones (126 supply, 347 demand)
+18:30:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #25
+18:30:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:30:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.010ms)
+18:30:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:30:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.71s (7711ms)
+18:30:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:30:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:30:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:30:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:30:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:30:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:30:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766644
+18:30:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:30:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:30:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:30:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 7.12s (92.4%)
+18:30:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.5%)
+18:30:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:30:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:30:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:30:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 46ms
+18:30:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:30:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 99425
+18:30:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1027.4
+18:30:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:30:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:30:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.71s)
+18:30:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #25 completed in 7.72s: 473 zones (126 supply, 347 demand)
+18:31:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #26
+18:31:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:31:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.009ms)
+18:31:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:31:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.51s (7508ms)
+18:31:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:31:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:31:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:31:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:31:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:31:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:31:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766644
+18:31:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:31:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:31:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:31:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 6.94s (92.4%)
+18:31:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.56s (7.4%)
+18:31:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:31:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:31:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 48ms
+18:31:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 44ms
+18:31:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:31:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 102108
+18:31:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1055.1
+18:31:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:31:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:31:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.51s)
+18:31:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #26 completed in 7.52s: 473 zones (126 supply, 347 demand)
+18:32:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #27
+18:32:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:32:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.012ms)
+18:32:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:32:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.57s (7574ms)
+18:32:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:32:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:32:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:32:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:32:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:32:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:32:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766644
+18:32:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:32:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:32:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:32:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 6.98s (92.2%)
+18:32:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.58s (7.7%)
+18:32:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:32:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:32:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 49ms
+18:32:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:32:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:32:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 101215
+18:32:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1045.9
+18:32:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:32:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:32:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.57s)
+18:32:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #27 completed in 7.58s: 473 zones (126 supply, 347 demand)
+18:33:40 +01:00 - INFO - 🔄 [CACHE_UPDATER] Starting update #28
+18:33:40 +01:00 - INFO - 🔄 [CACHE] Starting zone refresh with dynamic date calculation...
+18:33:40 +01:00 - INFO - 📅 [CACHE] USING DYNAMIC DATE RANGE (90 days back from today): 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z (calculated in 0.068ms)
+18:33:47 +01:00 - INFO - 🏁 [CACHE] === PERFORMANCE SUMMARY ===
+18:33:47 +01:00 - INFO - 📊 [CACHE] Total Duration: 7.55s (7549ms)
+18:33:47 +01:00 - INFO - 📊 [CACHE] Date Range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z
+18:33:47 +01:00 - INFO - 📊 [CACHE] Symbol/Timeframe Combinations:
+18:33:47 +01:00 - INFO - 📊 [CACHE]   ✅ Successful: 156
+18:33:47 +01:00 - INFO - 📊 [CACHE]   ❌ Failed: 0
+18:33:47 +01:00 - INFO - 📊 [CACHE]   📈 Total: 156
+18:33:47 +01:00 - INFO - 📊 [CACHE] Data Processing:
+18:33:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Total Candles Fetched: 766644
+18:33:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Zones Detected: 7922
+18:33:47 +01:00 - INFO - 📊 [CACHE]   ✅ Active Zones in Cache: 473
+18:33:47 +01:00 - INFO - 📊 [CACHE] Timing Breakdown:
+18:33:47 +01:00 - INFO - 📊 [CACHE]   📥 Total Fetch Time: 6.97s (92.3%)
+18:33:47 +01:00 - INFO - 📊 [CACHE]   🔍 Total Detection Time: 0.57s (7.6%)
+18:33:47 +01:00 - INFO - 📊 [CACHE]   ⚙️  Other Processing: 0.01s (0.1%)
+18:33:47 +01:00 - INFO - 📊 [CACHE] Performance Metrics:
+18:33:47 +01:00 - INFO - 📊 [CACHE]   ⚡ Avg per Symbol/TF: 48ms
+18:33:47 +01:00 - INFO - 📊 [CACHE]   📥 Avg Fetch per S/TF: 45ms
+18:33:47 +01:00 - INFO - 📊 [CACHE]   🔍 Avg Detection per S/TF: 4ms
+18:33:47 +01:00 - INFO - 📊 [CACHE]   🕯️  Candles per Second: 101550
+18:33:47 +01:00 - INFO - 📊 [CACHE]   🔍 Zones per Second: 1049.3
+18:33:47 +01:00 - INFO - 📊 [CACHE]   📈 Active Zone Ratio: 6.0%
+18:33:47 +01:00 - INFO - 📊 [CACHE] === END SUMMARY ===
+18:33:47 +01:00 - INFO - 📝 [CACHE] Wrote 473 zones to cache_zones_debug_dynamic.json (range: 2025-04-01T00:00:00Z to 2025-06-30T23:59:59Z, processed in 7.55s)
+18:33:47 +01:00 - INFO - ✅ [CACHE_UPDATER] Update #28 completed in 7.56s: 473 zones (126 supply, 347 demand)
+18:34:21 +01:00 - INFO - SIGTERM received; starting graceful shutdown
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - graceful worker shutdown; finishing 1 connections
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - accept thread stopped
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker
+18:34:21 +01:00 - INFO - shutting down idle worker

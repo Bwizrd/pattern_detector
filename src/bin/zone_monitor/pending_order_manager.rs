@@ -6,13 +6,13 @@ use crate::db::OrderDatabase;
 use crate::types::ZoneAlert;
 use crate::types::{PriceUpdate, Zone};
 use chrono::{DateTime, Utc};
-use redis::{Client, Commands};
+use redis::{Client, Commands, Connection};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +87,6 @@ pub struct EnrichedDeal {
     pub slippage_pips: Option<f64>,
 }
 
-#[derive(Debug)]
 pub struct PendingOrderManager {
     enabled: bool,
     distance_threshold_pips: f64,
@@ -101,6 +100,7 @@ pub struct PendingOrderManager {
     order_database: Option<Arc<OrderDatabase>>, // InfluxDB for order lifecycle tracking
     redis_client: Option<Client>,
     min_zone_strength: f64,
+    redis_connection: Option<Arc<Mutex<Connection>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +126,23 @@ struct PlacePendingOrderResponse {
 
 impl PendingOrderManager {
     pub fn new() -> Self {
+        let (_redis_client, redis_connection) = match Client::open("redis://127.0.0.1:6379/") {
+            Ok(client) => match client.get_connection() {
+                Ok(conn) => {
+                    info!("📊 Redis connected for order monitoring");
+                    (Some(client), Some(Arc::new(Mutex::new(conn))))
+                }
+                Err(e) => {
+                    error!("📊 Failed to establish Redis connection: {}", e);
+                    (None, None)
+                }
+            },
+            Err(e) => {
+                error!("📊 Failed to create Redis client: {}", e);
+                (None, None)
+            }
+        };
+
         let enabled = env::var("ENABLE_LIMIT_ORDERS")
             .unwrap_or_else(|_| "false".to_string())
             .trim()
@@ -202,8 +219,36 @@ impl PendingOrderManager {
             symbol_ids: Self::init_symbol_ids(),
             allowed_timeframes,
             order_database: None,
-            redis_client,
+            redis_client: _redis_client,
             min_zone_strength,
+            redis_connection,
+        }
+    }
+
+    async fn ensure_redis_available(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match &self.redis_connection {
+            Some(conn_arc) => {
+                let mut conn = conn_arc
+                    .lock()
+                    .map_err(|e| format!("Redis lock error: {}", e))?;
+
+                // Test with a simple SET operation instead of ping
+                match conn.set::<&str, &str, ()>("redis_health_check", "ok") {
+                    Ok(_) => {
+                        // Clean up test key
+                        let _: Result<(), _> = conn.del("redis_health_check");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!("🚨 Redis health check failed: {}", e);
+                        Err(format!("Redis unavailable: {}", e).into())
+                    }
+                }
+            }
+            None => {
+                error!("🚨 No Redis connection available - BLOCKING ALL TRADING");
+                Err("Redis connection not available".into())
+            }
         }
     }
 
@@ -366,27 +411,29 @@ impl PendingOrderManager {
         info!("📋 Order database connected for InfluxDB tracking");
     }
 
-    /// Store pending order in Redis with 5-day TTL
     async fn store_pending_order_redis(
         &self,
         order: &PendingOrder,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(ref client) = self.redis_client {
-            let mut conn = client.get_connection()?;
+        // CRITICAL: Ensure Redis is available before storing
+        self.ensure_redis_available().await?;
 
-            // Store order data
+        if let Some(conn_arc) = &self.redis_connection {
+            let mut conn = conn_arc
+                .lock()
+                .map_err(|e| format!("Redis lock error: {}", e))?;
+
+            // Store order data with explicit type annotations
             let key = format!("pending_order:{}", order.zone_id);
             let order_json = serde_json::to_string(order)?;
-            conn.set(&key, &order_json)?;
-
-            // Set 5-day expiration for automatic cleanup
-            conn.expire(&key, 5 * 24 * 3600)?; // 5 days in seconds
+            let _: () = conn.set(&key, &order_json)?;
+            let _: () = conn.expire(&key, 5 * 24 * 3600)?; // 5 days
 
             // Store lookup key for deal enrichment
             if let Some(ref ctrader_id) = order.ctrader_order_id {
                 let lookup_key = format!("order_lookup:{}", ctrader_id);
-                conn.set(&lookup_key, &order.zone_id)?;
-                conn.expire(&lookup_key, 5 * 24 * 3600)?; // Same 5-day expiration
+                let _: () = conn.set(&lookup_key, &order.zone_id)?;
+                let _: () = conn.expire(&lookup_key, 5 * 24 * 3600)?;
             }
 
             info!(
@@ -395,19 +442,48 @@ impl PendingOrderManager {
             );
             Ok(())
         } else {
-            Err("Redis client not available".into())
+            Err("Redis connection not available for storage".into())
         }
     }
 
-    /// Check if zone already has a pending order (any status)
+    /// Updated zone check with connection reuse and fail-safe behavior
     async fn zone_has_pending_order(&self, zone_id: &str) -> bool {
-        if let Some(ref client) = self.redis_client {
-            if let Ok(mut conn) = client.get_connection() {
-                let key = format!("pending_order:{}", zone_id);
-                return conn.exists::<_, bool>(&key).unwrap_or(false);
+        // FAIL-SAFE: If Redis check fails, assume order exists to prevent duplicates
+        match self.ensure_redis_available().await {
+            Ok(_) => {
+                if let Some(conn_arc) = &self.redis_connection {
+                    if let Ok(mut conn) = conn_arc.lock() {
+                        let key = format!("pending_order:{}", zone_id);
+                        match conn.exists::<_, bool>(&key) {
+                            Ok(exists) => exists,
+                            Err(e) => {
+                                error!("🚨 Redis exists check failed for {}: {} - ASSUMING ORDER EXISTS", zone_id, e);
+                                true // Fail-safe: assume order exists to prevent duplicates
+                            }
+                        }
+                    } else {
+                        error!(
+                            "🚨 Failed to acquire Redis lock for {} - ASSUMING ORDER EXISTS",
+                            zone_id
+                        );
+                        true // Fail-safe
+                    }
+                } else {
+                    error!(
+                        "🚨 No Redis connection for {} - ASSUMING ORDER EXISTS",
+                        zone_id
+                    );
+                    true // Fail-safe
+                }
+            }
+            Err(e) => {
+                error!(
+                    "🚨 Redis health check failed for {}: {} - BLOCKING TRADING",
+                    zone_id, e
+                );
+                true // Fail-safe: block trading by pretending order exists
             }
         }
-        false
     }
 
     /// Get pending order for deal enrichment (by ctrader_order_id)
@@ -415,8 +491,17 @@ impl PendingOrderManager {
         &self,
         ctrader_order_id: &str,
     ) -> Option<PendingOrder> {
-        if let Some(ref client) = self.redis_client {
-            if let Ok(mut conn) = client.get_connection() {
+        // If Redis is not available, return None (no enrichment)
+        if self.ensure_redis_available().await.is_err() {
+            warn!(
+                "🚨 Redis unavailable for enrichment - skipping for order {}",
+                ctrader_order_id
+            );
+            return None;
+        }
+
+        if let Some(conn_arc) = &self.redis_connection {
+            if let Ok(mut conn) = conn_arc.lock() {
                 // Get zone_id from lookup
                 let lookup_key = format!("order_lookup:{}", ctrader_order_id);
                 if let Ok(zone_id) = conn.get::<_, String>(&lookup_key) {
@@ -503,6 +588,7 @@ impl PendingOrderManager {
     }
 
     /// Main order placement method - simplified for Redis-only storage
+    /// CRITICAL: Updated main trading method with Redis-first validation
     pub async fn check_and_place_orders(
         &mut self,
         price_update: &PriceUpdate,
@@ -511,6 +597,12 @@ impl PendingOrderManager {
     ) {
         if !self.enabled {
             return;
+        }
+
+        // CRITICAL CHECK: Ensure Redis is available before ANY trading
+        if let Err(e) = self.ensure_redis_available().await {
+            error!("🚨 TRADING BLOCKED: Redis unavailable - {}", e);
+            return; // Exit immediately - NO TRADING without Redis
         }
 
         let current_price = (price_update.bid + price_update.ask) / 2.0;
@@ -532,10 +624,10 @@ impl PendingOrderManager {
             let distance_pips = self.calculate_distance_to_zone(current_price, zone);
 
             if distance_pips <= self.distance_threshold_pips {
-                // Simple existence check - if it exists in Redis, skip
+                // CRITICAL: Check Redis for existing orders (fail-safe behavior)
                 if self.zone_has_pending_order(&zone.id).await {
                     debug!(
-                        "📋 Zone {} already has pending order in Redis, skipping",
+                        "📋 Zone {} already has pending order or Redis check failed, skipping",
                         zone.id
                     );
                     continue;
@@ -571,19 +663,30 @@ impl PendingOrderManager {
                     .await
                 {
                     Ok(pending_order) => {
-                        // Log success FIRST before storing in Redis
-                        csv_logger
-                            .log_booking_attempt(
-                                &zone_alert,
-                                "success",
-                                pending_order.ctrader_order_id.as_deref(),
-                                None,
-                            )
-                            .await;
-
-                        // Store in Redis - this might move the pending_order
-                        if let Err(e) = self.store_pending_order_redis(&pending_order).await {
-                            error!("📋 Failed to store order in Redis: {}", e);
+                        // CRITICAL: Store in Redis IMMEDIATELY after broker success
+                        match self.store_pending_order_redis(&pending_order).await {
+                            Ok(_) => {
+                                info!("✅ Order placed and stored in Redis for zone {}", zone.id);
+                                csv_logger
+                                    .log_booking_attempt(
+                                        &zone_alert,
+                                        "success",
+                                        pending_order.ctrader_order_id.as_deref(),
+                                        None,
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                error!("🚨 CRITICAL: Order placed with broker but Redis storage failed for zone {}: {}", zone.id, e);
+                                csv_logger
+                                    .log_booking_attempt(
+                                        &zone_alert,
+                                        "redis_storage_failed",
+                                        pending_order.ctrader_order_id.as_deref(),
+                                        Some(&format!("Redis storage failed: {}", e)),
+                                    )
+                                    .await;
+                            }
                         }
                     }
                     Err(e) => {
@@ -763,8 +866,10 @@ impl PendingOrderManager {
 
             // Try to enrich with Redis pending order data
             if let Some(order_id) = &deal.order_id {
-                let order_id_str = order_id.to_string();  // Convert u64 to String
-                if let Some(pending_order) = self.get_pending_order_for_enrichment(&order_id_str).await {
+                let order_id_str = order_id.to_string(); // Convert u64 to String
+                if let Some(pending_order) =
+                    self.get_pending_order_for_enrichment(&order_id_str).await
+                {
                     // Clone the zone_id BEFORE moving it, so we can use it in logging
                     let zone_id_for_logging = pending_order.zone_id.clone();
 
@@ -914,22 +1019,6 @@ impl PendingOrderManager {
         Ok(())
     }
 
-    /// Get Redis statistics for monitoring
-    pub async fn get_redis_stats(&self) -> (usize, usize) {
-        if let Some(ref client) = self.redis_client {
-            if let Ok(mut conn) = client.get_connection() {
-                let pending_orders: Result<Vec<String>, _> = conn.keys("pending_order:*");
-                let lookups: Result<Vec<String>, _> = conn.keys("order_lookup:*");
-
-                return (
-                    pending_orders.map(|v| v.len()).unwrap_or(0),
-                    lookups.map(|v| v.len()).unwrap_or(0),
-                );
-            }
-        }
-        (0, 0)
-    }
-
     /// Calculate distance from current price to zone proximal line
     fn calculate_distance_to_zone(&self, current_price: f64, zone: &Zone) -> f64 {
         let is_supply = zone.zone_type.to_lowercase().contains("supply");
@@ -1027,5 +1116,24 @@ impl PendingOrderManager {
     /// Check if manager is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+    /// Get Redis statistics with connection reuse
+    pub async fn get_redis_stats(&self) -> (usize, usize) {
+        if self.ensure_redis_available().await.is_err() {
+            return (0, 0);
+        }
+
+        if let Some(conn_arc) = &self.redis_connection {
+            if let Ok(mut conn) = conn_arc.lock() {
+                let pending_orders: Result<Vec<String>, _> = conn.keys("pending_order:*");
+                let lookups: Result<Vec<String>, _> = conn.keys("order_lookup:*");
+
+                return (
+                    pending_orders.map(|v| v.len()).unwrap_or(0),
+                    lookups.map(|v| v.len()).unwrap_or(0),
+                );
+            }
+        }
+        (0, 0)
     }
 }

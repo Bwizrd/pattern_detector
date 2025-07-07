@@ -132,22 +132,32 @@ fn render_header(f: &mut Frame, app: &App, area: Rect, page_name: &str) {
     let now = Utc::now();
     let elapsed = app.last_update.elapsed().as_secs();
     let ws_status = if app.websocket_connected { "🟢 WS" } else { "🔴 WS" };
+    
+    // ✅ FIX: Use the helper method instead of accessing private field
+    let redis_status = if app.is_redis_connected() { "🟢 Redis" } else { "🔴 Redis" };
+    
     let trading_status = if app.trading_enabled {
         if app.websocket_connected { "🟢 ON" } else { "🟡 ON (NO WS)" }
     } else {
         "🔴 OFF"
     };
+    
+    let pending_orders_count = app.pending_orders.len();
+    
     let header_text = format!(
-        "API: {} | {} | Updates: {} | Last: {}s ago | Time: {} | Page: {} | Prices: {} | Trading: {}",
+        "API: {} | {} | {} | Updates: {} | Last: {}s ago | Time: {} | Page: {} | Prices: {} | Trading: {} | Pending: {}",
         app.api_base_url,
         ws_status,
+        redis_status,
         app.update_count,
         elapsed,
         now.format("%H:%M:%S"),
         page_name,
         app.current_prices.len(),
-        trading_status
+        trading_status,
+        pending_orders_count
     );
+    
     let header = Paragraph::new(header_text)
         .block(header_block)
         .alignment(Alignment::Center)
@@ -923,7 +933,7 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
             .iter()
             .take(25)
             .map(|trade| {
-                let time_str = trade.timestamp.format("%H:%M:%S").to_string();
+                let _time_str = trade.timestamp.format("%H:%M:%S").to_string();
                 let direction_color = if trade.direction == "BUY" {
                     Color::Green
                 } else {
@@ -1145,7 +1155,7 @@ fn render_all_notifications_panel_enhanced(
             vec!["Time", "Type", "Action", "Pair", "Price"]
         };
 
-        let header_cells = headers.iter().map(|h| {
+        let _header_cells = headers.iter().map(|h| {
             Cell::from(*h).style(
                 Style::default()
                     .fg(Color::Yellow)
