@@ -9,11 +9,13 @@ use chrono::{DateTime, Utc};
 use redis::{Client, Commands, Connection};
 use reqwest;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
+
+use crate::db::order_db::EnrichedDeal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrder {
@@ -56,35 +58,6 @@ struct BrokerDeal {
     #[serde(rename = "dealStatus")]
     pub deal_type: i32,
     pub profit: Option<f64>,
-}
-
-// Enriched deal for InfluxDB storage
-#[derive(Debug, Clone, Serialize)]
-pub struct EnrichedDeal {
-    // Basic deal info from broker
-    pub deal_id: String,
-    pub position_id: String,
-    pub symbol: String,
-    pub volume: f64,
-    pub trade_side: i32,
-    pub price: f64,
-    pub execution_time: DateTime<Utc>,
-    pub deal_type: String, // "OPEN" or "CLOSE"
-    pub profit: Option<f64>,
-
-    // Enriched data from pending orders (if available)
-    pub zone_id: Option<String>,
-    pub zone_type: Option<String>, // "supply_zone" or "demand_zone"
-    pub zone_strength: Option<f64>,
-    pub zone_high: Option<f64>,
-    pub zone_low: Option<f64>,
-    pub touch_count: Option<i32>,
-    pub timeframe: Option<String>,
-    pub distance_when_placed: Option<f64>,
-    pub original_entry_price: Option<f64>,
-    pub stop_loss: Option<f64>,
-    pub take_profit: Option<f64>,
-    pub slippage_pips: Option<f64>,
 }
 
 pub struct PendingOrderManager {
@@ -415,7 +388,6 @@ impl PendingOrderManager {
         &self,
         order: &PendingOrder,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // CRITICAL: Ensure Redis is available before storing
         self.ensure_redis_available().await?;
 
         if let Some(conn_arc) = &self.redis_connection {
@@ -423,13 +395,13 @@ impl PendingOrderManager {
                 .lock()
                 .map_err(|e| format!("Redis lock error: {}", e))?;
 
-            // Store order data with explicit type annotations
             let key = format!("pending_order:{}", order.zone_id);
             let order_json = serde_json::to_string(order)?;
-            let _: () = conn.set(&key, &order_json)?;
-            let _: () = conn.expire(&key, 5 * 24 * 3600)?; // 5 days
 
-            // Store lookup key for deal enrichment
+            // Fix: specify types explicitly for Redis operations
+            let _: () = conn.set(&key, &order_json)?;
+            let _: () = conn.expire(&key, 5 * 24 * 3600)?;
+
             if let Some(ref ctrader_id) = order.ctrader_order_id {
                 let lookup_key = format!("order_lookup:{}", ctrader_id);
                 let _: () = conn.set(&lookup_key, &order.zone_id)?;
@@ -866,15 +838,14 @@ impl PendingOrderManager {
 
             // Try to enrich with Redis pending order data
             if let Some(order_id) = &deal.order_id {
-                let order_id_str = order_id.to_string(); // Convert u64 to String
+                let order_id_str = order_id.to_string();
                 if let Some(pending_order) =
                     self.get_pending_order_for_enrichment(&order_id_str).await
                 {
-                    // Clone the zone_id BEFORE moving it, so we can use it in logging
                     let zone_id_for_logging = pending_order.zone_id.clone();
 
-                    // Enrich with zone data - these moves take ownership
-                    enriched_deal.zone_id = Some(pending_order.zone_id); // This MOVES pending_order.zone_id
+                    // Enrich with zone data
+                    enriched_deal.zone_id = Some(pending_order.zone_id);
                     enriched_deal.zone_type = Some(pending_order.zone_type);
                     enriched_deal.zone_strength = Some(pending_order.zone_strength);
                     enriched_deal.zone_high = Some(pending_order.zone_high);
@@ -891,7 +862,6 @@ impl PendingOrderManager {
                     let slippage = (deal.price - pending_order.entry_price).abs() / pip_value;
                     enriched_deal.slippage_pips = Some(slippage);
 
-                    // Use the cloned zone_id for logging instead of the moved one
                     info!(
                         "📊 Enriched deal {} with zone data from {}",
                         deal.deal_id, zone_id_for_logging
@@ -953,7 +923,6 @@ impl PendingOrderManager {
         &self,
         deal: &BrokerDeal,
     ) -> Result<EnrichedDeal, Box<dyn std::error::Error + Send + Sync>> {
-        // Convert numeric IDs to strings
         let deal_id = deal.deal_id.to_string();
         let position_id = deal.position_id.to_string();
 
@@ -969,7 +938,8 @@ impl PendingOrderManager {
             DateTime::from_timestamp(deal.execution_time / 1000, 0).unwrap_or_else(|| Utc::now());
 
         let deal_type = match deal.deal_type {
-            2 => "CLOSE".to_string(), // Your API uses 2 for deals
+            2 => "CLOSE".to_string(),
+            1 => "OPEN".to_string(),
             _ => "UNKNOWN".to_string(),
         };
 
@@ -983,7 +953,6 @@ impl PendingOrderManager {
             execution_time,
             deal_type,
             profit: deal.profit,
-
             // These will be enriched if pending order is found
             zone_id: None,
             zone_type: None,
@@ -1004,21 +973,28 @@ impl PendingOrderManager {
     async fn save_enriched_deal_to_influx(
         &self,
         deal: &EnrichedDeal,
-        _order_db: &Arc<OrderDatabase>,
+        order_db: &Arc<OrderDatabase>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // For now, just use the existing write_order_event method
-        // You can extend OrderDatabase later to handle enriched deals
-        debug!(
-            "📊 Enriched deal {} ready for InfluxDB (skipping for now - extend OrderDatabase)",
-            deal.deal_id
-        );
+        info!("🚀 Starting InfluxDB save for deal {}", deal.deal_id);
 
-        // TODO: Implement proper enriched deal storage in OrderDatabase
-        // This might require adding a new method like write_enriched_deal()
-
-        Ok(())
+        match order_db.write_enriched_deal(deal).await {
+            Ok(()) => {
+                info!("✅ Successfully saved deal {} to InfluxDB", deal.deal_id);
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "❌ CRITICAL FAILURE saving deal {} to InfluxDB: {}",
+                    deal.deal_id, e
+                );
+                error!(
+                    "❌ Deal details: symbol={}, type={}, price={:.5}, zone_id={:?}",
+                    deal.symbol, deal.deal_type, deal.price, deal.zone_id
+                );
+                Err(e.into())
+            }
+        }
     }
-
     /// Calculate distance from current price to zone proximal line
     fn calculate_distance_to_zone(&self, current_price: f64, zone: &Zone) -> f64 {
         let is_supply = zone.zone_type.to_lowercase().contains("supply");
