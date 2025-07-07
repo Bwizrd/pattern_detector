@@ -131,20 +131,16 @@ impl MonitorState {
         });
 
         // Initialize InfluxDB order database
-        let influx_host = std::env::var("INFLUXDB_HOST")
-            .unwrap_or_else(|_| "http://localhost:8086".to_string());
-        let influx_org = std::env::var("INFLUXDB_ORG")
-            .unwrap_or_else(|_| "pattern_detector".to_string());
+        let influx_host =
+            std::env::var("INFLUXDB_HOST").unwrap_or_else(|_| "http://localhost:8086".to_string());
+        let influx_org =
+            std::env::var("INFLUXDB_ORG").unwrap_or_else(|_| "pattern_detector".to_string());
         let influx_token = std::env::var("INFLUXDB_TOKEN")
             .unwrap_or_else(|_| "dev-token-please-change".to_string());
         let influx_bucket = "trading_orders".to_string();
-        
-        let order_database = OrderDatabase::new(
-            influx_host,
-            influx_org,
-            influx_token,
-            influx_bucket,
-        );
+
+        let order_database =
+            OrderDatabase::new(influx_host, influx_org, influx_token, influx_bucket);
 
         Self {
             zone_cache: Arc::new(RwLock::new(ZoneCache::default())),
@@ -177,100 +173,36 @@ impl MonitorState {
         self.load_zones_from_file().await?;
         info!("✅ Zones loaded successfully");
 
-        // Initialize pending order manager
+        // Initialize pending order manager with InfluxDB connection (Redis-first, no JSON loading)
         info!("📋 Initializing pending order manager...");
         {
             let mut pending_order_manager = self.pending_order_manager.write().await;
-
-            // Set up InfluxDB order tracking
-            // pending_order_manager.set_order_database(self.order_database.clone());
-        }
-        
-        // Initialize active order manager with InfluxDB connection
-        info!("📋 Connecting ActiveOrderManager to InfluxDB...");
-        // self.active_order_manager.set_order_database(self.order_database.clone()).await;
-        
-        {
-            let mut pending_order_manager = self.pending_order_manager.write().await;
             
-            info!("🔄 Loading pending orders from file...");
-            if let Err(e) = pending_order_manager.load_pending_orders().await {
-                error!("❌ Failed to load pending orders: {}", e);
-                info!("📋 Starting with empty pending orders");
+            // Connect to InfluxDB for deal enrichment
+            pending_order_manager.set_order_database(self.order_database.clone());
+            
+            // Check Redis stats
+            let (pending_orders_count, lookup_keys_count) = pending_order_manager.get_redis_stats().await;
+            info!("📊 Redis Stats: {} pending orders, {} lookup keys", pending_orders_count, lookup_keys_count);
+            
+            if pending_order_manager.is_enabled() {
+                info!("✅ Pending Order Manager enabled and connected to Redis");
             } else {
-                let total_count = pending_order_manager.get_total_orders_count();
-                let pending_count = pending_order_manager.get_pending_orders_count();
-                
-                info!("✅ Loaded {} total orders ({} PENDING) from file", total_count, pending_count);
-
-                // Debug: Log some of the loaded orders by status
-                if total_count > 0 {
-                    info!("📋 Sample loaded orders:");
-                    
-                    // Show PENDING orders first
-                    let pending_orders = pending_order_manager.get_orders_by_status("PENDING");
-                    for order in pending_orders.iter().take(3) {
-                        info!(
-                            "   → {} -> {} {} PENDING (Order: {})",
-                            order.zone_id,
-                            order.symbol,
-                            order.timeframe,
-                            order.ctrader_order_id.as_deref().unwrap_or("N/A")
-                        );
-                    }
-                    
-                    // Show other statuses
-                    let filled_orders = pending_order_manager.get_orders_by_status("FILLED");
-                    if !filled_orders.is_empty() {
-                        info!("   → {} FILLED orders", filled_orders.len());
-                    }
-                    
-                    let cancelled_orders = pending_order_manager.get_orders_by_status("CANCELLED");
-                    if !cancelled_orders.is_empty() {
-                        info!("   → {} CANCELLED orders", cancelled_orders.len());
-                    }
-                    
-                    if total_count > 3 {
-                        info!("   ... and {} more orders", total_count - 3);
-                    }
-                } else {
-                    info!("📋 No existing orders found");
-                }
+                info!("⏸️ Pending Order Manager disabled");
             }
+        }
 
-            // Synchronize order STATUS with broker (don't remove, just update status)
-            info!("🔄 Synchronizing order status with broker...");
-            match pending_order_manager.synchronize_pending_orders().await {
-                Ok(updated_count) => {
-                    if updated_count > 0 {
-                        info!(
-                            "✅ Synchronized order status - updated {} orders",
-                            updated_count
-                        );
-                        
-                        // Log updated counts after sync
-                        let total_count = pending_order_manager.get_total_orders_count();
-                        let pending_count = pending_order_manager.get_pending_orders_count();
-                        info!(
-                            "📋 After sync: {} total orders, {} PENDING",
-                            total_count, pending_count
-                        );
-                    } else {
-                        info!("✅ Order status already synchronized");
-                    }
-                }
-                Err(e) => {
-                    warn!("⚠️ Failed to synchronize order status: {}", e);
-                    // Don't fail initialization if sync fails
-                }
-            }
+        // Initialize active order manager (Redis-only, no InfluxDB connection needed)
+        info!("📋 Initializing ActiveOrderManager for transitory Redis storage...");
+        
+        // Check Redis stats for active trades
+        let (active_trades_count, _) = self.active_order_manager.get_redis_stats().await;
+        info!("📊 Active Trades Redis Stats: {} active trades", active_trades_count);
 
-            let final_pending_count = pending_order_manager.get_pending_orders_count();
-            let final_total_count = pending_order_manager.get_total_orders_count();
-            info!(
-                "📋 Final counts: {} PENDING orders, {} total orders tracked",
-                final_pending_count, final_total_count
-            );
+        if self.active_order_manager.has_active_trades().await {
+            info!("✅ ActiveOrderManager has existing active trades");
+        } else {
+            info!("📋 ActiveOrderManager: No existing active trades");
         }
 
         // Load initial strategies
@@ -293,10 +225,9 @@ impl MonitorState {
         self.start_zone_reset_task().await;
         self.start_zone_interaction_save_task().await;
         self.start_zone_interaction_midnight_cleanup().await;
-        self.start_pending_order_cleanup_task().await;
-        self.start_pending_order_sync_task().await; // NEW: PENDING→FILLED sync
+        self.start_deal_enrichment_task().await; // NEW: Deal enrichment instead of order sync
         self.start_strategy_refresh_task().await;
-        // self.start_active_order_matching_task().await;
+        self.start_active_order_matching_task().await;
         self.start_csv_logger_cleanup_task().await;
         info!("✅ Background tasks started");
 
@@ -467,90 +398,26 @@ impl MonitorState {
         });
     }
 
-    async fn start_pending_order_sync_task(&self) {
+    // NEW: Deal enrichment task instead of order sync
+    async fn start_deal_enrichment_task(&self) {
         let pending_order_manager = Arc::clone(&self.pending_order_manager);
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(30)); // Check every 30 seconds
+            let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
 
             loop {
                 interval.tick().await;
 
-                let mut manager = pending_order_manager.write().await;
-                match manager.synchronize_pending_orders().await {
-                    Ok(updated_count) => {
-                        if updated_count > 0 {
-                            info!(
-                                "📋 PENDING→FILLED sync: {} orders updated",
-                                updated_count
-                            );
+                let manager = pending_order_manager.read().await;
+                match manager.enrich_and_save_deals().await {
+                    Ok(enriched_count) => {
+                        if enriched_count > 0 {
+                            info!("📊 Deal enrichment: processed {} deals", enriched_count);
                         }
                     }
                     Err(e) => {
-                        warn!("📋 PENDING→FILLED sync failed: {}", e);
+                        warn!("📊 Deal enrichment failed: {}", e);
                     }
-                }
-            }
-        });
-    }
-
-    async fn start_pending_order_cleanup_task(&self) {
-        let pending_order_manager = Arc::clone(&self.pending_order_manager);
-        let latest_prices = Arc::clone(&self.latest_prices);
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Check every hour
-
-            loop {
-                interval.tick().await;
-
-                // Get current prices for cleanup evaluation
-                let current_prices = {
-                    let prices = latest_prices.read().await;
-                    prices
-                        .iter()
-                        .map(|(symbol, price_update)| {
-                            let mid_price = (price_update.bid + price_update.ask) / 2.0;
-                            (symbol.clone(), mid_price)
-                        })
-                        .collect::<HashMap<String, f64>>()
-                };
-
-                // Only run cleanup if we have current prices
-                if !current_prices.is_empty() {
-                    let mut manager = pending_order_manager.write().await;
-                    
-                    // Run periodic cleanup (cancels old moved orders)
-                    match manager.periodic_cleanup_old_orders(&current_prices).await {
-                        Ok(cancelled_count) => {
-                            if cancelled_count > 0 {
-                                info!(
-                                    "📋 Periodic cleanup completed - cancelled {} old orders",
-                                    cancelled_count
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            error!("📋 Error during periodic order cleanup: {}", e);
-                        }
-                    }
-                    
-                    // Also run very old cleanup (removes 30+ day old non-pending orders)
-                    match manager.cleanup_very_old_orders().await {
-                        Ok(removed_count) => {
-                            if removed_count > 0 {
-                                info!(
-                                    "📋 Very old cleanup completed - removed {} ancient orders",
-                                    removed_count
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            error!("📋 Error during very old order cleanup: {}", e);
-                        }
-                    }
-                } else {
-                    info!("📋 Skipping cleanup - no current prices available");
                 }
             }
         });
@@ -584,17 +451,17 @@ impl MonitorState {
         let active_order_manager = Arc::clone(&self.active_order_manager);
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60)); // Check every minute
+            let mut interval = tokio::time::interval(Duration::from_secs(30)); // Check every 30 seconds for active trades
 
             loop {
                 interval.tick().await;
 
                 match active_order_manager.process_order_updates().await {
                     Ok(_) => {
-                        debug!("📋 Active order matching completed");
+                        debug!("📋 Active trade monitoring completed");
                     }
                     Err(e) => {
-                        warn!("📋 Active order matching failed: {}", e);
+                        warn!("📋 Active trade monitoring failed: {}", e);
                     }
                 }
             }
@@ -651,6 +518,12 @@ impl MonitorState {
                 .get(&price_update.symbol)
                 .cloned()
                 .unwrap_or_default();
+
+            debug!(
+                "📋 handle_price_update called - Symbol: {}, Zones found: {}",
+                price_update.symbol,
+                zones.len()
+            );
 
             // Initialize zone interaction metrics only for zones within 50 pips of proximal line
             if !zones.is_empty() {
@@ -1025,6 +898,81 @@ impl MonitorState {
         self.trading_engine
             .close_trade(trade_id, close_price, reason)
             .await
+    }
+
+    // Redis stats for pending orders
+    pub async fn get_pending_order_redis_stats(&self) -> (usize, usize) {
+        let manager = self.pending_order_manager.read().await;
+        manager.get_redis_stats().await
+    }
+
+    // Active trades Redis statistics
+    pub async fn get_active_trades_redis_stats(&self) -> (usize, usize) {
+        self.active_order_manager.get_redis_stats().await
+    }
+
+    // Get all current active trades with enriched data
+    pub async fn get_active_trades_enriched(&self) -> Vec<crate::active_order_manager::EnrichedActiveTrade> {
+        self.active_order_manager.get_all_active_trades().await
+    }
+
+    // Check if there are any active trades
+    pub async fn has_active_trades(&self) -> bool {
+        self.active_order_manager.has_active_trades().await
+    }
+
+    // Get active trades summary for dashboard
+    pub async fn get_active_trades_summary(&self) -> serde_json::Value {
+        let trades = self.get_active_trades_enriched().await;
+        
+        let total_trades = trades.len();
+        let profitable_trades = trades.iter().filter(|t| t.is_profitable).count();
+        let total_unrealized_pnl: f64 = trades.iter().map(|t| t.unrealized_pnl).sum();
+        let total_pips: f64 = trades.iter().map(|t| t.pips_profit).sum();
+        
+        // Group by symbol
+        let mut by_symbol: HashMap<String, usize> = HashMap::new();
+        for trade in &trades {
+            *by_symbol.entry(trade.symbol.clone()).or_insert(0) += 1;
+        }
+        
+        // Group by zone type (if available)
+        let mut by_zone_type: HashMap<String, usize> = HashMap::new();
+        for trade in &trades {
+            if let Some(zone_type) = &trade.zone_type {
+                *by_zone_type.entry(zone_type.clone()).or_insert(0) += 1;
+            }
+        }
+        
+        serde_json::json!({
+            "total_trades": total_trades,
+            "profitable_trades": profitable_trades,
+            "losing_trades": total_trades - profitable_trades,
+            "total_unrealized_pnl": total_unrealized_pnl,
+            "total_pips": total_pips,
+            "average_pips_per_trade": if total_trades > 0 { total_pips / total_trades as f64 } else { 0.0 },
+            "by_symbol": by_symbol,
+            "by_zone_type": by_zone_type,
+            "enriched_trades": trades.len(),
+            "non_enriched_trades": trades.iter().filter(|t| t.zone_id.is_none()).count()
+        })
+    }
+
+    // Get comprehensive Redis statistics for both managers
+    pub async fn get_comprehensive_redis_stats(&self) -> serde_json::Value {
+        let (pending_orders, lookup_keys) = self.get_pending_order_redis_stats().await;
+        let (active_trades, _) = self.get_active_trades_redis_stats().await;
+        
+        serde_json::json!({
+            "pending_orders": {
+                "count": pending_orders,
+                "lookup_keys": lookup_keys
+            },
+            "active_trades": {
+                "count": active_trades
+            },
+            "total_redis_keys": pending_orders + lookup_keys + active_trades
+        })
     }
 
     pub async fn save_notifications_to_shared_file(

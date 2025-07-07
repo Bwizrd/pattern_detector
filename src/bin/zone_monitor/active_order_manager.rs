@@ -1,113 +1,84 @@
 // src/bin/zone_monitor/active_order_manager.rs
-// Simplified: Focus only on PENDING orders and CLOSED trades (via deals API)
-// Skip complex position tracking - let open positions exist until they close
+// Focus on OPEN trades monitoring with Redis storage and zone enrichment
+// Independent from PendingOrderManager - tracks live trades with real-time P&L
 
 use chrono::{DateTime, Utc};
+use redis::{Client, Commands};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tokio::fs;
 use tracing::{debug, error, info, warn};
 
-// Import the pending order structures
-use crate::pending_order_manager::{PendingOrdersContainer};
-use crate::db::{OrderDatabase};
-use crate::db::schema::{OrderEvent};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Order {
-    pub orderId: u64,
-    pub symbolId: u32,
-    pub volume: u32,
-    pub tradeSide: u32,
-    pub orderType: u32,
-    pub limitPrice: f64,
-    pub orderStatus: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Position {
-    pub positionId: u64,
-    pub symbolId: u32,
-    pub volume: u32,
-    pub tradeSide: u32,
-    pub price: f64,
-    pub openTimestamp: u64,
-    pub status: u32,
-    pub swap: f64,
-    pub commission: f64,
-    pub usedMargin: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stopLoss: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub takeProfit: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PositionsResponse {
-    pub positions: Vec<Position>,
-    pub orders: Vec<Order>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ClosedTrade {
-    #[serde(rename = "dealId")]
-    pub deal_id: u64,
-    #[serde(rename = "orderId")]
-    pub order_id: u64,
+pub struct OpenPosition {
     #[serde(rename = "positionId")]
     pub position_id: u64,
     #[serde(rename = "symbolId")]
     pub symbol_id: u32,
-    #[serde(rename = "originalTradeSide")]
-    pub original_trade_side: u32,
-    #[serde(rename = "closingTradeSide")]
-    pub closing_trade_side: u32,
     pub volume: u32,
-    #[serde(rename = "volumeInLots")]
-    pub volume_in_lots: f64,
-    #[serde(rename = "entryPrice")]
-    pub entry_price: f64,
-    #[serde(rename = "exitPrice")]
-    pub exit_price: f64,
-    #[serde(rename = "priceDifference")]
-    pub price_difference: f64,
-    #[serde(rename = "pipsProfit")]
-    pub pips_profit: f64,
-    #[serde(rename = "openTime")]
+    #[serde(rename = "tradeSide")]
+    pub trade_side: u32,
+    pub price: f64,
+    #[serde(rename = "openTimestamp")]
     pub open_time: u64,
-    #[serde(rename = "closeTime")]
-    pub close_time: u64,
-    pub duration: u64,
-    #[serde(rename = "grossProfit")]
-    pub gross_profit: f64,
+    pub status: u32,
     pub swap: f64,
     pub commission: f64,
-    #[serde(rename = "pnlConversionFee")]
-    pub pnl_conversion_fee: f64,
-    #[serde(rename = "netProfit")]
-    pub net_profit: f64,
-    #[serde(rename = "balanceAfterTrade")]
-    pub balance_after_trade: f64,
-    #[serde(rename = "balanceVersion")]
-    pub balance_version: u64,
-    #[serde(rename = "quoteToDepositConversionRate")]
-    pub quote_to_deposit_conversion_rate: f64,
+    #[serde(rename = "usedMargin")]
+    pub used_margin: u32,
+    #[serde(rename = "stopLoss")]
+    pub stop_loss: Option<f64>,
+    #[serde(rename = "takeProfit")]
+    pub take_profit: Option<f64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichedActiveTrade {
+    // Basic position info from broker
+    pub position_id: u64,
+    pub symbol: String,
+    pub trade_side: String, // "BUY" or "SELL"
+    pub volume_lots: f64,
+    pub entry_price: f64,
+    pub current_price: f64,
+    pub unrealized_pnl: f64,
+    pub pips_profit: f64,
+    pub open_time: DateTime<Utc>,
+    pub duration_minutes: i64,
+    pub stop_loss: Option<f64>,
+    pub take_profit: Option<f64>,
+    pub swap: f64,
+    pub commission: f64,
     pub label: String,
     pub comment: String,
-    #[serde(rename = "dealStatus")]
-    pub deal_status: u32,
+
+    // Enriched zone data (if available from original pending order)
+    pub zone_id: Option<String>,
+    pub zone_type: Option<String>, // "supply_zone" or "demand_zone"
+    pub zone_strength: Option<f64>,
+    pub zone_high: Option<f64>,
+    pub zone_low: Option<f64>,
+    pub touch_count: Option<i32>,
+    pub timeframe: Option<String>,
+    pub distance_when_placed: Option<f64>,
+    pub original_entry_price: Option<f64>, // From pending order
+    pub slippage_pips: Option<f64>,
+
+    // Real-time metrics
+    pub distance_from_entry_pips: f64,
+    pub risk_reward_ratio: Option<f64>, // Current R:R based on SL/TP
+    pub is_profitable: bool,
+    pub max_drawdown_pips: Option<f64>, // Track worst point
+    pub max_profit_pips: Option<f64>,   // Track best point
+    pub last_updated: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct DealsResponse {
-    #[serde(rename = "closedTrades")]
-    pub closed_trades: Vec<ClosedTrade>,
-    #[serde(rename = "totalDeals")]
-    pub total_deals: u32,
-    #[serde(rename = "hasMore")]
-    pub has_more: bool,
+struct PositionsResponse {
+    pub positions: Vec<OpenPosition>,
+    #[serde(default)]
+    pub orders: Vec<serde_json::Value>, // We don't need to parse orders in ActiveOrderManager
 }
 
 #[derive(Debug)]
@@ -115,16 +86,17 @@ pub struct ActiveOrderManager {
     api_url: String,
     http_client: reqwest::Client,
     symbol_id_mapping: HashMap<u32, String>,
-    order_database: Arc<tokio::sync::RwLock<Option<Arc<OrderDatabase>>>>,
-    processed_deals: Arc<tokio::sync::Mutex<std::collections::HashSet<u64>>>, // Track processed deal IDs
+    redis_client: Option<Client>,
+    processed_positions: Arc<tokio::sync::Mutex<std::collections::HashSet<u64>>>,
+    position_metrics: Arc<tokio::sync::Mutex<HashMap<u64, (f64, f64)>>>, // position_id -> (max_profit, max_drawdown)
 }
 
 impl ActiveOrderManager {
     pub fn new() -> Self {
-        let api_url = std::env::var("POSITIONS_API_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:8000/positions".to_string());
+        let api_url = std::env::var("CTRADER_API_BRIDGE_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
 
-        // Symbol ID mapping from trading engine
+        // Initialize symbol ID mapping
         let mut symbol_id_mapping = HashMap::new();
         symbol_id_mapping.insert(185, "EURUSD".to_string());
         symbol_id_mapping.insert(199, "GBPUSD".to_string());
@@ -153,33 +125,44 @@ impl ActiveOrderManager {
         symbol_id_mapping.insert(205, "NAS100".to_string());
         symbol_id_mapping.insert(220, "US500".to_string());
 
-        info!("📋 Simplified Active Order Manager initialized:");
+        let redis_client = match Client::open("redis://127.0.0.1:6379/") {
+            Ok(client) => {
+                info!("📊 Redis connected for active trade monitoring");
+                Some(client)
+            }
+            Err(e) => {
+                warn!("📊 Redis not available: {}, continuing without Redis", e);
+                None
+            }
+        };
+
+        info!("📋 Active Order Manager initialized:");
         info!("   API URL: {}", api_url);
         info!("   Symbol mappings: {}", symbol_id_mapping.len());
-        info!("   Focus: PENDING orders → InfluxDB, CLOSED trades → InfluxDB");
+        info!("   Focus: Open trades monitoring with Redis storage");
 
         Self {
             api_url,
             http_client: reqwest::Client::new(),
             symbol_id_mapping,
-            order_database: Arc::new(tokio::sync::RwLock::new(None)),
-            processed_deals: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+            redis_client,
+            processed_positions: Arc::new(
+                tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            ),
+            position_metrics: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
-    
-    /// Set the order database for InfluxDB tracking
-    pub async fn set_order_database(&self, order_database: Arc<OrderDatabase>) {
-        let mut db_lock = self.order_database.write().await;
-        *db_lock = Some(order_database);
-        info!("📋 ActiveOrderManager: Order database connected for InfluxDB tracking");
-    }
 
-    pub async fn fetch_positions(&self) -> Result<PositionsResponse, String> {
-        info!("📋 Fetching positions from API: {}", self.api_url);
+    // No InfluxDB connection needed - ActiveOrderManager is Redis-only for transitory data
+
+    /// Fetch open positions from broker API
+    pub async fn fetch_open_positions(&self) -> Result<PositionsResponse, String> {
+        let positions_url = format!("{}/positions", self.api_url);
+        debug!("📋 Fetching open positions from API: {}", positions_url);
 
         match self
             .http_client
-            .get(&self.api_url)
+            .get(&positions_url)
             .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
@@ -188,9 +171,10 @@ impl ActiveOrderManager {
                 if response.status().is_success() {
                     match response.json::<PositionsResponse>().await {
                         Ok(positions_response) => {
-                            debug!("✅ Successfully fetched {} positions and {} orders", 
-                                  positions_response.positions.len(), 
-                                  positions_response.orders.len());
+                            info!(
+                                "✅ Successfully fetched {} open positions",
+                                positions_response.positions.len()
+                            );
                             Ok(positions_response)
                         }
                         Err(e) => {
@@ -200,7 +184,8 @@ impl ActiveOrderManager {
                         }
                     }
                 } else {
-                    let error_msg = format!("API returned error status: {}", response.status());
+                    let error_msg =
+                        format!("Positions API returned error status: {}", response.status());
                     error!("❌ {}", error_msg);
                     Err(error_msg)
                 }
@@ -213,442 +198,429 @@ impl ActiveOrderManager {
         }
     }
 
-    /// Fetch recent deals from broker API to get position closure data with P&L
-    pub async fn fetch_recent_deals(&self) -> Result<DealsResponse, String> {
-        // Use today's date for the deals endpoint
-        let today = Utc::now().format("%Y-%m-%d");
-        let deals_url = self.api_url.replace("/positions", &format!("/deals/{}", today));
-        debug!("📋 Fetching recent deals from API: {}", deals_url);
+    /// Store enriched active trade in Redis with 7-day TTL
+    async fn store_active_trade_redis(
+        &self,
+        trade: &EnrichedActiveTrade,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref client) = self.redis_client {
+            let mut conn = client.get_connection()?;
 
-        match self
-            .http_client
-            .get(&deals_url)
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.json::<DealsResponse>().await {
-                        Ok(deals_response) => {
-                            debug!("✅ Successfully fetched {} closed trades", deals_response.closed_trades.len());
-                            Ok(deals_response)
-                        }
-                        Err(e) => {
-                            let error_msg = format!("Failed to parse deals JSON: {}", e);
-                            error!("❌ {}", error_msg);
-                            Err(error_msg)
+            let key = format!("active_trade:{}", trade.position_id);
+            let trade_json = serde_json::to_string(trade)?;
+            conn.set(&key, &trade_json)?;
+
+            // Set 7-day expiration for automatic cleanup
+            conn.expire(&key, 7 * 24 * 3600)?; // 7 days in seconds
+
+            debug!(
+                "📊 Stored active trade {} in Redis (expires in 7 days)",
+                trade.position_id
+            );
+            Ok(())
+        } else {
+            Err("Redis client not available".into())
+        }
+    }
+
+    /// Remove active trade from Redis when position closes
+    async fn remove_active_trade_redis(
+        &self,
+        position_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(ref client) = self.redis_client {
+            let mut conn = client.get_connection()?;
+
+            let key = format!("active_trade:{}", position_id);
+            let _: i32 = conn.del(&key)?;
+
+            debug!("📊 Removed closed trade {} from Redis", position_id);
+            Ok(())
+        } else {
+            Err("Redis client not available".into())
+        }
+    }
+
+    /// Get pending order data for enrichment (cross-reference with PendingOrderManager Redis)
+    async fn get_pending_order_for_enrichment(&self, order_id: u64) -> Option<serde_json::Value> {
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                // Get zone_id from lookup (same pattern as PendingOrderManager)
+                let lookup_key = format!("order_lookup:{}", order_id);
+                if let Ok(zone_id) = conn.get::<_, String>(&lookup_key) {
+                    // Get order data
+                    let order_key = format!("pending_order:{}", zone_id);
+                    if let Ok(order_json) = conn.get::<_, String>(&order_key) {
+                        if let Ok(order_data) =
+                            serde_json::from_str::<serde_json::Value>(&order_json)
+                        {
+                            return Some(order_data);
                         }
                     }
-                } else {
-                    let error_msg = format!("Deals API returned error status: {}", response.status());
-                    error!("❌ {}", error_msg);
-                    Err(error_msg)
                 }
             }
-            Err(e) => {
-                let error_msg = format!("Failed to call deals API: {}", e);
-                error!("❌ {}", error_msg);
-                Err(error_msg)
-            }
         }
+        None
     }
 
-    /// Main processing method - simplified to focus on status changes only
-    pub async fn process_order_updates(&self) -> Result<(), String> {
-        info!("🔄 Processing order updates (PENDING status changes + CLOSED deals)...");
+    /// Convert open position to enriched active trade
+    async fn create_enriched_trade(&self, position: &OpenPosition) -> EnrichedActiveTrade {
+        let symbol = self
+            .symbol_id_mapping
+            .get(&position.symbol_id)
+            .map(|s| s.as_str())
+            .unwrap_or("UNKNOWN")
+            .to_string();
 
-        // 1. Process pending order status changes (PENDING → FILLED/CANCELLED)
-        if let Err(e) = self.process_pending_order_changes().await {
-            error!("❌ Failed to process pending order changes: {}", e);
-        }
-
-        // 2. Process new closed deals
-        if let Err(e) = self.process_closed_deals().await {
-            error!("❌ Failed to process closed deals: {}", e);
-        }
-
-        Ok(())
-    }
-
-    /// Process changes in pending orders (PENDING → FILLED/CANCELLED)
-    async fn process_pending_order_changes(&self) -> Result<(), String> {
-        debug!("📋 Starting pending order changes processing...");
-        let positions_response = self.fetch_positions().await?;
-        
-        debug!("📋 Fetched {} positions and {} orders from broker", 
-              positions_response.positions.len(), positions_response.orders.len());
-        
-        // Load pending orders file
-        let mut pending_container: PendingOrdersContainer =
-            match fs::read_to_string("shared_pending_orders.json").await {
-                Ok(content) => {
-                    debug!("📋 Successfully loaded pending orders file");
-                    serde_json::from_str(&content)
-                        .map_err(|e| format!("Failed to parse pending orders: {}", e))?
-                }
-                Err(e) => {
-                    debug!("📋 No pending orders file found: {}", e);
-                    return Ok(()); // File doesn't exist, nothing to update
-                }
-            };
-
-        debug!("📋 Loaded {} pending orders from file", pending_container.orders.len());
-
-        let broker_pending_ids: std::collections::HashSet<String> = positions_response
-            .orders
-            .iter()
-            .map(|order| order.orderId.to_string())
-            .collect();
-
-        let broker_position_ids: std::collections::HashSet<String> = positions_response
-            .positions
-            .iter()
-            .map(|pos| pos.positionId.to_string())
-            .collect();
-
-        debug!("📋 Broker has {} pending order IDs, {} position IDs", 
-              broker_pending_ids.len(), broker_position_ids.len());
-
-        let mut updates_made = false;
-
-        // Check each PENDING order for status changes
-        for pending_order in pending_container.orders.values_mut() {
-            if pending_order.status != "PENDING" {
-                continue; // Skip non-pending orders
-            }
-
-            if let Some(ref ctrader_id) = pending_order.ctrader_order_id {
-                if broker_position_ids.contains(ctrader_id) {
-                    // Order became a position - mark as FILLED
-                    info!("✅ Order {} (zone: {}) became position - marking FILLED", 
-                          ctrader_id, pending_order.zone_id);
-                    
-                    pending_order.status = "FILLED".to_string();
-                    updates_made = true;
-
-                    // Write FILLED event to InfluxDB (we still track this transition)
-                    self.write_filled_event_to_influx(pending_order).await;
-
-                } else if !broker_pending_ids.contains(ctrader_id) {
-                    // Order no longer exists at broker - mark as CANCELLED
-                    info!("❌ Order {} (zone: {}) no longer at broker - marking CANCELLED", 
-                          ctrader_id, pending_order.zone_id);
-                    
-                    pending_order.status = "CANCELLED".to_string();
-                    updates_made = true;
-
-                    // Write CANCELLED event to InfluxDB
-                    self.write_cancelled_event_to_influx(pending_order).await;
-                }
-            }
-        }
-
-        // Save updates if any were made
-        if updates_made {
-            pending_container.last_updated = Utc::now();
-            let json_content = serde_json::to_string_pretty(&pending_container)
-                .map_err(|e| format!("Failed to serialize pending orders: {}", e))?;
-
-            fs::write("shared_pending_orders.json", json_content)
-                .await
-                .map_err(|e| format!("Failed to write pending orders file: {}", e))?;
-
-            info!("💾 Updated pending orders file with status changes");
+        let trade_side = if position.trade_side == 1 {
+            "BUY"
         } else {
-            debug!("📋 No pending order status changes detected");
-        }
+            "SELL"
+        };
 
-        Ok(())
-    }
+        let open_time = DateTime::from_timestamp(position.open_time as i64 / 1000, 0)
+            .unwrap_or_else(|| Utc::now());
 
-    /// Process new closed deals and write to InfluxDB
-    async fn process_closed_deals(&self) -> Result<(), String> {
-        debug!("📋 Starting closed deals processing...");
-        let deals_response = self.fetch_recent_deals().await?;
-        
-        debug!("📋 Fetched {} closed trades from deals API", deals_response.closed_trades.len());
-        
-        if deals_response.closed_trades.is_empty() {
-            debug!("📋 No closed trades found to process");
-            return Ok(());
-        }
+        let now = Utc::now();
+        let duration_minutes = (now - open_time).num_minutes();
 
-        // Load pending orders to get zone enrichment data
-        let pending_container: Option<PendingOrdersContainer> =
-            match fs::read_to_string("shared_pending_orders.json").await {
-                Ok(content) => {
-                    debug!("📋 Loaded pending orders for deal enrichment");
-                    serde_json::from_str(&content).ok()
-                }
-                Err(e) => {
-                    debug!("📋 Could not load pending orders for deal enrichment: {}", e);
+        // Convert volume to lots (your API returns volume in units, not lots)
+        let volume_in_lots = position.volume as f64 / 10000.0;
+
+        // Calculate pip value for this symbol
+        let pip_value = self.get_pip_value(&symbol);
+
+        // Since we don't have current_price or pips_profit from API, we'll calculate/estimate
+        let current_price = position.price; // Use entry price as current for now
+        let pips_profit = 0.0; // We'd need real-time price to calculate this
+        let unrealized_pnl = 0.0; // We'd need real-time price to calculate this
+
+        // Calculate distance from entry in pips (will be 0 since current_price = entry_price)
+        let distance_from_entry_pips = (current_price - position.price).abs() / pip_value;
+
+        // Calculate R:R ratio if SL/TP are set
+        let risk_reward_ratio =
+            if let (Some(sl), Some(tp)) = (position.stop_loss, position.take_profit) {
+                let risk_pips = (position.price - sl).abs() / pip_value;
+                let reward_pips = (tp - position.price).abs() / pip_value;
+                if risk_pips > 0.0 {
+                    Some(reward_pips / risk_pips)
+                } else {
                     None
                 }
-            };
-
-        let mut processed_deals = self.processed_deals.lock().await;
-        let mut new_deals_count = 0;
-
-        debug!("📋 Previously processed {} deals", processed_deals.len());
-
-        for closed_trade in &deals_response.closed_trades {
-            // Skip if we've already processed this deal
-            if processed_deals.contains(&closed_trade.deal_id) {
-                debug!("📋 Skipping already processed deal {}", closed_trade.deal_id);
-                continue;
-            }
-
-            debug!("📋 Processing new deal {}", closed_trade.deal_id);
-
-            // Try to find the original pending order for enrichment
-            let enrichment_data = if let Some(ref pending_container) = pending_container {
-                self.find_pending_order_for_deal(pending_container, closed_trade)
             } else {
                 None
             };
 
-            debug!("📋 Deal {} enrichment: {}", 
-                  closed_trade.deal_id, 
-                  if enrichment_data.is_some() { "found" } else { "not found" });
+        let is_profitable = pips_profit > 0.0;
 
-            // Write CLOSED event to InfluxDB
-            self.write_closed_event_to_influx(closed_trade, enrichment_data).await;
+        // Try fuzzy matching since positions don't have order_id
+        let (
+            zone_id,
+            zone_type,
+            zone_strength,
+            zone_high,
+            zone_low,
+            touch_count,
+            timeframe,
+            distance_when_placed,
+            original_entry_price,
+            slippage_pips,
+        ) = if let Some(pending_order_data) = self.find_pending_order_by_fuzzy_match(position).await
+        {
+            (
+                pending_order_data
+                    .get("zone_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                pending_order_data
+                    .get("zone_type")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                pending_order_data
+                    .get("zone_strength")
+                    .and_then(|v| v.as_f64()),
+                pending_order_data.get("zone_high").and_then(|v| v.as_f64()),
+                pending_order_data.get("zone_low").and_then(|v| v.as_f64()),
+                pending_order_data
+                    .get("touch_count")
+                    .and_then(|v| v.as_i64())
+                    .map(|i| i as i32),
+                pending_order_data
+                    .get("timeframe")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                pending_order_data
+                    .get("distance_when_placed")
+                    .and_then(|v| v.as_f64()),
+                pending_order_data
+                    .get("entry_price")
+                    .and_then(|v| v.as_f64()),
+                {
+                    if let Some(original_entry) = pending_order_data
+                        .get("entry_price")
+                        .and_then(|v| v.as_f64())
+                    {
+                        Some((position.price - original_entry).abs() / pip_value)
+                    } else {
+                        None
+                    }
+                },
+            )
+        } else {
+            (None, None, None, None, None, None, None, None, None, None)
+        };
 
-            // Mark this deal as processed
-            processed_deals.insert(closed_trade.deal_id);
-            new_deals_count += 1;
+        EnrichedActiveTrade {
+            position_id: position.position_id,
+            symbol,
+            trade_side: trade_side.to_string(),
+            volume_lots: volume_in_lots,
+            entry_price: position.price,
+            current_price,
+            unrealized_pnl,
+            pips_profit,
+            open_time,
+            duration_minutes,
+            stop_loss: position.stop_loss,
+            take_profit: position.take_profit,
+            swap: position.swap,
+            commission: position.commission,
+            label: String::new(),   // Your API doesn't provide label
+            comment: String::new(), // Your API doesn't provide comment
+
+            // Enriched zone data
+            zone_id,
+            zone_type,
+            zone_strength,
+            zone_high,
+            zone_low,
+            touch_count,
+            timeframe,
+            distance_when_placed,
+            original_entry_price,
+            slippage_pips,
+
+            // Real-time metrics
+            distance_from_entry_pips,
+            risk_reward_ratio,
+            is_profitable,
+            max_drawdown_pips: None, // Will be calculated and stored
+            max_profit_pips: None,   // Will be calculated and stored
+            last_updated: now,
+        }
+    }
+
+    // Add this method to your ActiveOrderManager impl block
+    async fn find_pending_order_by_fuzzy_match(
+        &self,
+        position: &OpenPosition,
+    ) -> Option<serde_json::Value> {
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                // Get the symbol name for this position
+                let symbol = self.symbol_id_mapping.get(&position.symbol_id)?;
+
+                if let Ok(keys) = conn.keys::<_, Vec<String>>("pending_order:*") {
+                    for key in keys {
+                        if let Ok(order_json) = conn.get::<_, String>(&key) {
+                            if let Ok(order) =
+                                serde_json::from_str::<serde_json::Value>(&order_json)
+                            {
+                                // Match criteria
+                                let symbol_matches =
+                                    order.get("symbol").and_then(|v| v.as_str()) == Some(symbol);
+
+                                let entry_matches = order
+                                    .get("entry_price")
+                                    .and_then(|v| v.as_f64())
+                                    .map(|entry| (entry - position.price).abs() < 0.0001) // Very close match
+                                    .unwrap_or(false);
+
+                                let sl_matches = if let (Some(order_sl), Some(pos_sl)) = (
+                                    order.get("stop_loss").and_then(|v| v.as_f64()),
+                                    position.stop_loss,
+                                ) {
+                                    (order_sl - pos_sl).abs() < 0.0001
+                                } else {
+                                    true // If either doesn't have SL, don't use it as criteria
+                                };
+
+                                let tp_matches = if let (Some(order_tp), Some(pos_tp)) = (
+                                    order.get("take_profit").and_then(|v| v.as_f64()),
+                                    position.take_profit,
+                                ) {
+                                    (order_tp - pos_tp).abs() < 0.0001
+                                } else {
+                                    true // If either doesn't have TP, don't use it as criteria
+                                };
+
+                                if symbol_matches && entry_matches && sl_matches && tp_matches {
+                                    info!(
+                                        "🎯 Fuzzy matched position {} to pending order {}",
+                                        position.position_id,
+                                        order
+                                            .get("zone_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("unknown")
+                                    );
+                                    return Some(order);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Update position metrics (max profit/drawdown tracking)
+    async fn update_position_metrics(&self, trade: &mut EnrichedActiveTrade) {
+        let mut metrics = self.position_metrics.lock().await;
+
+        let (mut max_profit, mut max_drawdown) = metrics
+            .get(&trade.position_id)
+            .copied()
+            .unwrap_or((0.0, 0.0));
+
+        // Update max profit/drawdown
+        if trade.pips_profit > max_profit {
+            max_profit = trade.pips_profit;
+        }
+        if trade.pips_profit < max_drawdown {
+            max_drawdown = trade.pips_profit;
         }
 
-        if new_deals_count > 0 {
-            info!("✅ Processed {} new closed deals and wrote to InfluxDB", new_deals_count);
-        } else {
-            debug!("📋 No new deals to process");
+        // Store updated metrics
+        metrics.insert(trade.position_id, (max_profit, max_drawdown));
+
+        // Update trade with metrics
+        trade.max_profit_pips = Some(max_profit);
+        trade.max_drawdown_pips = Some(max_drawdown);
+    }
+
+    /// Main processing method - monitor open trades
+    pub async fn process_order_updates(&self) -> Result<(), String> {
+        debug!("🔄 Processing open trades with Redis storage...");
+
+        let positions_response = self.fetch_open_positions().await?;
+
+        if positions_response.positions.is_empty() {
+            debug!("📋 No open positions to process");
+            return Ok(());
+        }
+
+        let mut processed_positions = self.processed_positions.lock().await;
+        let current_position_ids: std::collections::HashSet<u64> = positions_response
+            .positions
+            .iter()
+            .map(|p| p.position_id)
+            .collect();
+
+        // Find positions that have closed (were tracked but not in current list)
+        let closed_positions: Vec<u64> = processed_positions
+            .difference(&current_position_ids)
+            .copied()
+            .collect();
+
+        // Remove closed positions from Redis and tracking
+        for closed_position_id in closed_positions {
+            if let Err(e) = self.remove_active_trade_redis(closed_position_id).await {
+                warn!(
+                    "Failed to remove closed position {} from Redis: {}",
+                    closed_position_id, e
+                );
+            }
+            processed_positions.remove(&closed_position_id);
+
+            // Also remove from metrics tracking
+            let mut metrics = self.position_metrics.lock().await;
+            metrics.remove(&closed_position_id);
+            drop(metrics);
+
+            info!(
+                "📊 Position {} closed - removed from active tracking",
+                closed_position_id
+            );
+        }
+
+        // Process current open positions
+        let mut new_positions = 0;
+        let mut updated_positions = 0;
+
+        for position in &positions_response.positions {
+            let is_new_position = !processed_positions.contains(&position.position_id);
+
+            // Create enriched trade
+            let mut enriched_trade = self.create_enriched_trade(position).await;
+
+            // Update position metrics
+            self.update_position_metrics(&mut enriched_trade).await;
+
+            // Store in Redis
+            if let Err(e) = self.store_active_trade_redis(&enriched_trade).await {
+                warn!(
+                    "Failed to store active trade {} in Redis: {}",
+                    position.position_id, e
+                );
+            }
+
+            // Track this position
+            processed_positions.insert(position.position_id);
+
+            if is_new_position {
+                new_positions += 1;
+                info!(
+                    "📊 New active trade: {} {} {:.2} lots @ {:.5} (P&L: {:.2} pips)",
+                    enriched_trade.symbol,
+                    enriched_trade.trade_side,
+                    enriched_trade.volume_lots,
+                    enriched_trade.entry_price,
+                    enriched_trade.pips_profit
+                );
+            } else {
+                updated_positions += 1;
+                debug!(
+                    "📊 Updated trade {}: P&L {:.2} pips, Duration: {} min",
+                    position.position_id,
+                    enriched_trade.pips_profit,
+                    enriched_trade.duration_minutes
+                );
+            }
+        }
+
+        if new_positions > 0 || updated_positions > 0 {
+            info!(
+                "✅ Processed {} new, {} updated active trades",
+                new_positions, updated_positions
+            );
         }
 
         Ok(())
     }
 
-    /// Find the original pending order that matches this deal for enrichment
-    fn find_pending_order_for_deal<'a>(
-        &self,
-        pending_container: &'a PendingOrdersContainer,
-        closed_trade: &ClosedTrade
-    ) -> Option<&'a crate::pending_order_manager::PendingOrder> {
-        let symbol_name = self.symbol_id_mapping.get(&closed_trade.symbol_id)
-            .map(|s| s.as_str())
-            .unwrap_or("UNKNOWN");
+    /// Get Redis statistics for monitoring
+    pub async fn get_redis_stats(&self) -> (usize, usize) {
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                let active_trades: Result<Vec<String>, _> = conn.keys("active_trade:*");
 
-        let deal_side = if closed_trade.original_trade_side == 1 { "BUY" } else { "SELL" };
-        let deal_timestamp = DateTime::from_timestamp((closed_trade.open_time / 1000) as i64, 0)
-            .unwrap_or(Utc::now());
-
-        debug!("🔍 Looking for pending order match for deal {} ({} {} at {:.5})", 
-               closed_trade.deal_id, symbol_name, deal_side, closed_trade.entry_price);
-
-        // Look for matching pending order
-        for pending_order in pending_container.orders.values() {
-            // Match by symbol
-            if pending_order.symbol != symbol_name {
-                continue;
+                return (
+                    active_trades.map(|v| v.len()).unwrap_or(0),
+                    0, // No lookup keys for active trades
+                );
             }
-
-            // Match by trade side
-            let pending_side = if pending_order.order_type.contains("BUY") { "BUY" } else { "SELL" };
-            if pending_side != deal_side {
-                continue;
-            }
-
-            // Match by price proximity (within 10 pips)
-            let price_diff = (pending_order.entry_price - closed_trade.entry_price).abs();
-            let pip_value = self.get_pip_value(symbol_name);
-            let price_diff_pips = price_diff / pip_value;
-            
-            if price_diff_pips > 10.0 {
-                continue;
-            }
-
-            // Match by time proximity (within 7 days)
-            let time_diff_hours = deal_timestamp
-                .signed_duration_since(pending_order.placed_at)
-                .num_hours()
-                .abs();
-            
-            if time_diff_hours > 168 { // 7 days
-                continue;
-            }
-
-            // Check for cTrader ID match if available
-            if let Some(ref pending_ctrader_id) = pending_order.ctrader_order_id {
-                // Try to match by order_id or position_id
-                if pending_ctrader_id == &closed_trade.order_id.to_string() || 
-                   pending_ctrader_id == &closed_trade.position_id.to_string() {
-                    info!("🔗 Perfect match found: deal {} ↔ pending order {} (cTrader ID match)", 
-                          closed_trade.deal_id, pending_order.zone_id);
-                    return Some(pending_order);
-                }
-            }
-
-            // Fuzzy match based on price and time
-            info!("🔗 Fuzzy match found: deal {} ↔ pending order {} (price diff: {:.2} pips, time diff: {}h)", 
-                  closed_trade.deal_id, pending_order.zone_id, price_diff_pips, time_diff_hours);
-            return Some(pending_order);
         }
-
-        warn!("🔍 No matching pending order found for deal {} ({} {})", 
-              closed_trade.deal_id, symbol_name, deal_side);
-        None
+        (0, 0)
     }
 
-    /// Write FILLED event to InfluxDB (tracking transition only)
-    async fn write_filled_event_to_influx(&self, pending_order: &crate::pending_order_manager::PendingOrder) {
-        let order_db_guard = self.order_database.read().await;
-        if let Some(ref order_db) = *order_db_guard {
-            let base_event = OrderEvent::new_pending(
-                pending_order.zone_id.clone(),
-                pending_order.symbol.clone(),
-                pending_order.timeframe.clone(),
-                pending_order.zone_type.clone(),
-                pending_order.order_type.clone(),
-                pending_order.entry_price,
-                pending_order.lot_size,
-                pending_order.stop_loss,
-                pending_order.take_profit,
-            );
-            
-            let filled_event = base_event.to_filled(
-                pending_order.ctrader_order_id.clone().unwrap_or_default(),
-                pending_order.entry_price,
-            );
-            
-            let order_db_clone = Arc::clone(order_db);
-            let event_clone = filled_event.clone();
-            tokio::spawn(async move {
-                if let Err(e) = order_db_clone.write_order_event(&event_clone).await {
-                    debug!("📊 FILLED event write failed (might already exist): {}", e);
-                } else {
-                    info!("📊 Wrote FILLED event to InfluxDB for order {}", 
-                          event_clone.ctrader_order_id.as_ref().unwrap_or(&"unknown".to_string()));
-                }
-            });
-        }
-        drop(order_db_guard);
-    }
-
-    /// Write CANCELLED event to InfluxDB
-    async fn write_cancelled_event_to_influx(&self, pending_order: &crate::pending_order_manager::PendingOrder) {
-        let order_db_guard = self.order_database.read().await;
-        if let Some(ref order_db) = *order_db_guard {
-            let base_event = OrderEvent::new_pending(
-                pending_order.zone_id.clone(),
-                pending_order.symbol.clone(),
-                pending_order.timeframe.clone(),
-                pending_order.zone_type.clone(),
-                pending_order.order_type.clone(),
-                pending_order.entry_price,
-                pending_order.lot_size,
-                pending_order.stop_loss,
-                pending_order.take_profit,
-            );
-            
-            let mut cancelled_event = base_event.to_cancelled();
-            cancelled_event.ctrader_order_id = Some(pending_order.ctrader_order_id.clone().unwrap_or_default());
-            cancelled_event.close_reason = Some("order_expired_or_cancelled".to_string());
-            
-            let order_db_clone = Arc::clone(order_db);
-            let event_clone = cancelled_event.clone();
-            tokio::spawn(async move {
-                if let Err(e) = order_db_clone.write_order_event(&event_clone).await {
-                    error!("❌ Failed to write CANCELLED event to InfluxDB: {}", e);
-                } else {
-                    info!("📊 Wrote CANCELLED event to InfluxDB for order {}", 
-                          event_clone.ctrader_order_id.as_ref().unwrap_or(&"unknown".to_string()));
-                }
-            });
-        }
-        drop(order_db_guard);
-    }
-
-    /// Write CLOSED event to InfluxDB with full deal data and zone enrichment
-    async fn write_closed_event_to_influx(
-        &self, 
-        closed_trade: &ClosedTrade, 
-        pending_order: Option<&crate::pending_order_manager::PendingOrder>
-    ) {
-        let order_db_guard = self.order_database.read().await;
-        if let Some(ref order_db) = *order_db_guard {
-            let symbol_name = self.symbol_id_mapping.get(&closed_trade.symbol_id)
-                .map(|s| s.as_str())
-                .unwrap_or("UNKNOWN");
-
-            let trade_side = if closed_trade.original_trade_side == 1 { "BUY" } else { "SELL" };
-
-            let _close_time = DateTime::from_timestamp((closed_trade.close_time / 1000) as i64, 0)
-                .unwrap_or(Utc::now());
-
-            // Create event with zone enrichment if available
-            let base_event = if let Some(pending) = pending_order {
-                // Use enriched data from pending order
-                OrderEvent::new_pending(
-                    pending.zone_id.clone(),
-                    pending.symbol.clone(),
-                    pending.timeframe.clone(),
-                    pending.zone_type.clone(),
-                    pending.order_type.clone(),
-                    pending.entry_price,
-                    pending.lot_size,
-                    pending.stop_loss,
-                    pending.take_profit,
-                )
-            } else {
-                // Create minimal event without zone enrichment
-                OrderEvent::new_pending(
-                    format!("deal_{}", closed_trade.deal_id),
-                    symbol_name.to_string(),
-                    "unknown".to_string(),
-                    if trade_side == "BUY" { "demand_zone" } else { "supply_zone" }.to_string(),
-                    trade_side.to_string(),
-                    closed_trade.entry_price,
-                    closed_trade.volume_in_lots as i32,
-                    0.0,
-                    0.0,
-                )
-            };
-            
-            // Convert to FILLED then to CLOSED
-            let filled_event = base_event.to_filled(
-                closed_trade.position_id.to_string(),
-                closed_trade.entry_price,
-            );
-            
-            let closed_event = filled_event.to_closed(
-                closed_trade.deal_id.to_string(),
-                closed_trade.exit_price,
-                closed_trade.pips_profit, // Use the pre-calculated pips from API
-                "position_closed".to_string(),
-            );
-            
-            let order_db_clone = Arc::clone(order_db);
-            let event_clone = closed_event.clone();
-            let enriched = pending_order.is_some();
-            let pips_profit = closed_trade.pips_profit; // Copy the value before moving into closure
-            tokio::spawn(async move {
-                if let Err(e) = order_db_clone.write_order_event(&event_clone).await {
-                    error!("❌ Failed to write CLOSED event to InfluxDB: {}", e);
-                } else {
-                    info!("📊 Wrote CLOSED event to InfluxDB for deal {} (enriched: {}, P&L: {:.2} pips)", 
-                          event_clone.ctrader_deal_id.as_ref().unwrap_or(&"unknown".to_string()),
-                          enriched,
-                          pips_profit);
-                }
-            });
-        }
-        drop(order_db_guard);
-    }
-
+    /// Get pip value for a symbol
     fn get_pip_value(&self, symbol: &str) -> f64 {
         if symbol.contains("JPY") {
             0.01
+        } else if symbol.ends_with("_SB") {
+            0.0001
         } else {
             match symbol {
                 "NAS100" => 1.0,
@@ -656,5 +628,41 @@ impl ActiveOrderManager {
                 _ => 0.0001,
             }
         }
+    }
+
+    /// Get all active trades from Redis (for web interface)
+    pub async fn get_all_active_trades(&self) -> Vec<EnrichedActiveTrade> {
+        let mut trades = Vec::new();
+
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                if let Ok(keys) = conn.keys::<_, Vec<String>>("active_trade:*") {
+                    for key in keys {
+                        if let Ok(trade_json) = conn.get::<_, String>(&key) {
+                            if let Ok(trade) =
+                                serde_json::from_str::<EnrichedActiveTrade>(&trade_json)
+                            {
+                                trades.push(trade);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        trades.sort_by(|a, b| b.open_time.cmp(&a.open_time)); // Most recent first
+        trades
+    }
+
+    /// Check if manager has any active trades
+    pub async fn has_active_trades(&self) -> bool {
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                if let Ok(keys) = conn.keys::<_, Vec<String>>("active_trade:*") {
+                    return !keys.is_empty();
+                }
+            }
+        }
+        false
     }
 }

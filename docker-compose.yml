@@ -48,3 +48,8 @@ volumes:
 # To view logs:
 # docker-compose logs -f redis
 # docker-compose logs -f redis-commander
+# Clear all Redis data
+# docker exec trading_redis redis-cli FLUSHALL
+
+# Verify it's empty
+# docker exec trading_redis redis-cli KEYS "*" 

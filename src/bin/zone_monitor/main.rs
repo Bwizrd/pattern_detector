@@ -24,21 +24,26 @@ mod enriched_trades;
 use chrono::Utc;
 
 // Add this import to your use statements
-use enriched_trades::{enriched_trades_by_date_api, enriched_trades_by_range_api};
+// use enriched_trades::{enriched_trades_by_date_api, enriched_trades_by_range_api};
 
 // Add these imports to the use statements:
 
 use axum::{
     extract::State, http::StatusCode, response::Html, routing::get, routing::post, Json, Router,
 };
-use tower_http::cors::{Any, CorsLayer}; 
 use booked_trades::{booked_trades_api, booked_trades_html};
 use serde::{Deserialize, Serialize};
 use state::MonitorState;
 use std::fs;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use types::{ZoneAlert, ZoneCache};
+
+use std::collections::HashMap;
+use serde_json::{json, Value};
+use axum::extract::{Path, Query};
+
 
 // Request/Response structs for manual trading
 #[derive(Debug, Deserialize, Serialize)]
@@ -245,8 +250,6 @@ async fn pending_orders_json() -> (StatusCode, Json<serde_json::Value>) {
     }
 }
 
-
-
 async fn manual_trade_api(
     State(_state): State<MonitorState>,
     Json(request): Json<ManualTradeRequest>,
@@ -344,50 +347,171 @@ async fn manual_trade_api(
 fn init_logging() -> Result<(), Box<dyn std::error::Error>> {
     // Create logs directory if it doesn't exist
     std::fs::create_dir_all("logs")?;
-    
+
     // Create a file appender with rotation
     let file_appender = tracing_appender::rolling::daily("logs", "zone_monitor");
-    
+
     // Also create a timestamped log file for this session
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
     let session_log_path = format!("logs/zone_monitor_{}.log", timestamp);
     let session_file = std::fs::File::create(&session_log_path)?;
-    
+
     // Configure the subscriber with multiple outputs
     tracing_subscriber::registry()
         .with(
             fmt::layer()
-                .with_writer(std::io::stdout)  // Console output
+                .with_writer(std::io::stdout) // Console output
                 .with_target(false)
                 .with_level(true)
-                .compact()
+                .compact(),
         )
         .with(
             fmt::layer()
-                .with_writer(file_appender)  // Daily rotating file
+                .with_writer(file_appender) // Daily rotating file
                 .with_target(true)
                 .with_level(true)
-                .with_ansi(false)  // No color codes in file
+                .with_ansi(false), // No color codes in file
         )
         .with(
             fmt::layer()
-                .with_writer(session_file)  // Session-specific file
+                .with_writer(session_file) // Session-specific file
                 .with_target(true)
                 .with_level(true)
-                .with_ansi(false)
+                .with_ansi(false),
         )
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"))
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
-    
+
     println!("📋 Logging initialized:");
     println!("   📄 Daily logs: logs/zone_monitor.YYYY-MM-DD");
     println!("   📄 Session log: {}", session_log_path);
     println!("   📺 Console: enabled");
-    
+
     Ok(())
+}
+
+async fn test_deal_enrichment_api(
+    State(state): State<MonitorState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let pending_order_manager = state.pending_order_manager.read().await;
+
+    match pending_order_manager.enrich_and_save_deals().await {
+        Ok(enriched_count) => {
+            let response = serde_json::json!({
+                "success": true,
+                "message": format!("Processed {} deals", enriched_count),
+                "enriched_count": enriched_count
+            });
+            (StatusCode::OK, Json(response))
+        }
+        Err(e) => {
+            let response = serde_json::json!({
+                "success": false,
+                "message": format!("Deal enrichment failed: {}", e),
+                "error": e.to_string()
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
+        }
+    }
+}
+
+async fn redis_stats_api(State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    let stats = state.get_comprehensive_redis_stats().await;
+    Json(stats)
+}
+
+async fn debug_redis_keys(State(state): State<MonitorState>) -> Json<Value> {
+    let stats = state.get_comprehensive_redis_stats().await;
+    Json(json!({
+        "redis_stats": stats
+    }))
+}
+
+async fn debug_pending_order(
+    State(state): State<MonitorState>,
+    Path(zone_id): Path<String>,
+) -> Json<Value> {
+    let redis_stats = state.get_pending_order_redis_stats().await;
+    Json(json!({
+        "zone_id": zone_id,
+        "redis_stats": redis_stats
+    }))
+}
+
+async fn debug_all_pending_orders(State(state): State<MonitorState>) -> Json<Value> {
+    let pending_order_manager = state.pending_order_manager.read().await;
+    
+    match pending_order_manager.get_all_pending_orders_with_lookup_status().await {
+        Ok(orders_info) => Json(orders_info),
+        Err(e) => Json(json!({
+            "error": e.to_string(),
+            "redis_stats": state.get_pending_order_redis_stats().await
+        }))
+    }
+}
+
+async fn debug_deal_enrichment(
+    State(state): State<MonitorState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let start_date = params.get("startDate").cloned()
+        .unwrap_or_else(|| "2024-12-06".to_string());
+    
+    Json(json!({
+        "start_date": start_date,
+        "message": "Use POST /api/test/deal-enrichment for testing"
+    }))
+}
+
+// Add this endpoint to main.rs
+async fn debug_simulate_pending_order(State(state): State<MonitorState>) -> Json<Value> {
+    // Create a mock pending order
+    let mock_order = serde_json::json!({
+        "zone_id": "test_zone_123",
+        "symbol": "EURUSD",
+        "timeframe": "1h",
+        "zone_type": "supply_zone",
+        "order_type": "SELL_LIMIT",
+        "entry_price": 1.0500,
+        "lot_size": 1000,
+        "stop_loss": 1.0520,
+        "take_profit": 1.0480,
+        "ctrader_order_id": "test_order_999",
+        "placed_at": chrono::Utc::now().to_rfc3339(),
+        "status": "PENDING",
+        "zone_high": 1.0520,
+        "zone_low": 1.0500,
+        "zone_strength": 85.0,
+        "touch_count": 3,
+        "distance_when_placed": 15.5
+    });
+
+    // Test the storage process using your existing Redis connection
+    let pending_order_manager = state.pending_order_manager.read().await;
+    
+    // We'll call the Redis storage directly to test both keys get created
+    match pending_order_manager.test_redis_storage(&mock_order).await {
+        Ok(result) => Json(result),
+        Err(e) => Json(json!({
+            "error": e.to_string(),
+            "mock_order": mock_order
+        }))
+    }
+}
+
+async fn fix_missing_lookups(State(state): State<MonitorState>) -> Json<Value> {
+    let pending_order_manager = state.pending_order_manager.read().await;
+    match pending_order_manager.create_missing_lookup_keys().await {
+        Ok(count) => Json(json!({
+            "success": true,
+            "created_lookup_keys": count,
+            "message": format!("Created {} missing lookup keys", count)
+        })),
+        Err(e) => Json(json!({
+            "success": false,
+            "error": e.to_string()
+        }))
+    }
 }
 
 #[tokio::main]
@@ -440,7 +564,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-     let cors = CorsLayer::new()
+    let cors = CorsLayer::new()
         .allow_origin(Any) // or .allow_origin("http://localhost:5500".parse::<HeaderValue>().unwrap()) for a specific origin
         .allow_methods(Any) // or specify methods like [Method::GET, Method::POST]
         .allow_headers(Any);
@@ -468,11 +592,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/booked-trades", get(booked_trades_html))
         .route("/api/booked-trades", get(booked_trades_api))
         // ADD THESE TWO NEW ROUTES:
-        .route(
-            "/api/enriched-trades/:date",
-            get(enriched_trades_by_date_api),
-        )
-        .route("/api/enriched-trades", get(enriched_trades_by_range_api))
+        // .route(
+        //     "/api/enriched-trades/:date",
+        //     get(enriched_trades_by_date_api),
+        // )
+        // .route("/api/enriched-trades", get(enriched_trades_by_range_api))
+        .route("/api/test/deal-enrichment", post(test_deal_enrichment_api))
+        .route("/api/redis/stats", get(redis_stats_api))
+        .route("/debug/redis/keys", get(debug_redis_keys))
+        .route("/debug/pending-order/:zone_id", get(debug_pending_order))
+        .route("/debug/pending-orders", get(debug_all_pending_orders))
+        .route("/debug/deal-enrichment", get(debug_deal_enrichment))
+        .route("/debug/simulate-pending-order", post(debug_simulate_pending_order))
+        .route("/debug/fix-missing-lookups", post(fix_missing_lookups))
         .layer(cors)
         .with_state(state);
 
