@@ -39,25 +39,32 @@ pub struct PendingOrder {
 }
 
 // New deal structure from broker API
-#[derive(Debug, Deserialize)]
-struct BrokerDeal {
-    #[serde(rename = "dealId")]
-    pub deal_id: u64, // Change from String to u64
-    #[serde(rename = "positionId")]
-    pub position_id: u64, // Change from String to u64
-    #[serde(rename = "orderId")]
-    pub order_id: Option<u64>, // Change from Option<String> to Option<u64>
-    #[serde(rename = "symbolId")]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrokerDeal {
+    pub deal_id: u64,
+    pub position_id: u64,
+    pub order_id: Option<u64>,
     pub symbol_id: i32,
     pub volume: f64,
-    #[serde(rename = "tradeSide")]
-    pub trade_side: i32,
-    pub price: f64,
-    #[serde(rename = "executionTimestamp")]
-    pub execution_time: i64,
-    #[serde(rename = "dealStatus")]
-    pub deal_type: i32,
-    pub profit: Option<f64>,
+    pub original_trade_side: i32,
+    pub closing_trade_side: i32,
+    pub entry_price: f64,
+    pub exit_price: f64,
+    pub price_difference: f64,
+    pub pips_profit: f64,
+    pub open_time: i64,
+    pub close_time: i64,
+    pub duration: i64,
+    pub gross_profit: f64,
+    pub net_profit: f64,
+    pub swap: f64,
+    pub commission: f64,
+    pub pnl_conversion_fee: f64,
+    pub balance_after_trade: f64,
+    pub balance_version: i64,
+    pub quote_to_deposit_conversion_rate: f64,
+    pub deal_status: i32,
 }
 
 pub struct PendingOrderManager {
@@ -384,7 +391,7 @@ impl PendingOrderManager {
         info!("📋 Order database connected for InfluxDB tracking");
     }
 
-    async fn store_pending_order_redis(
+    pub async fn store_pending_order_redis(
         &self,
         order: &PendingOrder,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -459,7 +466,7 @@ impl PendingOrderManager {
     }
 
     /// Get pending order for deal enrichment (by ctrader_order_id)
-    async fn get_pending_order_for_enrichment(
+    pub async fn get_pending_order_for_enrichment(
         &self,
         ctrader_order_id: &str,
     ) -> Option<PendingOrder> {
@@ -859,7 +866,7 @@ impl PendingOrderManager {
 
                     // Calculate slippage
                     let pip_value = self.get_pip_value(&enriched_deal.symbol);
-                    let slippage = (deal.price - pending_order.entry_price).abs() / pip_value;
+                    let slippage = (deal.exit_price - pending_order.entry_price).abs() / pip_value;
                     enriched_deal.slippage_pips = Some(slippage);
 
                     info!(
@@ -890,26 +897,24 @@ impl PendingOrderManager {
     }
 
     /// Fetch deals from broker API
-    async fn fetch_broker_deals(
+    pub async fn fetch_broker_deals(
         &self,
     ) -> Result<Vec<BrokerDeal>, Box<dyn std::error::Error + Send + Sync>> {
         let today = chrono::Utc::now().date_naive();
         let date_str = today.format("%Y-%m-%d").to_string();
 
         let api_url = format!(
-            "{}/deals?startDate={}&endDate={}",
-            self.ctrader_api_url, date_str, date_str
+            "{}/deals/{}",
+            self.ctrader_api_url, date_str
         );
         let response = self.http_client.get(&api_url).send().await?;
 
-        // Parse directly as the response structure you showed
         let response_json: serde_json::Value = response.json().await?;
         let deals = response_json
-            .get("deals")
+            .get("closedTrades")
             .and_then(|v| v.as_array())
-            .ok_or("No deals array found")?;
+            .ok_or("No closedTrades array found")?;
 
-        // Convert to BrokerDeal structs
         let broker_deals: Result<Vec<BrokerDeal>, _> = deals
             .iter()
             .map(|deal| serde_json::from_value(deal.clone()))
@@ -919,7 +924,7 @@ impl PendingOrderManager {
     }
 
     /// Convert broker deal to enriched deal structure
-    async fn convert_broker_deal_to_enriched(
+    pub async fn convert_broker_deal_to_enriched(
         &self,
         deal: &BrokerDeal,
     ) -> Result<EnrichedDeal, Box<dyn std::error::Error + Send + Sync>> {
@@ -935,9 +940,9 @@ impl PendingOrderManager {
             .unwrap_or_else(|| format!("UNKNOWN_{}", deal.symbol_id));
 
         let execution_time =
-            DateTime::from_timestamp(deal.execution_time / 1000, 0).unwrap_or_else(|| Utc::now());
+            DateTime::from_timestamp(deal.close_time / 1000, 0).unwrap_or_else(|| Utc::now());
 
-        let deal_type = match deal.deal_type {
+        let deal_type = match deal.deal_status {
             2 => "CLOSE".to_string(),
             1 => "OPEN".to_string(),
             _ => "UNKNOWN".to_string(),
@@ -948,11 +953,11 @@ impl PendingOrderManager {
             position_id,
             symbol,
             volume: deal.volume,
-            trade_side: deal.trade_side,
-            price: deal.price,
+            trade_side: deal.original_trade_side, // or closing_trade_side if you prefer
+            price: deal.exit_price,
             execution_time,
             deal_type,
-            profit: deal.profit,
+            profit: Some(deal.net_profit),
             // These will be enriched if pending order is found
             zone_id: None,
             zone_type: None,
@@ -1011,7 +1016,7 @@ impl PendingOrderManager {
     }
 
     /// Get pip value for a symbol
-    fn get_pip_value(&self, symbol: &str) -> f64 {
+    pub fn get_pip_value(&self, symbol: &str) -> f64 {
         if symbol.contains("JPY") {
             0.01
         } else if symbol.ends_with("_SB") {

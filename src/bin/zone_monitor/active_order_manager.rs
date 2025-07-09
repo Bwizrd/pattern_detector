@@ -421,15 +421,24 @@ impl ActiveOrderManager {
                 // Get the symbol name for this position
                 let symbol = self.symbol_id_mapping.get(&position.symbol_id)?;
 
+                // Helper to normalize symbol (strip _SB if present)
+                fn normalize_symbol(s: &str) -> &str {
+                    if let Some(stripped) = s.strip_suffix("_SB") {
+                        stripped
+                    } else {
+                        s
+                    }
+                }
+
                 if let Ok(keys) = conn.keys::<_, Vec<String>>("pending_order:*") {
                     for key in keys {
                         if let Ok(order_json) = conn.get::<_, String>(&key) {
                             if let Ok(order) =
                                 serde_json::from_str::<serde_json::Value>(&order_json)
                             {
-                                // Match criteria
-                                let symbol_matches =
-                                    order.get("symbol").and_then(|v| v.as_str()) == Some(symbol);
+                                // Match criteria (normalize both sides)
+                                let order_symbol = order.get("symbol").and_then(|v| v.as_str());
+                                let symbol_matches = order_symbol.map(|s| normalize_symbol(s)) == Some(normalize_symbol(symbol));
 
                                 let entry_matches = order
                                     .get("entry_price")
@@ -503,6 +512,18 @@ impl ActiveOrderManager {
     /// Main processing method - monitor open trades
     pub async fn process_order_updates(&self) -> Result<(), String> {
         debug!("🔄 Processing open trades with Redis storage...");
+
+        // Clear all active_trade:* keys from Redis before repopulating
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                if let Ok(keys) = conn.keys::<_, Vec<String>>("active_trade:*") {
+                    for key in keys {
+                        let _: redis::RedisResult<()> = conn.del(&key);
+                    }
+                    debug!("🧹 Cleared all active_trade:* keys from Redis before repopulating");
+                }
+            }
+        }
 
         let positions_response = self.fetch_open_positions().await?;
 

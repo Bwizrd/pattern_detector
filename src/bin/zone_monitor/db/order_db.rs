@@ -798,6 +798,11 @@ impl OrderDatabase {
         warn!("CSV parsing not yet implemented - returning empty result");
         Ok(Vec::new())
     }
+
+    pub async fn get_enriched_deal_by_id(&self, _deal_id: &str) -> Result<Option<EnrichedDeal>, OrderDbError> {
+        // TODO: Implement real query and parsing
+        Ok(None)
+    }
 }
 
 /// Escape tag values for InfluxDB line protocol

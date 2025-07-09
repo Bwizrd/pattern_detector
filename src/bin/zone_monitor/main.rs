@@ -22,6 +22,7 @@ mod zone_state_manager;
 
 mod enriched_trades;
 use chrono::Utc;
+use uuid::Uuid;
 
 // Add this import to your use statements
 // use enriched_trades::{enriched_trades_by_date_api, enriched_trades_by_range_api};
@@ -43,6 +44,10 @@ use types::{ZoneAlert, ZoneCache};
 use std::collections::HashMap;
 use serde_json::{json, Value};
 use axum::extract::{Path, Query};
+
+use crate::db::order_db::EnrichedDeal;
+use axum::extract::Json as AxumJson;
+use tokio::fs::read_to_string;
 
 
 // Request/Response structs for manual trading
@@ -228,30 +233,23 @@ async fn pending_orders_html() -> Html<String> {
     }
 }
 
-async fn pending_orders_json() -> (StatusCode, Json<serde_json::Value>) {
-    match fs::read_to_string("shared_pending_orders.json") {
-        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-            Ok(json) => (StatusCode::OK, Json(json)),
-            Err(e) => {
-                let error = serde_json::json!({
-                    "error": "Failed to parse JSON",
-                    "message": e.to_string()
-                });
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(error))
-            }
-        },
+// Replace the old implementation of pending_orders_json with Redis-backed logic
+async fn pending_orders_json(State(state): State<MonitorState>) -> (StatusCode, Json<serde_json::Value>) {
+    let pending_order_manager = state.pending_order_manager.read().await;
+    match pending_order_manager.get_all_pending_orders_with_lookup_status().await {
+        Ok(orders_info) => (StatusCode::OK, Json(orders_info)),
         Err(e) => {
             let error = serde_json::json!({
-                "error": "Failed to read file",
-                "message": e.to_string()
+                "error": e.to_string(),
+                "message": "Failed to fetch pending orders from Redis"
             });
-            (StatusCode::NOT_FOUND, Json(error))
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error))
         }
     }
 }
 
 async fn manual_trade_api(
-    State(_state): State<MonitorState>,
+    State(state): State<MonitorState>,
     Json(request): Json<ManualTradeRequest>,
 ) -> (StatusCode, Json<ManualTradeResponse>) {
     info!("🧪 Manual trade request: {:?}", request);
@@ -301,6 +299,32 @@ async fn manual_trade_api(
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
 
+                    // --- Store in Redis if successful ---
+                    if success && order_id.is_some() {
+                        let mut pending_order_manager = state.pending_order_manager.write().await;
+                        let zone_id = Uuid::new_v4().to_string();
+                        let pending_order = crate::pending_order_manager::PendingOrder {
+                            zone_id,
+                            symbol: symbol_id_to_name(request.symbol_id),
+                            timeframe: "manual".to_string(),
+                            zone_type: "manual".to_string(),
+                            order_type: if request.trade_side == 1 { "BUY_LIMIT".to_string() } else { "SELL_LIMIT".to_string() },
+                            entry_price: request.entry_price,
+                            lot_size: request.volume as i32,
+                            stop_loss: request.stop_loss.unwrap_or(0.0),
+                            take_profit: request.take_profit.unwrap_or(0.0),
+                            ctrader_order_id: order_id.clone(),
+                            placed_at: chrono::Utc::now(),
+                            status: "PENDING".to_string(),
+                            zone_high: request.entry_price, // placeholder
+                            zone_low: request.entry_price,  // placeholder
+                            zone_strength: 0.0,             // placeholder
+                            touch_count: 0,                 // placeholder
+                            distance_when_placed: 0.0,      // placeholder
+                        };
+                        let _ = pending_order_manager.store_pending_order_redis(&pending_order).await;
+                    }
+
                     let response = ManualTradeResponse {
                         success,
                         message,
@@ -340,6 +364,39 @@ async fn manual_trade_api(
             };
             (StatusCode::INTERNAL_SERVER_ERROR, Json(response))
         }
+    }
+}
+
+// Helper to map symbol_id to name (should match your SYMBOLS array)
+fn symbol_id_to_name(symbol_id: i32) -> String {
+    match symbol_id {
+        185 => "EURUSD_SB".to_string(),
+        199 => "GBPUSD_SB".to_string(),
+        226 => "USDJPY_SB".to_string(),
+        222 => "USDCHF_SB".to_string(),
+        158 => "AUDUSD_SB".to_string(),
+        221 => "USDCAD_SB".to_string(),
+        211 => "NZDUSD_SB".to_string(),
+        175 => "EURGBP_SB".to_string(),
+        177 => "EURJPY_SB".to_string(),
+        173 => "EURCHF_SB".to_string(),
+        171 => "EURAUD_SB".to_string(),
+        172 => "EURCAD_SB".to_string(),
+        180 => "EURNZD_SB".to_string(),
+        192 => "GBPJPY_SB".to_string(),
+        191 => "GBPCHF_SB".to_string(),
+        189 => "GBPAUD_SB".to_string(),
+        190 => "GBPCAD_SB".to_string(),
+        195 => "GBPNZD_SB".to_string(),
+        155 => "AUDJPY_SB".to_string(),
+        156 => "AUDNZD_SB".to_string(),
+        153 => "AUDCAD_SB".to_string(),
+        210 => "NZDJPY_SB".to_string(),
+        162 => "CADJPY_SB".to_string(),
+        163 => "CHFJPY_SB".to_string(),
+        205 => "NAS100_SB".to_string(),
+        220 => "US500_SB".to_string(),
+        _ => format!("symbol_{}", symbol_id),
     }
 }
 
@@ -514,6 +571,78 @@ async fn fix_missing_lookups(State(state): State<MonitorState>) -> Json<Value> {
     }
 }
 
+// --- Trade Enricher endpoints ---
+async fn trade_enricher_html() -> Html<String> {
+    match read_to_string("web/trade_enricher.html").await {
+        Ok(contents) => Html(contents),
+        Err(_) => Html("<h1>404 Not Found</h1><p>trade_enricher.html not found.</p>".to_string()),
+    }
+}
+
+async fn api_broker_deals(State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    let pending_order_manager = state.pending_order_manager.read().await;
+    match pending_order_manager.fetch_broker_deals().await {
+        Ok(deals) => Json(serde_json::json!({ "deals": deals })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+async fn api_enrich_deal(Path(deal_id): Path<String>, State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    let pending_order_manager = state.pending_order_manager.read().await;
+    match pending_order_manager.fetch_broker_deals().await {
+        Ok(deals) => {
+            if let Some(deal) = deals.iter().find(|d| d.deal_id.to_string() == deal_id) {
+                match pending_order_manager.convert_broker_deal_to_enriched(deal).await {
+                    Ok(mut enriched) => {
+                        if let Some(order_id) = &deal.order_id {
+                            let order_id_str = order_id.to_string();
+                            if let Some(pending_order) = pending_order_manager.get_pending_order_for_enrichment(&order_id_str).await {
+                                // Enrich with zone data
+                                enriched.zone_id = Some(pending_order.zone_id);
+                                enriched.zone_type = Some(pending_order.zone_type);
+                                enriched.zone_strength = Some(pending_order.zone_strength);
+                                enriched.zone_high = Some(pending_order.zone_high);
+                                enriched.zone_low = Some(pending_order.zone_low);
+                                enriched.touch_count = Some(pending_order.touch_count);
+                                enriched.timeframe = Some(pending_order.timeframe);
+                                enriched.distance_when_placed = Some(pending_order.distance_when_placed);
+                                enriched.original_entry_price = Some(pending_order.entry_price);
+                                enriched.stop_loss = Some(pending_order.stop_loss);
+                                enriched.take_profit = Some(pending_order.take_profit);
+                                // Calculate slippage
+                                let pip_value = pending_order_manager.get_pip_value(&enriched.symbol);
+                                let slippage = (deal.exit_price - pending_order.entry_price).abs() / pip_value;
+                                enriched.slippage_pips = Some(slippage);
+                            }
+                        }
+                        Json(serde_json::to_value(&enriched).unwrap_or_else(|_| serde_json::json!({ "error": "Serialization failed" })))
+                    }
+                    Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+                }
+            } else {
+                Json(serde_json::json!({ "error": "Deal not found" }))
+            }
+        }
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
+async fn api_save_enriched_deal(Path(_deal_id): Path<String>, State(state): State<MonitorState>, AxumJson(payload): AxumJson<EnrichedDeal>) -> (StatusCode, Json<serde_json::Value>) {
+    let order_db = &state.order_database;
+    match order_db.write_enriched_deal(&payload).await {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "success": false, "error": e.to_string() }))),
+    }
+}
+
+async fn api_db_deal(Path(deal_id): Path<String>, State(state): State<MonitorState>) -> Json<serde_json::Value> {
+    match state.order_database.as_ref().get_enriched_deal_by_id(&deal_id).await {
+        Ok(Some(deal)) => Json(serde_json::to_value(&deal).unwrap_or_else(|_| serde_json::json!({ "error": "Serialization failed" }))),
+        Ok(None) => Json(serde_json::json!({ "error": "Deal not found" })),
+        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env file from current directory (root of project)
@@ -605,6 +734,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/debug/deal-enrichment", get(debug_deal_enrichment))
         .route("/debug/simulate-pending-order", post(debug_simulate_pending_order))
         .route("/debug/fix-missing-lookups", post(fix_missing_lookups))
+        .route("/trade-enricher", get(trade_enricher_html))
+        .route("/api/broker_deals", get(api_broker_deals))
+        .route("/api/enrich_deal/:deal_id", get(api_enrich_deal))
+        .route("/api/save_enriched_deal/:deal_id", post(api_save_enriched_deal))
+        .route("/api/db_deal/:deal_id", get(api_db_deal))
         .layer(cors)
         .with_state(state);
 

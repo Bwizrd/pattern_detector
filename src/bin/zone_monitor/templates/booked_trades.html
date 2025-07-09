@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Booked Trades Dashboard</title>
+    <title>Active Trades Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -431,19 +431,21 @@
 
         function updateSummary(summary) {
             document.getElementById('totalTrades').textContent = summary.total_trades;
-            document.getElementById('openTrades').textContent = summary.open_trades;
-            document.getElementById('closedTrades').textContent = summary.closed_trades;
+            document.getElementById('openTrades').textContent = summary.active_trades;
+            document.getElementById('closedTrades').textContent = summary.historical_trades;
             document.getElementById('enrichedTrades').textContent = summary.enriched_trades;
             
             const pnlElement = document.getElementById('totalPnl');
-            const pnlValue = summary.total_pnl_pips.toFixed(1);
+            const pnl = typeof summary.total_pips === 'number' ? summary.total_pips : 0;
+            const pnlValue = pnl.toFixed(1);
             pnlElement.textContent = pnlValue + ' pips';
-            pnlElement.className = 'value ' + (summary.total_pnl_pips >= 0 ? 'positive' : 'negative');
+            pnlElement.className = 'value ' + (pnl >= 0 ? 'positive' : 'negative');
             
             const winRateElement = document.getElementById('winRate');
-            const winRateValue = summary.win_rate.toFixed(1);
+            const winRate = typeof summary.win_rate === 'number' ? summary.win_rate : 0;
+            const winRateValue = winRate.toFixed(1);
             winRateElement.textContent = winRateValue + '%';
-            winRateElement.className = 'value ' + (summary.win_rate >= 50 ? 'positive' : 'negative');
+            winRateElement.className = 'value ' + (winRate >= 50 ? 'positive' : 'negative');
         }
 
         function populateFilters() {
@@ -495,37 +497,37 @@
                     `<span class="zone-type ${trade.zone_type.replace('_', '-')}">${trade.zone_type.replace('_', ' ')}</span>` :
                     `<span class="zone-type market-trade">Market</span>`;
                 
-                const strengthDisplay = trade.zone_strength !== null ? 
+                const strengthDisplay = (typeof trade.zone_strength === 'number') ? 
                     trade.zone_strength.toFixed(0) + '%' : '-';
                 
-                const durationDisplay = trade.duration_minutes ? 
+                const durationDisplay = (typeof trade.duration_minutes === 'number') ? 
                     formatDuration(trade.duration_minutes) : '-';
                 
-                const pnlDisplay = trade.pnl_pips !== null ? 
-                    `<span class="${trade.pnl_pips >= 0 ? 'positive' : 'negative'}">${trade.pnl_pips.toFixed(1)} pips</span>` : '-';
+                const pnl = (typeof trade.pips_profit === 'number') ? trade.pips_profit : 0;
+                const pnlDisplay = `<span class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl.toFixed(1)} pips</span>`;
                 
                 const pendingLink = trade.pending_order ? 
                     `<span class="pending-link" onclick="showPendingDetails('${trade.zone_id}')">View Details</span>` : 
                     '<span style="color: #6b7280;">No Link</span>';
                 
-                const truncatedZoneId = trade.zone_id.length > 12 ? 
-                    trade.zone_id.substring(0, 12) + '...' : trade.zone_id;
+                const truncatedZoneId = trade.zone_id && trade.zone_id.length > 12 ? 
+                    trade.zone_id.substring(0, 12) + '...' : (trade.zone_id || '');
 
                 return `
                     <tr>
                         <td title="${trade.zone_id}">${truncatedZoneId}</td>
                         <td>${trade.symbol}</td>
-                        <td>${trade.order_type}</td>
-                        <td>${trade.order_type.includes('BUY') ? '🟢 BUY' : '🔴 SELL'}</td>
-                        <td>${trade.entry_price.toFixed(5)}</td>
+                        <td>${trade.order_type || ''}</td>
+                        <td>${(trade.order_type && trade.order_type.includes('BUY')) ? '🟢 BUY' : '🔴 SELL'}</td>
+                        <td>${typeof trade.entry_price === 'number' ? trade.entry_price.toFixed(5) : '-'}</td>
                         <td>
                             <div style="font-size: 0.8rem;">
-                                SL: ${trade.stop_loss.toFixed(5)}<br>
-                                TP: ${trade.take_profit.toFixed(5)}
+                                SL: ${typeof trade.stop_loss === 'number' ? trade.stop_loss.toFixed(5) : '-'}<br>
+                                TP: ${typeof trade.take_profit === 'number' ? trade.take_profit.toFixed(5) : '-'}
                             </div>
                         </td>
                         <td><span class="status-badge status-${trade.status.toLowerCase()}">${trade.status}</span></td>
-                        <td>${trade.timeframe}</td>
+                        <td>${trade.timeframe || ''}</td>
                         <td>${zoneTypeDisplay}</td>
                         <td>${strengthDisplay}</td>
                         <td>${durationDisplay}</td>
