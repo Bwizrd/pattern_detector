@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::db::order_db::EnrichedDeal;
+use crate::active_order_manager::EnrichedActiveTrade;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrder {
@@ -1176,43 +1177,93 @@ impl PendingOrderManager {
                                         if let Some(position_id) = order.get("position_id").and_then(|v| v.as_u64()) {
                                             let active_key = format!("active_trade:{}", position_id);
                                             // Build enriched active trade from pending order and deal info
-                                            let mut active_trade = serde_json::Map::new();
-                                            // Copy enrichment fields from pending order
-                                            let enrichment_fields = [
-                                                "zone_id", "zone_type", "zone_strength", "zone_high", "zone_low", "touch_count", "timeframe", "distance_when_placed", "original_entry_price", "entry_price", "stop_loss", "take_profit", "symbol", "order_type", "lot_size"
-                                            ];
-                                            for field in enrichment_fields.iter() {
-                                                if let Some(val) = order.get(*field) {
-                                                    active_trade.insert(field.to_string(), val.clone());
-                                                } else {
-                                                    // Explicitly set to null if missing
-                                                    active_trade.insert(field.to_string(), Value::Null);
-                                                }
-                                            }
-                                            // Add positionId, status, filled_at
-                                            active_trade.insert("position_id".to_string(), Value::from(position_id));
-                                            active_trade.insert("status".to_string(), Value::String("ACTIVE".to_string()));
-                                            active_trade.insert("filled_at".to_string(), order["filled_at"].clone());
-                                            // Add deal info (entry price, etc.)
                                             if let Some(deal) = deals.get(0) {
-                                                if let Some(exec_price) = deal.get("executionPrice") {
-                                                    active_trade.insert("entry_price".to_string(), exec_price.clone());
-                                                }
-                                                if let Some(symbol_id) = deal.get("symbolId") {
-                                                    active_trade.insert("symbol_id".to_string(), symbol_id.clone());
-                                                }
-                                            }
-                                            // Debug log the final active_trade map
-                                            tracing::debug!("[Enrichment] Final active_trade map: {:?}", active_trade);
-                                            // Store in Redis
-                                            if let Some(ref client) = self.redis_client {
-                                                let mut conn = client.get_connection()?;
-                                                let active_json = serde_json::to_string(&active_trade)?;
-                                                let _: () = conn.set(&active_key, active_json)?;
-                                                // Store reverse mapping: position_lookup:<position_id> -> <ctrader_order_id>
-                                                if let Some(ctrader_order_id) = order.get("ctrader_order_id").and_then(|v| v.as_str()) {
-                                                    let position_lookup_key = format!("position_lookup:{}", position_id);
-                                                    let _: () = conn.set(&position_lookup_key, ctrader_order_id)?;
+                                                // Extract fields from deal and order-details
+                                                let trade_data = resp_json.get("order").and_then(|o| o.get("tradeData"));
+                                                let trade_side = trade_data.and_then(|td| td.get("tradeSide")).and_then(|v| v.as_i64()).unwrap_or(1);
+                                                let symbol_id = trade_data.and_then(|td| td.get("symbolId")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                                let symbol = self.symbol_ids.iter().find(|(_, &id)| id == symbol_id as i32).map(|(s, _)| s.clone()).unwrap_or_else(|| order.get("symbol").and_then(|v| v.as_str()).unwrap_or("").to_string());
+                                                let volume = trade_data.and_then(|td| td.get("volume")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                let volume_lots = volume / 10000.0;
+                                                let entry_price = deal.get("executionPrice").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                let open_timestamp = trade_data.and_then(|td| td.get("openTimestamp")).and_then(|v| v.as_i64()).unwrap_or(0);
+                                                let open_time = chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp_millis(open_timestamp).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0, 0)), chrono::Utc);
+                                                let now = chrono::Utc::now();
+                                                let duration_minutes = (now - open_time).num_minutes();
+                                                let stop_loss = order.get("stop_loss").and_then(|v| v.as_f64());
+                                                let take_profit = order.get("take_profit").and_then(|v| v.as_f64());
+                                                let swap = deal.get("swap").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                let commission = deal.get("commission").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                let label = String::new();
+                                                let comment = String::new();
+                                                let pip_value = self.get_pip_value(&symbol);
+                                                let distance_from_entry_pips = 0.0;
+                                                let risk_reward_ratio = if let (Some(sl), Some(tp)) = (stop_loss, take_profit) {
+                                                    let risk_pips = (entry_price - sl).abs() / pip_value;
+                                                    let reward_pips = (tp - entry_price).abs() / pip_value;
+                                                    if risk_pips > 0.0 { Some(reward_pips / risk_pips) } else { None }
+                                                } else { None };
+                                                let is_profitable = false;
+                                                let max_drawdown_pips = None;
+                                                let max_profit_pips = None;
+                                                let last_updated = now;
+                                                // Enrichment fields from pending order
+                                                let zone_id = order.get("zone_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                                let zone_type = order.get("zone_type").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                                let zone_strength = order.get("zone_strength").and_then(|v| v.as_f64());
+                                                let zone_high = order.get("zone_high").and_then(|v| v.as_f64());
+                                                let zone_low = order.get("zone_low").and_then(|v| v.as_f64());
+                                                let touch_count = order.get("touch_count").and_then(|v| v.as_i64()).map(|i| i as i32);
+                                                let timeframe = order.get("timeframe").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                                let distance_when_placed = order.get("distance_when_placed").and_then(|v| v.as_f64());
+                                                let original_entry_price = order.get("entry_price").and_then(|v| v.as_f64());
+                                                let slippage_pips = if let (Some(filled), Some(orig)) = (Some(entry_price), original_entry_price) {
+                                                    Some(((filled - orig).abs()) / pip_value)
+                                                } else { None };
+                                                let enriched_trade = EnrichedActiveTrade {
+                                                    position_id,
+                                                    symbol,
+                                                    trade_side: if trade_side == 1 { "BUY".to_string() } else { "SELL".to_string() },
+                                                    volume_lots,
+                                                    entry_price,
+                                                    current_price: entry_price,
+                                                    unrealized_pnl: 0.0,
+                                                    pips_profit: 0.0,
+                                                    open_time,
+                                                    duration_minutes,
+                                                    stop_loss,
+                                                    take_profit,
+                                                    swap,
+                                                    commission,
+                                                    label,
+                                                    comment,
+                                                    zone_id,
+                                                    zone_type,
+                                                    zone_strength,
+                                                    zone_high,
+                                                    zone_low,
+                                                    touch_count,
+                                                    timeframe,
+                                                    distance_when_placed,
+                                                    original_entry_price,
+                                                    slippage_pips,
+                                                    distance_from_entry_pips,
+                                                    risk_reward_ratio,
+                                                    is_profitable,
+                                                    max_drawdown_pips,
+                                                    max_profit_pips,
+                                                    last_updated,
+                                                };
+                                                // Store in Redis
+                                                if let Some(ref client) = self.redis_client {
+                                                    let mut conn = client.get_connection()?;
+                                                    let active_json = serde_json::to_string(&enriched_trade)?;
+                                                    let _: () = conn.set(&active_key, active_json)?;
+                                                    // Store reverse mapping: position_lookup:<position_id> -> <ctrader_order_id>
+                                                    if let Some(ctrader_order_id) = order.get("ctrader_order_id").and_then(|v| v.as_str()) {
+                                                        let position_lookup_key = format!("position_lookup:{}", position_id);
+                                                        let _: () = conn.set(&position_lookup_key, ctrader_order_id)?;
+                                                    }
                                                 }
                                             }
                                         }

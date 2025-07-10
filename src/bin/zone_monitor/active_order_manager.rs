@@ -585,7 +585,7 @@ impl ActiveOrderManager {
                 if !open_position_ids.contains(&position_id) {
                     // 3. Position is closed at broker
                     let zone_id = trade.get("zone_id").and_then(|v| v.as_str()).unwrap_or("");
-                    tracing::info!("[Polling] Active trade {} (position_id={}, zone_id={}) is CLOSED and ready to be enriched", key, position_id, zone_id);
+                    info!("[Polling] Active trade {} (position_id={}, zone_id={}) is CLOSED and ready to be enriched", key, position_id, zone_id);
                     // Mark the corresponding pending order as CLOSED, add closed_at
                     if let Some(ref client) = self.redis_client {
                         let mut conn = client.get_connection()?;
@@ -598,18 +598,91 @@ impl ActiveOrderManager {
                                     order["closed_at"] = Value::String(Utc::now().to_rfc3339());
                                     let updated_json = serde_json::to_string(&order)?;
                                     let _: () = conn.set(&pending_key, updated_json)?;
+                                    info!("[Enrichment] Marked pending order {} as CLOSED in Redis", pending_key);
+                                } else {
+                                    info!("[Enrichment] Could not deserialize pending order for {}", pending_key);
                                 }
+                            } else {
+                                info!("[Enrichment] Could not find pending order in Redis for {}", pending_key);
                             }
                         }
                         // 4. Enrich the closed deal and save to InfluxDB (TODO: implement actual enrichment and save logic)
-                        tracing::info!("[Enrichment] Attempting to enrich closed trade: position_id={}, zone_id={}", position_id, zone_id);
-                        // TODO: Fetch deal details for this position and enrich/save to InfluxDB
-                        // Example enrichment log:
-                        tracing::debug!("[Enrichment] Would use pending order fields: {:?}", trade);
-                        // Example InfluxDB save log:
-                        tracing::debug!("[Enrichment] Would save to InfluxDB: <enriched_deal_json_here>");
+                        info!("[Enrichment] Attempting to enrich closed trade: position_id={}, zone_id={}", position_id, zone_id);
+                        // Fetch the original orderId from position_lookup
+                        let mut ctrader_order_id: Option<String> = None;
+                        if let Some(ref client) = self.redis_client {
+                            if let Ok(mut conn) = client.get_connection() {
+                                let position_lookup_key = format!("position_lookup:{}", position_id);
+                                if let Ok(order_id_str) = conn.get::<_, String>(&position_lookup_key) {
+                                    ctrader_order_id = Some(order_id_str);
+                                }
+                            }
+                        }
+                        if let Some(ref order_id) = ctrader_order_id {
+                            info!("[Enrichment] Fetching final /order-details for closed trade: order_id={}", order_id);
+                            let account_id = std::env::var("CTID_TRADER_ACCOUNT_ID").unwrap_or_else(|_| "37972727".to_string());
+                            let api_url = std::env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+                            let url = format!("{}/order-details/{}/{}", api_url, account_id, order_id);
+                            let client = reqwest::Client::new();
+                            match client.get(&url).send().await {
+                                Ok(resp) => {
+                                    if resp.status().is_success() {
+                                        if let Ok(resp_json) = resp.json::<serde_json::Value>().await {
+                                            info!("[Enrichment] Got /order-details response for closed trade: order_id={}", order_id);
+                                            let deals = resp_json.get("deals").and_then(|v| v.as_array());
+                                            if let Some(deals) = deals {
+                                                if !deals.is_empty() {
+                                                    let deal = &deals[0];
+                                                    // Extract close details
+                                                    let close_price = deal.get("executionPrice").and_then(|v| v.as_f64());
+                                                    let close_time = deal.get("executionTimestamp").and_then(|v| v.as_i64());
+                                                    let pips_profit = deal.get("pipsProfit").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                    let net_profit = deal.get("netProfit").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                    // Fetch the active_trade from the trade value
+                                                    match serde_json::from_value::<EnrichedActiveTrade>(trade.clone()) {
+                                                        Ok(mut enriched) => {
+                                                            // Update with close details
+                                                            enriched.current_price = close_price.unwrap_or(enriched.current_price);
+                                                            enriched.pips_profit = pips_profit;
+                                                            enriched.unrealized_pnl = net_profit;
+                                                            // Optionally update last_updated, etc.
+                                                            enriched.last_updated = chrono::Utc::now();
+                                                            // Log the full enriched closed trade object
+                                                            if let Ok(json) = serde_json::to_string_pretty(&enriched) {
+                                                                info!("[Enrichment] Would save CLOSED trade to InfluxDB: {}", json);
+                                                            } else {
+                                                                info!("[Enrichment] Could not serialize closed EnrichedActiveTrade for InfluxDB log");
+                                                            }
+                                                            // TODO: Save to InfluxDB here
+                                                        }
+                                                        Err(e) => {
+                                                            info!("[Enrichment] Could not deserialize trade to EnrichedActiveTrade for closed trade: {}", e);
+                                                            info!("[Enrichment] Raw trade value: {:?}", trade);
+                                                        }
+                                                    }
+                                                } else {
+                                                    info!("[Enrichment] No deals found in /order-details for closed trade: order_id={}", order_id);
+                                                }
+                                            } else {
+                                                info!("[Enrichment] No deals array in /order-details for closed trade: order_id={}", order_id);
+                                            }
+                                        } else {
+                                            info!("[Enrichment] Could not parse /order-details JSON for closed trade: order_id={}", order_id);
+                                        }
+                                    } else {
+                                        info!("[Enrichment] /order-details endpoint returned error for closed trade: order_id={}, status={}", order_id, resp.status());
+                                    }
+                                }
+                                Err(e) => {
+                                    info!("[Enrichment] Failed to call /order-details for closed trade: order_id={}, error={}", order_id, e);
+                                }
+                            }
+                        } else {
+                            info!("[Enrichment] No ctrader_order_id found for closed trade position_id={}", position_id);
+                        }
                         // 5. Remove the entry from active_orders
                         let _: () = conn.del(&key)?;
+                        info!("[Enrichment] Removed active trade {} from Redis after closure", key);
                     }
                 }
             }
