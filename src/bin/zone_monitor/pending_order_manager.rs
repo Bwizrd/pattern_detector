@@ -1117,4 +1117,118 @@ impl PendingOrderManager {
         }
         (0, 0)
     }
+
+    /// Poll all pending orders for fills using the cTrader order-details endpoint
+    pub async fn poll_pending_orders_for_fills(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use chrono::Utc;
+        use redis::Commands;
+        use serde_json::Value;
+        use std::env;
+
+        // 1. Get all pending orders from Redis with status == "PENDING"
+        let mut pending_orders = Vec::new();
+        if let Some(ref client) = self.redis_client {
+            let mut conn = client.get_connection()?;
+            if let Ok(keys) = conn.keys::<_, Vec<String>>("pending_order:*") {
+                tracing::debug!("[Polling] Found {} pending orders", keys.len());
+                for key in keys {
+                    if let Ok(order_json) = conn.get::<_, String>(&key) {
+                        if let Ok(mut order) = serde_json::from_str::<Value>(&order_json) {
+                            if order.get("status").and_then(|v| v.as_str()) == Some("PENDING") {
+                                tracing::debug!("[Polling] Checking pending order: {} (ctrader_order_id={:?})", key, order.get("ctrader_order_id"));
+                                pending_orders.push((key, order));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let account_id = env::var("CTID_TRADER_ACCOUNT_ID").unwrap_or_else(|_| "37972727".to_string());
+        let api_url = env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+        let client = reqwest::Client::new();
+
+        for (key, mut order) in pending_orders {
+            if let Some(ctrader_order_id) = order.get("ctrader_order_id").and_then(|v| v.as_str()) {
+                let url = format!("{}/order-details/{}/{}", api_url, account_id, ctrader_order_id);
+                match client.get(&url).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            if let Ok(resp_json) = resp.json::<Value>().await {
+                                let deals = resp_json.get("deals").and_then(|v| v.as_array());
+                                if let Some(deals) = deals {
+                                    tracing::debug!("[Polling] {}: found {} deals", ctrader_order_id, deals.len());
+                                    if !deals.is_empty() {
+                                        tracing::info!("[Polling] Pending order {} (ctrader_order_id={}) is FILLED and ready to be enriched (positionId={:?})", key, ctrader_order_id, deals[0].get("positionId"));
+                                        // Mark as FILLED, add filled_at and positionId
+                                        order["status"] = Value::String("FILLED".to_string());
+                                        order["filled_at"] = Value::String(Utc::now().to_rfc3339());
+                                        if let Some(position_id) = deals[0].get("positionId") {
+                                            order["position_id"] = position_id.clone();
+                                        }
+                                        // Update in Redis
+                                        if let Some(ref client) = self.redis_client {
+                                            let mut conn = client.get_connection()?;
+                                            let updated_json = serde_json::to_string(&order)?;
+                                            let _: () = conn.set(&key, updated_json)?;
+                                        }
+                                        // Create entry in active_orders (active_trade:positionId)
+                                        if let Some(position_id) = order.get("position_id").and_then(|v| v.as_u64()) {
+                                            let active_key = format!("active_trade:{}", position_id);
+                                            // Build enriched active trade from pending order and deal info
+                                            let mut active_trade = serde_json::Map::new();
+                                            // Copy enrichment fields from pending order
+                                            let enrichment_fields = [
+                                                "zone_id", "zone_type", "zone_strength", "zone_high", "zone_low", "touch_count", "timeframe", "distance_when_placed", "original_entry_price", "entry_price", "stop_loss", "take_profit", "symbol", "order_type", "lot_size"
+                                            ];
+                                            for field in enrichment_fields.iter() {
+                                                if let Some(val) = order.get(*field) {
+                                                    active_trade.insert(field.to_string(), val.clone());
+                                                } else {
+                                                    // Explicitly set to null if missing
+                                                    active_trade.insert(field.to_string(), Value::Null);
+                                                }
+                                            }
+                                            // Add positionId, status, filled_at
+                                            active_trade.insert("position_id".to_string(), Value::from(position_id));
+                                            active_trade.insert("status".to_string(), Value::String("ACTIVE".to_string()));
+                                            active_trade.insert("filled_at".to_string(), order["filled_at"].clone());
+                                            // Add deal info (entry price, etc.)
+                                            if let Some(deal) = deals.get(0) {
+                                                if let Some(exec_price) = deal.get("executionPrice") {
+                                                    active_trade.insert("entry_price".to_string(), exec_price.clone());
+                                                }
+                                                if let Some(symbol_id) = deal.get("symbolId") {
+                                                    active_trade.insert("symbol_id".to_string(), symbol_id.clone());
+                                                }
+                                            }
+                                            // Debug log the final active_trade map
+                                            tracing::debug!("[Enrichment] Final active_trade map: {:?}", active_trade);
+                                            // Store in Redis
+                                            if let Some(ref client) = self.redis_client {
+                                                let mut conn = client.get_connection()?;
+                                                let active_json = serde_json::to_string(&active_trade)?;
+                                                let _: () = conn.set(&active_key, active_json)?;
+                                                // Store reverse mapping: position_lookup:<position_id> -> <ctrader_order_id>
+                                                if let Some(ctrader_order_id) = order.get("ctrader_order_id").and_then(|v| v.as_str()) {
+                                                    let position_lookup_key = format!("position_lookup:{}", position_id);
+                                                    let _: () = conn.set(&position_lookup_key, ctrader_order_id)?;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Order details endpoint returned error for {}: {}", ctrader_order_id, resp.status());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to call order details endpoint for {}: {}", ctrader_order_id, e);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }

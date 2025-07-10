@@ -314,62 +314,45 @@ impl ActiveOrderManager {
 
         let is_profitable = pips_profit > 0.0;
 
-        // Try fuzzy matching since positions don't have order_id
-        let (
-            zone_id,
-            zone_type,
-            zone_strength,
-            zone_high,
-            zone_low,
-            touch_count,
-            timeframe,
-            distance_when_placed,
-            original_entry_price,
-            slippage_pips,
-        ) = if let Some(pending_order_data) = self.find_pending_order_by_fuzzy_match(position).await
-        {
-            (
-                pending_order_data
-                    .get("zone_id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                pending_order_data
-                    .get("zone_type")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                pending_order_data
-                    .get("zone_strength")
-                    .and_then(|v| v.as_f64()),
-                pending_order_data.get("zone_high").and_then(|v| v.as_f64()),
-                pending_order_data.get("zone_low").and_then(|v| v.as_f64()),
-                pending_order_data
-                    .get("touch_count")
-                    .and_then(|v| v.as_i64())
-                    .map(|i| i as i32),
-                pending_order_data
-                    .get("timeframe")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                pending_order_data
-                    .get("distance_when_placed")
-                    .and_then(|v| v.as_f64()),
-                pending_order_data
-                    .get("entry_price")
-                    .and_then(|v| v.as_f64()),
-                {
-                    if let Some(original_entry) = pending_order_data
-                        .get("entry_price")
-                        .and_then(|v| v.as_f64())
-                    {
-                        Some((position.price - original_entry).abs() / pip_value)
-                    } else {
-                        None
-                    }
-                },
-            )
-        } else {
-            (None, None, None, None, None, None, None, None, None, None)
-        };
+        // Try to enrich using pending order data from Redis
+        let mut zone_id = None;
+        let mut zone_type = None;
+        let mut zone_strength = None;
+        let mut zone_high = None;
+        let mut zone_low = None;
+        let mut touch_count = None;
+        let mut timeframe = None;
+        let mut distance_when_placed = None;
+        let mut original_entry_price = None;
+        let mut slippage_pips = None;
+
+        // New logic: use position_lookup to get ctrader_order_id, then order_lookup to get zone_id
+        let mut ctrader_order_id: Option<String> = None;
+        if let Some(ref client) = self.redis_client {
+            if let Ok(mut conn) = client.get_connection() {
+                let position_lookup_key = format!("position_lookup:{}", position.position_id);
+                if let Ok(order_id_str) = conn.get::<_, String>(&position_lookup_key) {
+                    ctrader_order_id = Some(order_id_str);
+                }
+            }
+        }
+        if let Some(ref order_id) = ctrader_order_id {
+            if let Some(order) = self.get_pending_order_for_enrichment(order_id.parse::<u64>().unwrap()).await {
+                zone_id = order.get("zone_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                zone_type = order.get("zone_type").and_then(|v| v.as_str()).map(|s| s.to_string());
+                zone_strength = order.get("zone_strength").and_then(|v| v.as_f64());
+                zone_high = order.get("zone_high").and_then(|v| v.as_f64());
+                zone_low = order.get("zone_low").and_then(|v| v.as_f64());
+                touch_count = order.get("touch_count").and_then(|v| v.as_i64()).map(|i| i as i32);
+                timeframe = order.get("timeframe").and_then(|v| v.as_str()).map(|s| s.to_string());
+                distance_when_placed = order.get("distance_when_placed").and_then(|v| v.as_f64());
+                original_entry_price = order.get("entry_price").and_then(|v| v.as_f64());
+                // Optionally calculate slippage if entry prices differ
+                if let (Some(filled), Some(orig)) = (Some(position.price), original_entry_price) {
+                    slippage_pips = Some(((filled - orig).abs()) / pip_value);
+                }
+            }
+        }
 
         EnrichedActiveTrade {
             position_id: position.position_id,
@@ -409,79 +392,6 @@ impl ActiveOrderManager {
             max_profit_pips: None,   // Will be calculated and stored
             last_updated: now,
         }
-    }
-
-    // Add this method to your ActiveOrderManager impl block
-    async fn find_pending_order_by_fuzzy_match(
-        &self,
-        position: &OpenPosition,
-    ) -> Option<serde_json::Value> {
-        if let Some(ref client) = self.redis_client {
-            if let Ok(mut conn) = client.get_connection() {
-                // Get the symbol name for this position
-                let symbol = self.symbol_id_mapping.get(&position.symbol_id)?;
-
-                // Helper to normalize symbol (strip _SB if present)
-                fn normalize_symbol(s: &str) -> &str {
-                    if let Some(stripped) = s.strip_suffix("_SB") {
-                        stripped
-                    } else {
-                        s
-                    }
-                }
-
-                if let Ok(keys) = conn.keys::<_, Vec<String>>("pending_order:*") {
-                    for key in keys {
-                        if let Ok(order_json) = conn.get::<_, String>(&key) {
-                            if let Ok(order) =
-                                serde_json::from_str::<serde_json::Value>(&order_json)
-                            {
-                                // Match criteria (normalize both sides)
-                                let order_symbol = order.get("symbol").and_then(|v| v.as_str());
-                                let symbol_matches = order_symbol.map(|s| normalize_symbol(s)) == Some(normalize_symbol(symbol));
-
-                                let entry_matches = order
-                                    .get("entry_price")
-                                    .and_then(|v| v.as_f64())
-                                    .map(|entry| (entry - position.price).abs() < 0.0001) // Very close match
-                                    .unwrap_or(false);
-
-                                let sl_matches = if let (Some(order_sl), Some(pos_sl)) = (
-                                    order.get("stop_loss").and_then(|v| v.as_f64()),
-                                    position.stop_loss,
-                                ) {
-                                    (order_sl - pos_sl).abs() < 0.0001
-                                } else {
-                                    true // If either doesn't have SL, don't use it as criteria
-                                };
-
-                                let tp_matches = if let (Some(order_tp), Some(pos_tp)) = (
-                                    order.get("take_profit").and_then(|v| v.as_f64()),
-                                    position.take_profit,
-                                ) {
-                                    (order_tp - pos_tp).abs() < 0.0001
-                                } else {
-                                    true // If either doesn't have TP, don't use it as criteria
-                                };
-
-                                if symbol_matches && entry_matches && sl_matches && tp_matches {
-                                    info!(
-                                        "🎯 Fuzzy matched position {} to pending order {}",
-                                        position.position_id,
-                                        order
-                                            .get("zone_id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown")
-                                    );
-                                    return Some(order);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
     }
 
     /// Update position metrics (max profit/drawdown tracking)
@@ -618,6 +528,92 @@ impl ActiveOrderManager {
             );
         }
 
+        Ok(())
+    }
+
+    /// Poll all active trades for closure using the broker's positions endpoint
+    pub async fn poll_active_trades_for_closes(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        use chrono::Utc;
+        use redis::Commands;
+        use serde_json::Value;
+        use std::env;
+
+        // 1. Get all active trades from Redis (active_trade:*)
+        let mut active_trades = Vec::new();
+        if let Some(ref client) = self.redis_client {
+            let mut conn = client.get_connection()?;
+            if let Ok(keys) = conn.keys::<_, Vec<String>>("active_trade:*") {
+                tracing::debug!("[Polling] Found {} active trades", keys.len());
+                for key in keys {
+                    if let Ok(trade_json) = conn.get::<_, String>(&key) {
+                        if let Ok(trade) = serde_json::from_str::<Value>(&trade_json) {
+                            active_trades.push((key, trade));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fetch all open positions from broker
+        let api_url = env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+        let client = reqwest::Client::new();
+        let positions_url = format!("{}/positions", api_url);
+        let mut open_position_ids = std::collections::HashSet::new();
+        match client.get(&positions_url).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    if let Ok(resp_json) = resp.json::<Value>().await {
+                        if let Some(positions) = resp_json.get("positions").and_then(|v| v.as_array()) {
+                            for pos in positions {
+                                if let Some(pos_id) = pos.get("positionId").and_then(|v| v.as_u64()) {
+                                    open_position_ids.insert(pos_id);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    tracing::warn!("Positions endpoint returned error: {}", resp.status());
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to call positions endpoint: {}", e);
+            }
+        }
+
+        for (key, trade) in active_trades {
+            if let Some(position_id) = trade.get("position_id").and_then(|v| v.as_u64()) {
+                if !open_position_ids.contains(&position_id) {
+                    // 3. Position is closed at broker
+                    let zone_id = trade.get("zone_id").and_then(|v| v.as_str()).unwrap_or("");
+                    tracing::info!("[Polling] Active trade {} (position_id={}, zone_id={}) is CLOSED and ready to be enriched", key, position_id, zone_id);
+                    // Mark the corresponding pending order as CLOSED, add closed_at
+                    if let Some(ref client) = self.redis_client {
+                        let mut conn = client.get_connection()?;
+                        // Find pending order by zone_id or ctrader_order_id if available
+                        if let Some(zone_id) = trade.get("zone_id").and_then(|v| v.as_str()) {
+                            let pending_key = format!("pending_order:{}", zone_id);
+                            if let Ok(order_json) = conn.get::<_, String>(&pending_key) {
+                                if let Ok(mut order) = serde_json::from_str::<Value>(&order_json) {
+                                    order["status"] = Value::String("CLOSED".to_string());
+                                    order["closed_at"] = Value::String(Utc::now().to_rfc3339());
+                                    let updated_json = serde_json::to_string(&order)?;
+                                    let _: () = conn.set(&pending_key, updated_json)?;
+                                }
+                            }
+                        }
+                        // 4. Enrich the closed deal and save to InfluxDB (TODO: implement actual enrichment and save logic)
+                        tracing::info!("[Enrichment] Attempting to enrich closed trade: position_id={}, zone_id={}", position_id, zone_id);
+                        // TODO: Fetch deal details for this position and enrich/save to InfluxDB
+                        // Example enrichment log:
+                        tracing::debug!("[Enrichment] Would use pending order fields: {:?}", trade);
+                        // Example InfluxDB save log:
+                        tracing::debug!("[Enrichment] Would save to InfluxDB: <enriched_deal_json_here>");
+                        // 5. Remove the entry from active_orders
+                        let _: () = conn.del(&key)?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

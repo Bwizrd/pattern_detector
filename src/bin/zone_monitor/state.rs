@@ -224,11 +224,12 @@ impl MonitorState {
         self.start_notification_cleanup_task().await;
         self.start_zone_reset_task().await;
         self.start_zone_interaction_save_task().await;
-        self.start_zone_interaction_midnight_cleanup().await;
         self.start_deal_enrichment_task().await; // NEW: Deal enrichment instead of order sync
         self.start_strategy_refresh_task().await;
         self.start_active_order_matching_task().await;
         self.start_csv_logger_cleanup_task().await;
+        self.start_pending_order_fill_task().await;
+        self.start_active_trade_close_task().await;
         info!("✅ Background tasks started");
 
         // Test notifications if configured
@@ -408,17 +409,9 @@ impl MonitorState {
             loop {
                 interval.tick().await;
 
-                let manager = pending_order_manager.read().await;
-                match manager.enrich_and_save_deals().await {
-                    Ok(enriched_count) => {
-                        if enriched_count > 0 {
-                            info!("📊 Deal enrichment: processed {} deals", enriched_count);
-                        }
-                    }
-                    Err(e) => {
-                        warn!("📊 Deal enrichment failed: {}", e);
-                    }
-                }
+                // TODO: Implement new polling logic:
+                // 1. For all pending orders, poll /order-details/:accountId/:orderId to detect fills and update status/active_orders.
+                // 2. For all active trades, poll broker for position status to detect closes, update status, and enrich/save to InfluxDB.
             }
         });
     }
@@ -485,6 +478,43 @@ impl MonitorState {
                 interval.tick().await;
                 // Clear buffer if it gets too large (safety measure)
                 csv_logger.clear_buffer().await;
+            }
+        });
+    }
+
+    async fn start_pending_order_fill_task(&self) {
+        let pending_order_manager = Arc::clone(&self.pending_order_manager);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                interval.tick().await;
+                let manager = pending_order_manager.read().await;
+                match manager.poll_pending_orders_for_fills().await {
+                    Ok(_) => {
+                        tracing::debug!("[Polling] Checked pending orders for fills");
+                    }
+                    Err(e) => {
+                        tracing::warn!("[Polling] Error checking pending orders for fills: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    async fn start_active_trade_close_task(&self) {
+        let active_order_manager = Arc::clone(&self.active_order_manager);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                interval.tick().await;
+                match active_order_manager.poll_active_trades_for_closes().await {
+                    Ok(_) => {
+                        tracing::debug!("[Polling] Checked active trades for closes");
+                    }
+                    Err(e) => {
+                        tracing::warn!("[Polling] Error checking active trades for closes: {}", e);
+                    }
+                }
             }
         });
     }
