@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 use std::sync::Arc;
+use crate::db::order_db::{OrderDatabase, EnrichedDeal};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenPosition {
@@ -89,10 +90,11 @@ pub struct ActiveOrderManager {
     redis_client: Option<Client>,
     processed_positions: Arc<tokio::sync::Mutex<std::collections::HashSet<u64>>>,
     position_metrics: Arc<tokio::sync::Mutex<HashMap<u64, (f64, f64)>>>, // position_id -> (max_profit, max_drawdown)
+    order_database: Option<Arc<OrderDatabase>>,
 }
 
 impl ActiveOrderManager {
-    pub fn new() -> Self {
+    pub fn new(order_database: Option<Arc<OrderDatabase>>) -> Self {
         let api_url = std::env::var("CTRADER_API_BRIDGE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
 
@@ -150,6 +152,7 @@ impl ActiveOrderManager {
                 tokio::sync::Mutex::new(std::collections::HashSet::new()),
             ),
             position_metrics: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            order_database,
         }
     }
 
@@ -653,7 +656,58 @@ impl ActiveOrderManager {
                                                             } else {
                                                                 info!("[Enrichment] Could not serialize closed EnrichedActiveTrade for InfluxDB log");
                                                             }
-                                                            // TODO: Save to InfluxDB here
+                                                            // Save to InfluxDB here
+                                                            if let Some(ref db) = self.order_database {
+                                                                let deal_id = format!("{}-{}", enriched.position_id, enriched.last_updated.timestamp());
+                                                                let enriched_deal = EnrichedDeal {
+                                                                    deal_id,
+                                                                    order_id: None,
+                                                                    position_id: enriched.position_id.to_string(),
+                                                                    symbol: enriched.symbol.clone(),
+                                                                    symbol_id: None,
+                                                                    volume: enriched.volume_lots * 10000.0, // convert back to units
+                                                                    volume_in_lots: Some(enriched.volume_lots),
+                                                                    trade_side: if enriched.trade_side == "BUY" { 1 } else { 2 },
+                                                                    closing_trade_side: None,
+                                                                    price: enriched.current_price,
+                                                                    price_difference: None,
+                                                                    pips_profit: Some(enriched.pips_profit),
+                                                                    execution_time: enriched.last_updated,
+                                                                    deal_type: "CLOSE".to_string(),
+                                                                    profit: Some(enriched.unrealized_pnl),
+                                                                    gross_profit: None,
+                                                                    net_profit: None,
+                                                                    swap: Some(enriched.swap),
+                                                                    commission: Some(enriched.commission),
+                                                                    pnl_conversion_fee: None,
+                                                                    balance_after_trade: None,
+                                                                    balance_version: None,
+                                                                    quote_to_deposit_conversion_rate: None,
+                                                                    raw_data: None,
+                                                                    label: Some(enriched.label.clone()),
+                                                                    comment: Some(enriched.comment.clone()),
+                                                                    deal_status: None,
+                                                                    open_time: Some(enriched.open_time),
+                                                                    close_time: Some(enriched.last_updated),
+                                                                    duration_minutes: Some(enriched.duration_minutes),
+                                                                    zone_id: enriched.zone_id.clone(),
+                                                                    zone_type: enriched.zone_type.clone(),
+                                                                    zone_strength: enriched.zone_strength,
+                                                                    zone_high: enriched.zone_high,
+                                                                    zone_low: enriched.zone_low,
+                                                                    touch_count: enriched.touch_count,
+                                                                    timeframe: enriched.timeframe.clone(),
+                                                                    distance_when_placed: enriched.distance_when_placed,
+                                                                    original_entry_price: enriched.original_entry_price,
+                                                                    stop_loss: enriched.stop_loss,
+                                                                    take_profit: enriched.take_profit,
+                                                                    slippage_pips: enriched.slippage_pips,
+                                                                };
+                                                                match db.write_enriched_deal(&enriched_deal).await {
+                                                                    Ok(_) => info!("[Enrichment] Successfully saved closed trade to InfluxDB: deal_id={}", enriched_deal.deal_id),
+                                                                    Err(e) => error!("[Enrichment] Failed to save closed trade to InfluxDB: deal_id={}, error={}", enriched_deal.deal_id, e),
+                                                                }
+                                                            }
                                                         }
                                                         Err(e) => {
                                                             info!("[Enrichment] Could not deserialize trade to EnrichedActiveTrade for closed trade: {}", e);

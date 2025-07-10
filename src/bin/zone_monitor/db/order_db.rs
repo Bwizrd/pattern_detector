@@ -15,15 +15,36 @@ use tracing::{debug, error, info, warn};
 pub struct EnrichedDeal {
     // Basic deal info from broker
     pub deal_id: String,
+    pub order_id: Option<String>,
     pub position_id: String,
     pub symbol: String,
+    pub symbol_id: Option<i32>,
     pub volume: f64,
+    pub volume_in_lots: Option<f64>,
     pub trade_side: i32,
+    pub closing_trade_side: Option<i32>,
     pub price: f64,
-    pub execution_time: DateTime<Utc>,
+    pub price_difference: Option<f64>,
+    pub pips_profit: Option<f64>,
+    pub execution_time: chrono::DateTime<chrono::Utc>,
     pub deal_type: String, // "OPEN" or "CLOSE"
     pub profit: Option<f64>,
-
+    pub gross_profit: Option<f64>,
+    pub net_profit: Option<f64>,
+    pub swap: Option<f64>,
+    pub commission: Option<f64>,
+    pub pnl_conversion_fee: Option<f64>,
+    pub balance_after_trade: Option<f64>,
+    pub balance_version: Option<i64>,
+    pub quote_to_deposit_conversion_rate: Option<f64>,
+    pub raw_data: Option<serde_json::Value>,
+    pub label: Option<String>,
+    pub comment: Option<String>,
+    pub deal_status: Option<i32>,
+    // Timing
+    pub open_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub close_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub duration_minutes: Option<i64>,
     // Enriched data from pending orders (if available)
     pub zone_id: Option<String>,
     pub zone_type: Option<String>, // "supply_zone" or "demand_zone"
@@ -58,7 +79,7 @@ impl fmt::Display for OrderDbError {
 
 impl Error for OrderDbError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OrderDatabase {
     client: Client,
     host: String,

@@ -156,7 +156,7 @@ impl MonitorState {
             proximity_logger: Arc::new(RwLock::new(ProximityLogger::new())),
             pending_order_manager: Arc::new(RwLock::new(PendingOrderManager::new())),
             strategy_manager: Arc::new(StrategyManager::new()),
-            active_order_manager: Arc::new(ActiveOrderManager::new()),
+            active_order_manager: Arc::new(ActiveOrderManager::new(Some(Arc::new(order_database.clone())))),
             zone_interactions: Arc::new(RwLock::new(zone_interactions)),
             interaction_config,
             cache_file_path,

@@ -40,7 +40,7 @@ pub struct PendingOrder {
 }
 
 // New deal structure from broker API
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrokerDeal {
     pub deal_id: u64,
@@ -924,13 +924,61 @@ impl PendingOrderManager {
         Ok(broker_deals?)
     }
 
+    /// Fetch deals from broker API for a specific date
+    pub async fn fetch_broker_deals_for_date(
+        &self,
+        date: chrono::NaiveDate,
+    ) -> Result<Vec<BrokerDeal>, Box<dyn std::error::Error + Send + Sync>> {
+        let date_str = date.format("%Y-%m-%d").to_string();
+
+        let api_url = format!(
+            "{}/deals/{}",
+            self.ctrader_api_url, date_str
+        );
+        let response = self.http_client.get(&api_url).send().await?;
+
+        let response_json: serde_json::Value = response.json().await?;
+        let deals = response_json
+            .get("closedTrades")
+            .and_then(|v| v.as_array())
+            .ok_or("No closedTrades array found")?;
+
+        let broker_deals: Result<Vec<BrokerDeal>, _> = deals
+            .iter()
+            .map(|deal| serde_json::from_value(deal.clone()))
+            .collect();
+
+        Ok(broker_deals?)
+    }
+
     /// Convert broker deal to enriched deal structure
     pub async fn convert_broker_deal_to_enriched(
         &self,
         deal: &BrokerDeal,
     ) -> Result<EnrichedDeal, Box<dyn std::error::Error + Send + Sync>> {
+        use chrono::{DateTime, Utc, NaiveDateTime};
+        use serde_json::Value;
+
         let deal_id = deal.deal_id.to_string();
+        let order_id = deal.order_id.map(|id| id.to_string());
         let position_id = deal.position_id.to_string();
+        let symbol_id = Some(deal.symbol_id);
+        let volume_in_lots = Some(deal.volume / 10000.0);
+        let closing_trade_side = Some(deal.closing_trade_side);
+        let price_difference = Some(deal.price_difference);
+        let pips_profit = Some(deal.pips_profit);
+        let gross_profit = Some(deal.gross_profit);
+        let net_profit = Some(deal.net_profit);
+        let swap = Some(deal.swap);
+        let commission = Some(deal.commission);
+        let pnl_conversion_fee = Some(deal.pnl_conversion_fee);
+        let balance_after_trade = Some(deal.balance_after_trade);
+        let balance_version = Some(deal.balance_version);
+        let quote_to_deposit_conversion_rate = Some(deal.quote_to_deposit_conversion_rate);
+        let deal_status = Some(deal.deal_status);
+        let label = None;
+        let comment = None;
+        let raw_data = None; // Will be filled if present in /deals/{date}
 
         // Get symbol name from symbol_id
         let symbol = self
@@ -940,8 +988,48 @@ impl PendingOrderManager {
             .map(|(symbol, _)| symbol.clone())
             .unwrap_or_else(|| format!("UNKNOWN_{}", deal.symbol_id));
 
-        let execution_time =
-            DateTime::from_timestamp(deal.close_time / 1000, 0).unwrap_or_else(|| Utc::now());
+        // --- Fetch order-details for open/close time and more ---
+        let (open_time, close_time, duration_minutes) = if let Some(ref oid) = order_id {
+            let account_id = std::env::var("CTID_TRADER_ACCOUNT_ID").unwrap_or_else(|_| "37972727".to_string());
+            let api_url = std::env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+            let url = format!("{}/order-details/{}/{}", api_url, account_id, oid);
+            let resp = self.http_client.get(&url).send().await;
+            if let Ok(resp) = resp {
+                if let Ok(resp_json) = resp.json::<Value>().await {
+                    let trade_data = resp_json.get("order").and_then(|o| o.get("tradeData"));
+                    let open_ts = trade_data.and_then(|td| td.get("openTimestamp")).and_then(|v| v.as_i64());
+                    let close_ts = trade_data.and_then(|td| td.get("closeTimestamp")).and_then(|v| v.as_i64());
+                    let open_time = open_ts.and_then(|ts| NaiveDateTime::from_timestamp_millis(ts)).map(|dt| DateTime::<Utc>::from_utc(dt, Utc));
+                    let close_time = close_ts.and_then(|ts| NaiveDateTime::from_timestamp_millis(ts)).map(|dt| DateTime::<Utc>::from_utc(dt, Utc));
+                    let duration_minutes = match (open_ts, close_ts) {
+                        (Some(open), Some(close)) => Some(((close - open) as f64 / 60000.0).round() as i64),
+                        _ => None,
+                    };
+                    (open_time, close_time, duration_minutes)
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            }
+        } else {
+            (None, None, None)
+        };
+
+        // Use deal.close_time as fallback for close_time
+        let close_time = close_time.or_else(|| NaiveDateTime::from_timestamp_millis(deal.close_time).map(|dt| DateTime::<Utc>::from_utc(dt, Utc)));
+        // Use deal.open_time as fallback for open_time
+        let open_time = open_time.or_else(|| NaiveDateTime::from_timestamp_millis(deal.open_time).map(|dt| DateTime::<Utc>::from_utc(dt, Utc)));
+        // If duration_minutes is still None, calculate from open/close
+        let duration_minutes = duration_minutes.or_else(|| {
+            match (open_time, close_time) {
+                (Some(open), Some(close)) => Some(((close.timestamp_millis() - open.timestamp_millis()) as f64 / 60000.0).round() as i64),
+                _ => None,
+            }
+        });
+
+        // Use close_time as execution_time for InfluxDB timestamp
+        let execution_time = close_time.unwrap_or_else(|| Utc::now());
 
         let deal_type = match deal.deal_status {
             2 => "CLOSE".to_string(),
@@ -951,14 +1039,35 @@ impl PendingOrderManager {
 
         Ok(EnrichedDeal {
             deal_id,
+            order_id,
             position_id,
             symbol,
+            symbol_id,
             volume: deal.volume,
-            trade_side: deal.original_trade_side, // or closing_trade_side if you prefer
+            volume_in_lots,
+            trade_side: deal.original_trade_side,
+            closing_trade_side,
             price: deal.exit_price,
+            price_difference,
+            pips_profit,
             execution_time,
             deal_type,
             profit: Some(deal.net_profit),
+            gross_profit,
+            net_profit,
+            swap,
+            commission,
+            pnl_conversion_fee,
+            balance_after_trade,
+            balance_version,
+            quote_to_deposit_conversion_rate,
+            raw_data,
+            label,
+            comment,
+            deal_status,
+            open_time,
+            close_time,
+            duration_minutes,
             // These will be enriched if pending order is found
             zone_id: None,
             zone_type: None,
