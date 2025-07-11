@@ -417,45 +417,41 @@ impl OrderDatabase {
             format!("volume={}", deal.volume),
             format!("trade_side={}i", deal.trade_side),
             format!("price={}", deal.price),
+            format!("deal_id=\"{}\"", escape_field_string(&deal.deal_id)),
+            format!("order_id=\"{}\"", escape_field_string(&deal.order_id.clone().unwrap_or_default())),
+            format!("position_id=\"{}\"", escape_field_string(&deal.position_id)),
+            format!("symbol_id={}", deal.symbol_id.unwrap_or_default()),
+            format!("volume_in_lots={}", deal.volume_in_lots.unwrap_or_default()),
+            format!("closing_trade_side={}", deal.closing_trade_side.unwrap_or_default()),
+            format!("price_difference={}", deal.price_difference.unwrap_or_default()),
+            format!("pips_profit={}", deal.pips_profit.unwrap_or_default()),
+            format!("execution_time=\"{}\"", deal.execution_time.to_rfc3339()),
+            format!("profit={}", deal.profit.unwrap_or_default()),
+            format!("gross_profit={}", deal.gross_profit.unwrap_or_default()),
+            format!("net_profit={}", deal.net_profit.unwrap_or_default()),
+            format!("swap={}", deal.swap.unwrap_or_default()),
+            format!("commission={}", deal.commission.unwrap_or_default()),
+            format!("pnl_conversion_fee={}", deal.pnl_conversion_fee.unwrap_or_default()),
+            format!("balance_after_trade={}", deal.balance_after_trade.unwrap_or_default()),
+            format!("balance_version={}", deal.balance_version.unwrap_or_default()),
+            format!("quote_to_deposit_conversion_rate={}", deal.quote_to_deposit_conversion_rate.unwrap_or_default()),
+            format!("label=\"{}\"", escape_field_string(&deal.label.clone().unwrap_or_default())),
+            format!("comment=\"{}\"", escape_field_string(&deal.comment.clone().unwrap_or_default())),
+            format!("deal_status={}", deal.deal_status.unwrap_or_default()),
+            format!("open_time=\"{}\"", deal.open_time.map(|t| t.to_rfc3339()).unwrap_or_default()),
+            format!("close_time=\"{}\"", deal.close_time.map(|t| t.to_rfc3339()).unwrap_or_default()),
+            format!("duration_minutes={}", deal.duration_minutes.unwrap_or_default()),
+            format!("zone_strength={}", deal.zone_strength.unwrap_or_default()),
+            format!("zone_high={}", deal.zone_high.unwrap_or_default()),
+            format!("zone_low={}", deal.zone_low.unwrap_or_default()),
+            format!("touch_count={}i", deal.touch_count.unwrap_or_default()),
+            format!("distance_when_placed={}", deal.distance_when_placed.unwrap_or_default()),
+            format!("original_entry_price={}", deal.original_entry_price.unwrap_or_default()),
+            format!("stop_loss={}", deal.stop_loss.unwrap_or_default()),
+            format!("take_profit={}", deal.take_profit.unwrap_or_default()),
+            format!("slippage_pips={}", deal.slippage_pips.unwrap_or_default()),
+            format!("enriched={}", deal.zone_id.is_some()),
         ];
-
-        // Add profit if available
-        if let Some(profit) = deal.profit {
-            fields.push(format!("profit={}", profit));
-        }
-
-        // Add all enriched zone data as fields
-        if let Some(zone_strength) = deal.zone_strength {
-            fields.push(format!("zone_strength={}", zone_strength));
-        }
-        if let Some(zone_high) = deal.zone_high {
-            fields.push(format!("zone_high={}", zone_high));
-        }
-        if let Some(zone_low) = deal.zone_low {
-            fields.push(format!("zone_low={}", zone_low));
-        }
-        if let Some(touch_count) = deal.touch_count {
-            fields.push(format!("touch_count={}i", touch_count));
-        }
-        if let Some(distance_when_placed) = deal.distance_when_placed {
-            fields.push(format!("distance_when_placed={}", distance_when_placed));
-        }
-        if let Some(original_entry_price) = deal.original_entry_price {
-            fields.push(format!("original_entry_price={}", original_entry_price));
-        }
-        if let Some(stop_loss) = deal.stop_loss {
-            fields.push(format!("stop_loss={}", stop_loss));
-        }
-        if let Some(take_profit) = deal.take_profit {
-            fields.push(format!("take_profit={}", take_profit));
-        }
-        if let Some(slippage_pips) = deal.slippage_pips {
-            fields.push(format!("slippage_pips={}", slippage_pips));
-        }
-
-        // Add enrichment indicator
-        let is_enriched = deal.zone_id.is_some();
-        fields.push(format!("enriched={}", is_enriched));
 
         let line = format!(
             "enriched_deals,{} {} {}",
