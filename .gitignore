@@ -11,3 +11,6 @@ zone_debug.log
 zone_conversion_debug.log
 cache_zones_debug_dynamic
 zone_conversion_debug.log
+.DS_Store
+zone_interactions.json
+cache_zones_debug_dynamic.json

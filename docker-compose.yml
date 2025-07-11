@@ -36,7 +36,7 @@ volumes:
   redis_data:
 
 # To start:
-# docker-compose up -d
+# docker compose up -d
 
 # Access Redis Commander at: http://localhost:8082
 # Username: admin
@@ -53,3 +53,6 @@ volumes:
 
 # Verify it's empty
 # docker exec trading_redis redis-cli KEYS "*" 
+# docker exec trading_redis redis-cli --scan --pattern 'pending_order:*' | while read key; do docker exec trading_redis redis-cli DEL "$key"; done
+# docker exec trading_redis redis-cli --scan --pattern 'order_lookup:*' | while read key; do docker exec trading_redis redis-cli DEL "$key"; done
+# docker exec trading_redis redis-cli --scan --pattern 'position_lookup:*' | while read key; do docker exec trading_redis redis-cli DEL "$key"; done

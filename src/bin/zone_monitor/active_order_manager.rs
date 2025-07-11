@@ -606,6 +606,40 @@ impl ActiveOrderManager {
         for (key, trade) in &active_trades {
             let position_id = trade.get("position_id").and_then(|v| v.as_u64());
             if let Some(pid) = position_id {
+                // --- BEGIN: DETAILED CACHE LOGGING ---
+                if let Some(ref client) = self.redis_client {
+                    if let Ok(mut conn) = client.get_connection() {
+                        // Print active_trade entry
+                        let active_trade_key = format!("active_trade:{}", pid);
+                        let active_trade_val: Option<String> = conn.get(&active_trade_key).ok();
+                        info!("[CacheDump] active_trade:{} = {}", pid, active_trade_val.as_deref().unwrap_or("<missing>"));
+                        // Print position_lookup entry
+                        let position_lookup_key = format!("position_lookup:{}", pid);
+                        let position_lookup_val: Option<String> = conn.get(&position_lookup_key).ok();
+                        info!("[CacheDump] position_lookup:{} = {}", pid, position_lookup_val.as_deref().unwrap_or("<missing>"));
+                        // Print order_lookup entry (if order_id known)
+                        if let Some(order_id) = position_lookup_val {
+                            let order_lookup_key = format!("order_lookup:{}", order_id);
+                            let order_lookup_val: Option<String> = conn.get(&order_lookup_key).ok();
+                            info!("[CacheDump] order_lookup:{} = {}", order_id, order_lookup_val.as_deref().unwrap_or("<missing>"));
+                            // Print pending_order entry (if zone_id known)
+                            if let Some(zone_id) = order_lookup_val {
+                                let pending_order_key = format!("pending_order:{}", zone_id);
+                                let pending_order_val: Option<String> = conn.get(&pending_order_key).ok();
+                                info!("[CacheDump] pending_order:{} = {}", zone_id, pending_order_val.as_deref().unwrap_or("<missing>"));
+                            } else {
+                                info!("[CacheDump] No zone_id found in order_lookup:{}", order_id);
+                            }
+                        } else {
+                            info!("[CacheDump] No order_id found in position_lookup:{}", pid);
+                        }
+                    } else {
+                        info!("[CacheDump] Could not get Redis connection for cache dump");
+                    }
+                } else {
+                    info!("[CacheDump] No Redis client available for cache dump");
+                }
+                // --- END: DETAILED CACHE LOGGING ---
                 if !open_position_ids.contains(&pid) {
                     info!("[Polling] Trade key={} position_id={} is CLOSED at broker", key, pid);
                 } else {
@@ -687,6 +721,7 @@ impl ActiveOrderManager {
                                                             let mut real_deal_id: Option<String> = None;
                                                             let mut real_order_id: Option<String> = None;
                                                             let mut real_position_id: Option<String> = None;
+                                                            let mut real_symbol_id: Option<i32> = None;
                                                             let mut real_gross_profit: Option<f64> = None;
                                                             let mut real_net_profit: Option<f64> = None;
                                                             let mut real_pips_profit: Option<f64> = None;
@@ -710,13 +745,15 @@ impl ActiveOrderManager {
                                                                             if let Some(closed_deals) = closed_deals {
                                                                                 if let Some(matching_deal) = closed_deals.iter().find(|d| d.get("positionId").and_then(|v| v.as_u64()) == Some(enriched.position_id)) {
                                                                                     info!("[Enrichment] Found matching deal in /deals/<today> for position_id={}", enriched.position_id);
-                                                                                    // Extract and log dealId, orderId, positionId
+                                                                                    // Extract and log dealId, orderId, positionId, symbolId
                                                                                     real_deal_id = matching_deal.get("dealId").and_then(|v| v.as_i64()).map(|v| v.to_string());
                                                                                     if let Some(ref v) = real_deal_id { info!("[Enrichment] Using real broker dealId from /deals/<today>: {}", v); }
                                                                                     real_order_id = matching_deal.get("orderId").and_then(|v| v.as_i64()).map(|v| v.to_string());
                                                                                     if let Some(ref v) = real_order_id { info!("[Enrichment] Using real broker orderId from /deals/<today>: {}", v); }
                                                                                     real_position_id = matching_deal.get("positionId").and_then(|v| v.as_u64()).map(|v| v.to_string());
                                                                                     if let Some(ref v) = real_position_id { info!("[Enrichment] Using real broker positionId from /deals/<today>: {}", v); }
+                                                                                    real_symbol_id = matching_deal.get("symbolId").and_then(|v| v.as_i64()).map(|v| v as i32);
+                                                                                    if let Some(ref v) = real_symbol_id { info!("[Enrichment] Using symbol_id from /deals/<today>: {}", v); }
                                                                                     // Extract and log grossProfit
                                                                                     real_gross_profit = matching_deal.get("closePositionDetail").and_then(|d| d.get("grossProfit")).and_then(|v| v.as_f64());
                                                                                     if let Some(gross_profit) = real_gross_profit { info!("[Enrichment] Merging gross_profit from /deals/<today>: {}", gross_profit); }
@@ -766,6 +803,11 @@ impl ActiveOrderManager {
                                                                         real_order_id = order.get("orderId").and_then(|v| v.as_i64()).map(|v| v.to_string());
                                                                         if let Some(ref v) = real_order_id { info!("[Enrichment] Fallback orderId from /order-details: {}", v); }
                                                                     }
+                                                                    // fallback for symbol_id if not set from /deals/<today>
+                                                                    if real_symbol_id.is_none() {
+                                                                        real_symbol_id = trade_data.get("symbolId").and_then(|v| v.as_i64()).map(|v| v as i32);
+                                                                        if let Some(ref v) = real_symbol_id { info!("[Enrichment] Fallback symbol_id from /order-details: {}", v); }
+                                                                    }
                                                                 }
                                                             }
                                                             // --- END Fallback ---
@@ -786,7 +828,7 @@ impl ActiveOrderManager {
                                                                     order_id,
                                                                     position_id,
                                                                     symbol: enriched.symbol.clone(),
-                                                                    symbol_id: None,
+                                                                    symbol_id: real_symbol_id,
                                                                     volume: enriched.volume_lots * 10000.0, // convert back to units
                                                                     volume_in_lots: Some(enriched.volume_lots),
                                                                     trade_side: if enriched.trade_side == "BUY" { 1 } else { 2 },
