@@ -541,45 +541,78 @@ impl ActiveOrderManager {
         use serde_json::Value;
         use std::env;
 
+        info!("[Polling] Starting poll_active_trades_for_closes");
         // 1. Get all active trades from Redis (active_trade:*)
         let mut active_trades = Vec::new();
         if let Some(ref client) = self.redis_client {
             let mut conn = client.get_connection()?;
             if let Ok(keys) = conn.keys::<_, Vec<String>>("active_trade:*") {
-                tracing::debug!("[Polling] Found {} active trades", keys.len());
-                for key in keys {
-                    if let Ok(trade_json) = conn.get::<_, String>(&key) {
+                info!("[Polling] Found {} active trades in Redis", keys.len());
+                for key in &keys {
+                    if let Ok(trade_json) = conn.get::<_, String>(key) {
                         if let Ok(trade) = serde_json::from_str::<Value>(&trade_json) {
-                            active_trades.push((key, trade));
+                            let position_id = trade.get("position_id").and_then(|v| v.as_u64());
+                            info!("[Polling] Checking trade key={} position_id={:?}", key, position_id);
+                            active_trades.push((key.clone(), trade));
+                        } else {
+                            info!("[Polling] Could not parse trade JSON for key={}", key);
                         }
+                    } else {
+                        info!("[Polling] Could not get trade JSON for key={}", key);
                     }
                 }
+            } else {
+                info!("[Polling] Could not get active_trade:* keys from Redis");
             }
+        } else {
+            info!("[Polling] No Redis client available");
         }
 
         // 2. Fetch all open positions from broker
         let api_url = env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
         let client = reqwest::Client::new();
         let positions_url = format!("{}/positions", api_url);
+        info!("[Polling] Fetching open positions from broker: {}", positions_url);
         let mut open_position_ids = std::collections::HashSet::new();
         match client.get(&positions_url).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    if let Ok(resp_json) = resp.json::<Value>().await {
-                        if let Some(positions) = resp_json.get("positions").and_then(|v| v.as_array()) {
-                            for pos in positions {
-                                if let Some(pos_id) = pos.get("positionId").and_then(|v| v.as_u64()) {
-                                    open_position_ids.insert(pos_id);
+                    match resp.json::<serde_json::Value>().await {
+                        Ok(json) => {
+                            if let Some(positions) = json.get("positions").and_then(|v| v.as_array()) {
+                                for pos in positions {
+                                    if let Some(pid) = pos.get("positionId").and_then(|v| v.as_u64()) {
+                                        open_position_ids.insert(pid);
+                                    }
                                 }
+                                info!("[Polling] Broker reports {} open positions", open_position_ids.len());
+                            } else {
+                                info!("[Polling] No positions array in broker response");
                             }
+                        }
+                        Err(e) => {
+                            info!("[Polling] Could not parse broker positions JSON: {}", e);
                         }
                     }
                 } else {
-                    tracing::warn!("Positions endpoint returned error: {}", resp.status());
+                    info!("[Polling] Broker positions endpoint returned error: {}", resp.status());
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to call positions endpoint: {}", e);
+                info!("[Polling] Failed to call broker positions endpoint: {}", e);
+            }
+        }
+
+        for (key, trade) in &active_trades {
+            let position_id = trade.get("position_id").and_then(|v| v.as_u64());
+            if let Some(pid) = position_id {
+                if !open_position_ids.contains(&pid) {
+                    info!("[Polling] Trade key={} position_id={} is CLOSED at broker", key, pid);
+                } else {
+                    info!("[Polling] Trade key={} position_id={} is still OPEN at broker", key, pid);
+                }
+            } else {
+                info!("[Polling] Trade key={} has no position_id", key);
             }
         }
 
