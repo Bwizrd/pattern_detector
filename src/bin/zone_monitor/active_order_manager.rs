@@ -684,7 +684,19 @@ impl ActiveOrderManager {
                                                             // Optionally update last_updated, etc.
                                                             enriched.last_updated = chrono::Utc::now();
 
-                                                            // --- NEW: Fetch /deals/<today> and merge extra fields ---
+                                                            let mut real_deal_id: Option<String> = None;
+                                                            let mut real_order_id: Option<String> = None;
+                                                            let mut real_position_id: Option<String> = None;
+                                                            let mut real_gross_profit: Option<f64> = None;
+                                                            let mut real_net_profit: Option<f64> = None;
+                                                            let mut real_pips_profit: Option<f64> = None;
+                                                            let mut real_entry_price: Option<f64> = None;
+                                                            let mut real_exit_price: Option<f64> = None;
+                                                            let mut real_open_time: Option<chrono::DateTime<chrono::Utc>> = None;
+                                                            let mut real_close_time: Option<chrono::DateTime<chrono::Utc>> = None;
+                                                            let mut real_duration_minutes: Option<i64> = None;
+
+                                                            // --- Fetch /deals/<today> and merge extra fields ---
                                                             info!("[Enrichment] Fetching /deals/<today> for closed trade: position_id={}", enriched.position_id);
                                                             let today = chrono::Utc::now().date_naive();
                                                             let date_str = today.format("%Y-%m-%d").to_string();
@@ -698,14 +710,27 @@ impl ActiveOrderManager {
                                                                             if let Some(closed_deals) = closed_deals {
                                                                                 if let Some(matching_deal) = closed_deals.iter().find(|d| d.get("positionId").and_then(|v| v.as_u64()) == Some(enriched.position_id)) {
                                                                                     info!("[Enrichment] Found matching deal in /deals/<today> for position_id={}", enriched.position_id);
-                                                                                    // Merge gross_profit and net_profit if present
-                                                                                    if let Some(gross_profit) = matching_deal.get("grossProfit").and_then(|v| v.as_f64()) {
-                                                                                        info!("[Enrichment] Merging gross_profit from /deals/<today>: {}", gross_profit);
-                                                                                        enriched.max_profit_pips = Some(gross_profit); // Or use a more appropriate field
-                                                                                    }
-                                                                                    if let Some(net_profit) = matching_deal.get("netProfit").and_then(|v| v.as_f64()) {
-                                                                                        info!("[Enrichment] Merging net_profit from /deals/<today>: {}", net_profit);
-                                                                                        enriched.unrealized_pnl = net_profit;
+                                                                                    // Extract and log dealId, orderId, positionId
+                                                                                    real_deal_id = matching_deal.get("dealId").and_then(|v| v.as_i64()).map(|v| v.to_string());
+                                                                                    if let Some(ref v) = real_deal_id { info!("[Enrichment] Using real broker dealId from /deals/<today>: {}", v); }
+                                                                                    real_order_id = matching_deal.get("orderId").and_then(|v| v.as_i64()).map(|v| v.to_string());
+                                                                                    if let Some(ref v) = real_order_id { info!("[Enrichment] Using real broker orderId from /deals/<today>: {}", v); }
+                                                                                    real_position_id = matching_deal.get("positionId").and_then(|v| v.as_u64()).map(|v| v.to_string());
+                                                                                    if let Some(ref v) = real_position_id { info!("[Enrichment] Using real broker positionId from /deals/<today>: {}", v); }
+                                                                                    // Extract and log grossProfit
+                                                                                    real_gross_profit = matching_deal.get("closePositionDetail").and_then(|d| d.get("grossProfit")).and_then(|v| v.as_f64());
+                                                                                    if let Some(gross_profit) = real_gross_profit { info!("[Enrichment] Merging gross_profit from /deals/<today>: {}", gross_profit); }
+                                                                                    // Extract and log netProfit (profit)
+                                                                                    real_net_profit = matching_deal.get("profit").and_then(|v| v.as_f64());
+                                                                                    if let Some(net_profit) = real_net_profit { info!("[Enrichment] Merging net_profit from /deals/<today>: {}", net_profit); enriched.unrealized_pnl = net_profit; }
+                                                                                    // Extract entry/exit price
+                                                                                    real_entry_price = matching_deal.get("closePositionDetail").and_then(|d| d.get("entryPrice")).and_then(|v| v.as_f64());
+                                                                                    real_exit_price = matching_deal.get("price").and_then(|v| v.as_f64());
+                                                                                    if let (Some(entry), Some(exit)) = (real_entry_price, real_exit_price) {
+                                                                                        let pip_value = self.get_pip_value(&enriched.symbol);
+                                                                                        real_pips_profit = Some((exit - entry) / pip_value);
+                                                                                        info!("[Enrichment] Calculated pips_profit from /deals/<today>: {}", real_pips_profit.unwrap());
+                                                                                        enriched.pips_profit = real_pips_profit.unwrap();
                                                                                     }
                                                                                 } else {
                                                                                     info!("[Enrichment] No matching deal in /deals/<today> for position_id={}", enriched.position_id);
@@ -720,7 +745,30 @@ impl ActiveOrderManager {
                                                                     info!("[Enrichment] Failed to call /deals/<today>: {}", e);
                                                                 }
                                                             }
-                                                            // --- END NEW ---
+                                                            // --- END /deals/<today> ---
+
+                                                            // --- Fallback: Extract open/close time and duration from /order-details ---
+                                                            if let Some(order) = resp_json.get("order") {
+                                                                if let Some(trade_data) = order.get("tradeData") {
+                                                                    // open_time
+                                                                    real_open_time = trade_data.get("openTimestamp").and_then(|v| v.as_i64()).and_then(|ts| chrono::NaiveDateTime::from_timestamp_millis(ts)).map(|dt| chrono::DateTime::<chrono::Utc>::from_utc(dt, chrono::Utc));
+                                                                    if let Some(ref v) = real_open_time { info!("[Enrichment] Using open_time from /order-details: {}", v); }
+                                                                    // close_time
+                                                                    real_close_time = trade_data.get("closeTimestamp").and_then(|v| v.as_i64()).and_then(|ts| chrono::NaiveDateTime::from_timestamp_millis(ts)).map(|dt| chrono::DateTime::<chrono::Utc>::from_utc(dt, chrono::Utc));
+                                                                    if let Some(ref v) = real_close_time { info!("[Enrichment] Using close_time from /order-details: {}", v); }
+                                                                    // duration_minutes
+                                                                    if let (Some(open), Some(close)) = (trade_data.get("openTimestamp").and_then(|v| v.as_i64()), trade_data.get("closeTimestamp").and_then(|v| v.as_i64())) {
+                                                                        real_duration_minutes = Some(((close - open) as f64 / 60000.0).round() as i64);
+                                                                        info!("[Enrichment] Calculated duration_minutes from /order-details: {}", real_duration_minutes.unwrap());
+                                                                    }
+                                                                    // fallback for order_id if not set from /deals/<today>
+                                                                    if real_order_id.is_none() {
+                                                                        real_order_id = order.get("orderId").and_then(|v| v.as_i64()).map(|v| v.to_string());
+                                                                        if let Some(ref v) = real_order_id { info!("[Enrichment] Fallback orderId from /order-details: {}", v); }
+                                                                    }
+                                                                }
+                                                            }
+                                                            // --- END Fallback ---
 
                                                             // Log the full enriched closed trade object
                                                             if let Ok(json) = serde_json::to_string_pretty(&enriched) {
@@ -730,25 +778,27 @@ impl ActiveOrderManager {
                                                             }
                                                             // Save to InfluxDB here
                                                             if let Some(ref db) = self.order_database {
-                                                                let deal_id = format!("{}-{}", enriched.position_id, enriched.last_updated.timestamp());
+                                                                let deal_id = real_deal_id.clone().unwrap_or_else(|| format!("{}-{}", enriched.position_id, enriched.last_updated.timestamp()));
+                                                                let order_id = real_order_id.clone();
+                                                                let position_id = real_position_id.clone().unwrap_or_else(|| enriched.position_id.to_string());
                                                                 let enriched_deal = EnrichedDeal {
                                                                     deal_id,
-                                                                    order_id: None,
-                                                                    position_id: enriched.position_id.to_string(),
+                                                                    order_id,
+                                                                    position_id,
                                                                     symbol: enriched.symbol.clone(),
                                                                     symbol_id: None,
                                                                     volume: enriched.volume_lots * 10000.0, // convert back to units
                                                                     volume_in_lots: Some(enriched.volume_lots),
                                                                     trade_side: if enriched.trade_side == "BUY" { 1 } else { 2 },
                                                                     closing_trade_side: None,
-                                                                    price: enriched.current_price,
+                                                                    price: real_exit_price.unwrap_or(enriched.current_price),
                                                                     price_difference: None,
-                                                                    pips_profit: Some(enriched.pips_profit),
-                                                                    execution_time: enriched.last_updated,
+                                                                    pips_profit: real_pips_profit,
+                                                                    execution_time: real_close_time.unwrap_or(enriched.last_updated),
                                                                     deal_type: "CLOSE".to_string(),
-                                                                    profit: Some(enriched.unrealized_pnl),
-                                                                    gross_profit: None,
-                                                                    net_profit: None,
+                                                                    profit: real_net_profit.or(Some(enriched.unrealized_pnl)),
+                                                                    gross_profit: real_gross_profit,
+                                                                    net_profit: real_net_profit,
                                                                     swap: Some(enriched.swap),
                                                                     commission: Some(enriched.commission),
                                                                     pnl_conversion_fee: None,
@@ -759,9 +809,9 @@ impl ActiveOrderManager {
                                                                     label: Some(enriched.label.clone()),
                                                                     comment: Some(enriched.comment.clone()),
                                                                     deal_status: None,
-                                                                    open_time: Some(enriched.open_time),
-                                                                    close_time: Some(enriched.last_updated),
-                                                                    duration_minutes: Some(enriched.duration_minutes),
+                                                                    open_time: real_open_time.or(Some(enriched.open_time)),
+                                                                    close_time: real_close_time.or(Some(enriched.last_updated)),
+                                                                    duration_minutes: real_duration_minutes.or(Some(enriched.duration_minutes)),
                                                                     zone_id: enriched.zone_id.clone(),
                                                                     zone_type: enriched.zone_type.clone(),
                                                                     zone_strength: enriched.zone_strength,
@@ -770,11 +820,14 @@ impl ActiveOrderManager {
                                                                     touch_count: enriched.touch_count,
                                                                     timeframe: enriched.timeframe.clone(),
                                                                     distance_when_placed: enriched.distance_when_placed,
-                                                                    original_entry_price: enriched.original_entry_price,
+                                                                    original_entry_price: real_entry_price.or(enriched.original_entry_price),
                                                                     stop_loss: enriched.stop_loss,
                                                                     take_profit: enriched.take_profit,
                                                                     slippage_pips: enriched.slippage_pips,
                                                                 };
+                                                                if let Ok(json) = serde_json::to_string_pretty(&enriched_deal) {
+                                                                    info!("[Enrichment] Final EnrichedDeal to InfluxDB: {}", json);
+                                                                }
                                                                 match db.write_enriched_deal(&enriched_deal).await {
                                                                     Ok(_) => info!("[Enrichment] Successfully saved closed trade to InfluxDB: deal_id={}", enriched_deal.deal_id),
                                                                     Err(e) => error!("[Enrichment] Failed to save closed trade to InfluxDB: deal_id={}, error={}", enriched_deal.deal_id, e),
