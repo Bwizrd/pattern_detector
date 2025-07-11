@@ -683,6 +683,45 @@ impl ActiveOrderManager {
                                                             enriched.unrealized_pnl = net_profit;
                                                             // Optionally update last_updated, etc.
                                                             enriched.last_updated = chrono::Utc::now();
+
+                                                            // --- NEW: Fetch /deals/<today> and merge extra fields ---
+                                                            info!("[Enrichment] Fetching /deals/<today> for closed trade: position_id={}", enriched.position_id);
+                                                            let today = chrono::Utc::now().date_naive();
+                                                            let date_str = today.format("%Y-%m-%d").to_string();
+                                                            let deals_url = format!("{}/deals/{}", api_url, date_str);
+                                                            match client.get(&deals_url).send().await {
+                                                                Ok(deals_resp) => {
+                                                                    if deals_resp.status().is_success() {
+                                                                        if let Ok(deals_json) = deals_resp.json::<serde_json::Value>().await {
+                                                                            let closed_deals = deals_json.get("closedTrades").and_then(|v| v.as_array());
+                                                                            info!("[Enrichment] /deals/<today> returned {} deals", closed_deals.map(|d| d.len()).unwrap_or(0));
+                                                                            if let Some(closed_deals) = closed_deals {
+                                                                                if let Some(matching_deal) = closed_deals.iter().find(|d| d.get("positionId").and_then(|v| v.as_u64()) == Some(enriched.position_id)) {
+                                                                                    info!("[Enrichment] Found matching deal in /deals/<today> for position_id={}", enriched.position_id);
+                                                                                    // Merge gross_profit and net_profit if present
+                                                                                    if let Some(gross_profit) = matching_deal.get("grossProfit").and_then(|v| v.as_f64()) {
+                                                                                        info!("[Enrichment] Merging gross_profit from /deals/<today>: {}", gross_profit);
+                                                                                        enriched.max_profit_pips = Some(gross_profit); // Or use a more appropriate field
+                                                                                    }
+                                                                                    if let Some(net_profit) = matching_deal.get("netProfit").and_then(|v| v.as_f64()) {
+                                                                                        info!("[Enrichment] Merging net_profit from /deals/<today>: {}", net_profit);
+                                                                                        enriched.unrealized_pnl = net_profit;
+                                                                                    }
+                                                                                } else {
+                                                                                    info!("[Enrichment] No matching deal in /deals/<today> for position_id={}", enriched.position_id);
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    } else {
+                                                                        info!("[Enrichment] /deals/<today> endpoint returned error: {}", deals_resp.status());
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    info!("[Enrichment] Failed to call /deals/<today>: {}", e);
+                                                                }
+                                                            }
+                                                            // --- END NEW ---
+
                                                             // Log the full enriched closed trade object
                                                             if let Ok(json) = serde_json::to_string_pretty(&enriched) {
                                                                 info!("[Enrichment] Would save CLOSED trade to InfluxDB: {}", json);
