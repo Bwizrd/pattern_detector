@@ -514,7 +514,7 @@
                     trade.zone_id.substring(0, 12) + '...' : (trade.zone_id || '');
 
                 return `
-                    <tr>
+                    <tr data-direction="${trade.side === 1 ? 'buy' : 'sell'}">
                         <td title="${trade.zone_id}">${truncatedZoneId}</td>
                         <td>${trade.symbol}</td>
                         <td>${trade.order_type || ''}</td>
@@ -659,6 +659,158 @@
 
         // Load initial data
         loadTrades();
+    </script>
+
+    <script>
+    (function() {
+        // Helper: get pip value for a symbol
+        function getPipValue(symbol) {
+            if (symbol.includes('JPY')) return 0.01;
+            if (symbol === 'NAS100') return 1.0;
+            if (symbol === 'US500') return 0.1;
+            return 0.0001;
+        }
+
+        // Add columns for real-time P&L and SL/TP distance if not present
+        function ensureRealtimeColumns() {
+            const ths = document.querySelectorAll('.trades-table th');
+            let hasRealtime = false;
+            ths.forEach(th => {
+                if (th.textContent.includes('Real-Time')) hasRealtime = true;
+            });
+            if (!hasRealtime) {
+                const headerRow = document.querySelector('.trades-table thead tr');
+                headerRow.insertAdjacentHTML('beforeend', '<th>Current Price</th><th>Real-Time P&L</th><th>Dist to SL</th><th>Dist to TP</th>');
+            }
+        }
+
+        // Update the table with real-time values
+        function updateRealtimeTable() {
+            ensureRealtimeColumns();
+            const rows = document.querySelectorAll('#tradesTableBody tr');
+            let totalRealtimePnl = 0;
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 13) return; // skip non-trade rows
+                const symbol = cells[1].textContent.trim();
+                const timeframe = cells[7].textContent.trim();
+                const entry = parseFloat(cells[4].textContent);
+                const sl = parseFloat(cells[5].innerHTML.match(/SL: ([0-9.\-]+)/)?.[1] || NaN);
+                const tp = parseFloat(cells[5].innerHTML.match(/TP: ([0-9.\-]+)/)?.[1] || NaN);
+                const direction = row.getAttribute('data-direction');
+                let realPnl = '', distSl = '', distTp = '';
+                let pips = 0;
+                if (typeof price === 'number' && !isNaN(entry)) {
+                    if (direction === 'buy') {
+                        pips = ((priceObj.ask ?? priceObj.mid) - entry) / pipValue;
+                    } else if (direction === 'sell') {
+                        pips = (entry - (priceObj.bid ?? priceObj.mid)) / pipValue;
+                    }
+                    realPnl = `${pips.toFixed(1)} pips`;
+                    if (!isNaN(sl)) distSl = ((entry - sl) / pipValue).toFixed(1) + ' pips';
+                    if (!isNaN(tp)) distTp = ((tp - entry) / pipValue).toFixed(1) + ' pips';
+                    totalRealtimePnl += pips;
+                }
+                // Add or update cells
+                if (cells.length < 17) {
+                    row.insertAdjacentHTML('beforeend', `<td class=\"realtime-price\">${typeof price === 'number' ? price.toFixed(5) : ''}</td><td class=\"realtime-pnl\">${realPnl}</td><td class=\"realtime-sl\">${distSl}</td><td class=\"realtime-tp\">${distTp}</td>`);
+                } else {
+                    cells[13].innerHTML = typeof price === 'number' ? price.toFixed(5) : '';
+                    cells[14].innerHTML = realPnl;
+                    cells[15].innerHTML = distSl;
+                    cells[16].innerHTML = distTp;
+                }
+            });
+            // Update summary card with real-time total P&L
+            const pnlElement = document.getElementById('totalPnl');
+            pnlElement.textContent = totalRealtimePnl.toFixed(1) + ' pips';
+            pnlElement.className = 'value ' + (totalRealtimePnl >= 0 ? 'positive' : 'negative');
+        }
+
+        // Map: symbol|timeframe -> latest price
+        const latestPrices = {};
+        // Track which subscriptions have been sent
+        const sentSubscriptions = new Set();
+        let ws;
+        let wsReady = false;
+        let pendingSubscriptions = [];
+
+        // Subscribe to all unique (symbol, timeframe) pairs in the table
+        function subscribeAllSymbols() {
+            if (!wsReady) return; // Only subscribe if websocket is open
+            const rows = document.querySelectorAll('#tradesTableBody tr');
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 8) return;
+                const symbol = cells[1].textContent.trim();
+                const timeframe = cells[7].textContent.trim();
+                if (!symbol || !timeframe) return;
+                const key = symbol + '|' + timeframe;
+                if (sentSubscriptions.has(key)) return;
+                // Map symbol to symbolId (from your CURRENCIES_MAP)
+                const symbolIdMap = {
+                    'EURUSD': 185, 'GBPUSD': 199, 'USDJPY': 226, 'USDCHF': 222, 'AUDUSD': 158, 'USDCAD': 221, 'NZDUSD': 211, 'EURGBP': 175, 'EURJPY': 177, 'EURCHF': 173, 'EURAUD': 171, 'EURCAD': 172, 'EURNZD': 180, 'GBPJPY': 192, 'GBPCHF': 191, 'GBPAUD': 189, 'GBPCAD': 190, 'GBPNZD': 195, 'AUDJPY': 155, 'AUDNZD': 156, 'AUDCAD': 153, 'NZDJPY': 210, 'CADJPY': 162, 'CHFJPY': 163, 'NAS100': 205, 'US500': 220
+                };
+                const symbolId = symbolIdMap[symbol];
+                if (!symbolId) return;
+                // Map timeframe to cTrader format
+                const tfMap = { '1m': '1m', '2m': '2m', '3m': '3m', '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '12h': '12h', '1d': '1d', '1w': '1w', '1mo': '1mo', 'manual': '1h', 'market': '1h' };
+                const tf = tfMap[timeframe] || '1h';
+                const subMsg = { type: 'SUBSCRIBE', symbolId, timeframe: tf };
+                if (wsReady) {
+                    ws.send(JSON.stringify(subMsg));
+                } else {
+                    pendingSubscriptions.push(subMsg);
+                }
+                sentSubscriptions.add(key);
+            });
+        }
+
+        // Connect to the price websocket (Node proxy)
+        function connectWebSocket() {
+            ws = new WebSocket('ws://localhost:8081');
+            wsReady = false;
+            ws.onopen = () => {
+                console.log('[WS] Connected to cTrader Node proxy');
+                wsReady = true;
+                // Send any pending subscriptions
+                pendingSubscriptions.forEach(msg => ws.send(JSON.stringify(msg)));
+                pendingSubscriptions = [];
+                subscribeAllSymbols();
+            };
+            ws.onclose = () => { console.log('[WS] Disconnected, retrying...'); wsReady = false; setTimeout(connectWebSocket, 3000); };
+            ws.onerror = err => { console.error('[WS] Error:', err); ws.close(); };
+            ws.onmessage = e => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === 'BAR_UPDATE' && msg.data) {
+                        const symbol = msg.data.symbol;
+                        const timeframe = msg.data.timeframe;
+                        const priceKey = symbol + '|' + timeframe;
+                        latestPrices[priceKey] = {
+                            mid: msg.data.close,
+                            bid: msg.data.bid,
+                            ask: msg.data.ask
+                        };
+                        updateRealtimeTable();
+                    }
+                } catch (err) {
+                    // Ignore
+                }
+            };
+        }
+
+        // Re-run update after each table render
+        const origRenderTrades = window.renderTrades;
+        window.renderTrades = function() {
+            origRenderTrades.apply(this, arguments);
+            subscribeAllSymbols();
+            updateRealtimeTable();
+        };
+
+        // Start websocket
+        connectWebSocket();
+    })();
     </script>
 </body>
 </html>

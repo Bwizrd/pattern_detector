@@ -988,55 +988,36 @@ impl PendingOrderManager {
             .map(|(symbol, _)| symbol.clone())
             .unwrap_or_else(|| format!("UNKNOWN_{}", deal.symbol_id));
 
-        // --- Fetch order-details for open/close time and more ---
-        let (open_time, close_time, duration_minutes) = if let Some(ref oid) = order_id {
-            let account_id = std::env::var("CTID_TRADER_ACCOUNT_ID").unwrap_or_else(|_| "37972727".to_string());
-            let api_url = std::env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
-            let url = format!("{}/order-details/{}/{}", api_url, account_id, oid);
-            let resp = self.http_client.get(&url).send().await;
-            if let Ok(resp) = resp {
-                if let Ok(resp_json) = resp.json::<Value>().await {
-                    let trade_data = resp_json.get("order").and_then(|o| o.get("tradeData"));
-                    let open_ts = trade_data.and_then(|td| td.get("openTimestamp")).and_then(|v| v.as_i64());
-                    let close_ts = trade_data.and_then(|td| td.get("closeTimestamp")).and_then(|v| v.as_i64());
-                    let open_time = open_ts.and_then(|ts| NaiveDateTime::from_timestamp_millis(ts)).map(|dt| DateTime::<Utc>::from_utc(dt, Utc));
-                    let close_time = close_ts.and_then(|ts| NaiveDateTime::from_timestamp_millis(ts)).map(|dt| DateTime::<Utc>::from_utc(dt, Utc));
-                    let duration_minutes = match (open_ts, close_ts) {
-                        (Some(open), Some(close)) => Some(((close - open) as f64 / 60000.0).round() as i64),
-                        _ => None,
-                    };
-                    (open_time, close_time, duration_minutes)
-                } else {
-                    (None, None, None)
+        // --- NEW: Find both deals for this positionId in closedTrades and extract open/close times ---
+        let today = chrono::Utc::now().date_naive();
+        let date_str = today.format("%Y-%m-%d").to_string();
+        let api_url = format!("{}/deals/{}", self.ctrader_api_url, date_str);
+        let response = self.http_client.get(&api_url).send().await?;
+        let response_json: serde_json::Value = response.json().await?;
+        let closed_trades = response_json.get("closedTrades").and_then(|v| v.as_array()).ok_or("No closedTrades array found")?;
+        let mut timestamps = vec![];
+        for t in closed_trades {
+            if t.get("positionId").and_then(|v| v.as_u64()) == Some(deal.position_id) {
+                if let Some(ts) = t.get("executionTimestamp").and_then(|v| v.as_i64()) {
+                    timestamps.push(ts);
                 }
-            } else {
-                (None, None, None)
             }
-        } else {
-            (None, None, None)
+        }
+        tracing::info!("[Enrichment] All executionTimestamps for positionId {}: {:?}", deal.position_id, timestamps);
+        let open_ts = timestamps.iter().min().cloned();
+        let close_ts = timestamps.iter().max().cloned();
+        let open_time = open_ts.and_then(|ts| NaiveDateTime::from_timestamp_millis(ts)).map(|dt| DateTime::<Utc>::from_utc(dt, Utc));
+        let close_time = close_ts.and_then(|ts| NaiveDateTime::from_timestamp_millis(ts)).map(|dt| DateTime::<Utc>::from_utc(dt, Utc));
+        let duration_minutes = match (open_ts, close_ts) {
+            (Some(open), Some(close)) => Some(((close - open) as f64 / 60000.0).round() as i64),
+            _ => None,
         };
-
-        // Use deal.close_time as fallback for close_time
-        let close_time = close_time.or_else(|| NaiveDateTime::from_timestamp_millis(deal.close_time).map(|dt| DateTime::<Utc>::from_utc(dt, Utc)));
-        // Use deal.open_time as fallback for open_time
-        let open_time = open_time.or_else(|| NaiveDateTime::from_timestamp_millis(deal.open_time).map(|dt| DateTime::<Utc>::from_utc(dt, Utc)));
-        // If duration_minutes is still None, calculate from open/close
-        let duration_minutes = duration_minutes.or_else(|| {
-            match (open_time, close_time) {
-                (Some(open), Some(close)) => Some(((close.timestamp_millis() - open.timestamp_millis()) as f64 / 60000.0).round() as i64),
-                _ => None,
-            }
-        });
-
-        // Use close_time as execution_time for InfluxDB timestamp
         let execution_time = close_time.unwrap_or_else(|| Utc::now());
-
         let deal_type = match deal.deal_status {
             2 => "CLOSE".to_string(),
             1 => "OPEN".to_string(),
             _ => "UNKNOWN".to_string(),
         };
-
         Ok(EnrichedDeal {
             deal_id,
             order_id,
