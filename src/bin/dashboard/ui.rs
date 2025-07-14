@@ -680,6 +680,9 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             app.zones.iter().collect()
         };
 
+        // Use the same filtered zones as the selection/copy logic
+        let filtered_zones = app.get_filtered_zones();
+
         let rows: Vec<Row> = filtered_zones
             .iter()
             .enumerate()
@@ -842,9 +845,8 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             .collect();
 
         // Add selection indicator if there are zones
-        if !rows.is_empty() && app.zones.len() > 0 {
-            let indicator_rows: Vec<Row> = app
-                .zones
+        if !rows.is_empty() && !filtered_zones.is_empty() {
+            let indicator_rows: Vec<Row> = filtered_zones
                 .iter()
                 .enumerate()
                 .take(max_rows)

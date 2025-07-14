@@ -619,11 +619,57 @@ impl App {
         filters.get(timeframe).copied().unwrap_or(true)
     }
 
+    /// Returns the filtered list of zones as used by the dashboard UI (trading plan, symbol, timeframe, etc.)
+    pub fn get_filtered_zones(&self) -> Vec<&ZoneDistanceInfo> {
+        let mut filtered: Vec<&ZoneDistanceInfo> = if self.trading_plan_enabled {
+            if let Some(plan) = &self.trading_plan {
+                let allowed: std::collections::HashSet<_> = plan.top_setups.iter().map(|s| (s.symbol.as_str(), s.timeframe.as_str())).collect();
+                self.zones.iter().filter(|zone|
+                    allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
+                ).collect()
+            } else {
+                vec![]
+            }
+        } else {
+            self.zones.iter().collect()
+        };
+        // Apply timeframe filter
+        filtered.retain(|zone| self.is_timeframe_enabled(&zone.timeframe));
+        // Apply breached filter
+        if !self.show_breached {
+            filtered.retain(|zone| zone.zone_status != ZoneStatus::Breached);
+        }
+        // Apply strength filter (dashboard only)
+        if matches!(self.current_page, AppPage::Dashboard) {
+            filtered.retain(|zone| zone.strength_score >= self.min_strength_filter);
+        }
+        // Apply indices filter
+        if !self.show_indices {
+            filtered.retain(|zone| zone.symbol != "NAS100" && zone.symbol != "US500");
+        }
+        // Apply symbol filter (dashboard only)
+        if matches!(self.current_page, AppPage::Dashboard) {
+            filtered.retain(|zone| self.symbol_matches_filter(&zone.symbol));
+        }
+        // Sorting (same as process_zones_response)
+        filtered.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            let a_priority = a.zone_status.priority();
+            let b_priority = b.zone_status.priority();
+            match b_priority.cmp(&a_priority) {
+                Ordering::Equal => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(Ordering::Equal),
+                other => other,
+            }
+        });
+        filtered
+    }
+
     pub fn select_next_zone(&mut self) {
-        if !self.zones.is_empty() {
+        let filtered = self.get_filtered_zones();
+        if !filtered.is_empty() {
             match self.selected_zone_index {
                 Some(current_index) => {
-                    let next_index = (current_index + 1) % self.zones.len();
+                    let next_index = (current_index + 1) % filtered.len();
                     self.selected_zone_index = Some(next_index);
                 }
                 None => {
@@ -634,11 +680,12 @@ impl App {
     }
 
     pub fn select_previous_zone(&mut self) {
-        if !self.zones.is_empty() {
+        let filtered = self.get_filtered_zones();
+        if !filtered.is_empty() {
             match self.selected_zone_index {
                 Some(current_index) => {
                     let prev_index = if current_index == 0 {
-                        self.zones.len() - 1
+                        filtered.len() - 1
                     } else {
                         current_index - 1
                     };
@@ -651,69 +698,59 @@ impl App {
         }
     }
 
-    // NEW: Copy selected zone ID from dashboard
     pub fn copy_selected_dashboard_zone_id(&mut self) {
+        let filtered = self.get_filtered_zones();
         if let Some(index) = self.selected_zone_index {
-            if let Some(zone) = self.zones.get(index) {
-                // Try to copy to system clipboard
+            if let Some(zone) = filtered.get(index) {
                 match self.copy_to_clipboard(&zone.zone_id) {
                     Ok(()) => {
                         self.last_copied_zone_id = Some(format!("✅ Copied: {}", zone.zone_id));
                     }
                     Err(_) => {
-                        // Fallback: just show the zone ID
                         self.last_copied_zone_id = Some(format!("Zone ID: {}", zone.zone_id));
                     }
                 }
+            } else {
+                self.last_copied_zone_id = Some("❌ No zone selected".to_string());
             }
         } else {
             self.last_copied_zone_id = Some("❌ No zone selected".to_string());
         }
     }
 
-    // NEW: Copy selected zone details from dashboard in format: Type,High,Low,Date
     pub fn copy_selected_zone_details(&mut self) {
+        let filtered = self.get_filtered_zones();
         if let Some(index) = self.selected_zone_index {
-            if let Some(zone) = self.zones.get(index) {
-                // Determine zone type - convert from "supply_zone"/"demand_zone" to "Supply"/"Demand"
+            if let Some(zone) = filtered.get(index) {
                 let zone_type_display = if zone.zone_type.contains("supply") {
                     "Supply"
                 } else {
                     "Demand"
                 };
-
-                // For supply zones: high = distal, low = proximal
-                // For demand zones: high = proximal, low = distal
                 let (high, low) = if zone.zone_type.contains("supply") {
                     (zone.distal_line, zone.proximal_line)
                 } else {
                     (zone.proximal_line, zone.distal_line)
                 };
-
-                // Format date and time - use created_at if available, otherwise use "N/A"
                 let date_time_str = if let Some(created_at) = zone.created_at {
                     created_at.format("%Y-%m-%d, %H:%M").to_string()
                 } else {
                     "N/A".to_string()
                 };
-
-                // Create the formatted string: Type,High,Low,Date,Time
                 let zone_details = format!(
                     "{},{:.4},{:.4},{}",
                     zone_type_display, high, low, date_time_str
                 );
-
-                // Try to copy to system clipboard
                 match self.copy_to_clipboard(&zone_details) {
                     Ok(()) => {
-                        self.last_copied_zone_id =
-                            Some(format!("✅ Zone Details: {}", zone_details));
+                        self.last_copied_zone_id = Some(format!("✅ Zone Details: {}", zone_details));
                     }
                     Err(_) => {
-                        // Fallback: just show the details
                         self.last_copied_zone_id = Some(format!("Zone Details: {}", zone_details));
                     }
                 }
+            } else {
+                self.last_copied_zone_id = Some("❌ No zone selected".to_string());
             }
         } else {
             self.last_copied_zone_id = Some("❌ No zone selected".to_string());

@@ -651,7 +651,7 @@ impl PendingOrderManager {
 
                 // Attempt to place order
                 match self
-                    .place_pending_order_for_zone(price_update, zone, distance_pips)
+                    .place_pending_order_for_zone(price_update, zone, distance_pips, trading_plan)
                     .await
                 {
                     Ok(pending_order) => {
@@ -701,6 +701,7 @@ impl PendingOrderManager {
         price_update: &PriceUpdate,
         zone: &Zone,
         distance_pips: f64,
+        trading_plan: Option<&crate::trading_plan::TradingPlan>, // <-- add trading_plan argument
     ) -> Result<PendingOrder, Box<dyn std::error::Error + Send + Sync>> {
         // Get symbol ID
         let symbol_id = match self.symbol_ids.get(&price_update.symbol) {
@@ -724,17 +725,32 @@ impl PendingOrderManager {
 
         // Calculate stop loss and take profit
         let pip_value = self.get_pip_value(&price_update.symbol);
+        let (sl_pips, tp_pips, plan_used) = if let Some(plan) = trading_plan {
+            if let Some(setup) = plan.top_setups.iter().find(|s| s.symbol == price_update.symbol && s.timeframe == zone.timeframe) {
+                (setup.sl, setup.tp, true)
+            } else {
+                (self.default_sl_pips, self.default_tp_pips, false)
+            }
+        } else {
+            (self.default_sl_pips, self.default_tp_pips, false)
+        };
         let (stop_loss, take_profit) = if is_supply {
             // SELL order: SL above entry, TP below entry
-            let sl = entry_price + (self.default_sl_pips * pip_value);
-            let tp = entry_price - (self.default_tp_pips * pip_value);
+            let sl = entry_price + (sl_pips * pip_value);
+            let tp = entry_price - (tp_pips * pip_value);
             (sl, tp)
         } else {
             // BUY order: SL below entry, TP above entry
-            let sl = entry_price - (self.default_sl_pips * pip_value);
-            let tp = entry_price + (self.default_tp_pips * pip_value);
+            let sl = entry_price - (sl_pips * pip_value);
+            let tp = entry_price + (tp_pips * pip_value);
             (sl, tp)
         };
+
+        if plan_used {
+            info!("📋 Using trading plan SL/TP for {} {}: SL={} TP={}", price_update.symbol, zone.timeframe, sl_pips, tp_pips);
+        } else {
+            info!("📋 Using default SL/TP for {} {}: SL={} TP={}", price_update.symbol, zone.timeframe, sl_pips, tp_pips);
+        }
 
         // Volume calculation
         let display_volume = 0.1; // Base display volume
