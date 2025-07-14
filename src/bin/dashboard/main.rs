@@ -16,6 +16,7 @@ mod app;
 mod notifications;
 mod types;
 mod ui;
+mod trading_plan;
 #[path = "../zone_monitor/websocket.rs"]
 mod websocket;
 use dotenvy::dotenv;

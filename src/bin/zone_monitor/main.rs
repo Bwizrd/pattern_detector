@@ -19,6 +19,7 @@ mod trading_engine;
 mod types;
 mod websocket;
 mod zone_state_manager;
+mod trading_plan;
 
 mod enriched_trades;
 use chrono::Utc;
@@ -48,6 +49,7 @@ use axum::extract::{Path, Query};
 use crate::db::order_db::EnrichedDeal;
 use axum::extract::Json as AxumJson;
 use tokio::fs::read_to_string;
+use trading_plan::TradingPlan;
 
 
 // Request/Response structs for manual trading
@@ -684,8 +686,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!("   📊 CSV logging: logs/proximity_YYYY-MM-DD.csv & logs/trading_signal_YYYY-MM-DD.csv");
 
+    let trading_plan_enabled = std::env::var("TRADING_PLAN_ENABLED").unwrap_or_else(|_| "false".to_string()) == "true";
+    let trading_plan = if trading_plan_enabled {
+        let plan = TradingPlan::load_from_file("trading_plan.json");
+        match &plan {
+            Some(plan) => {
+                info!("\n🚦 TRADING PLAN ENABLED! Only these setups will be traded:");
+                for setup in &plan.top_setups {
+                    info!("   - {} {} | SL: {} | TP: {}", setup.symbol, setup.timeframe, setup.sl, setup.tp);
+                }
+            },
+            None => {
+                info!("⚠️  TRADING PLAN ENABLED but trading_plan.json could not be loaded or parsed!");
+            }
+        }
+        plan
+    } else {
+        info!("\n🔄 Trading plan disabled. Using default trading rules.");
+        None
+    };
     // Initialize monitor state
-    let state = MonitorState::new(cache_file_path);
+    let state = MonitorState::new(cache_file_path, trading_plan);
 
     // Initialize all systems
     if let Err(e) = state.initialize().await {

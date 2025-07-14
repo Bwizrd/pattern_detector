@@ -2,6 +2,7 @@
 // Trading execution system for zone-based signals with real API integration
 
 use crate::types::{PriceUpdate, ZoneAlert};
+use crate::trading_plan::TradingPlan;
 use chrono::{Datelike, Timelike};
 use reqwest;
 use serde::{Deserialize, Serialize};
@@ -334,7 +335,7 @@ impl TradingEngine {
 
         // Generate trade from signal - now with better error handling
         let trade = match self
-            .generate_trade_from_signal(signal, current_price_data, &config)
+            .generate_trade_from_signal(signal, current_price_data, &config, None)
             .await
         {
             Ok(trade) => trade,
@@ -464,6 +465,7 @@ impl TradingEngine {
         signal: &ZoneAlert,
         price_data: &PriceUpdate,
         config: &TradingConfig,
+        trading_plan: Option<&TradingPlan>,
     ) -> Result<Trade, String> {
         let current_price = (price_data.bid + price_data.ask) / 2.0;
         let sb_symbol = format!("{}_SB", signal.symbol);
@@ -479,20 +481,29 @@ impl TradingEngine {
             0.0001
         };
 
+        // Determine SL/TP to use
+        let (sl_pips, tp_pips, plan_used) = if let Some(plan) = trading_plan {
+            if let Some(setup) = plan.top_setups.iter().find(|s| s.symbol == signal.symbol && s.timeframe == signal.timeframe) {
+                (setup.sl, setup.tp, true)
+            } else {
+                (config.stop_loss_pips, config.take_profit_pips, false)
+            }
+        } else {
+            (config.stop_loss_pips, config.take_profit_pips, false)
+        };
+
         // Determine trade direction based on zone type
         let (trade_type, entry_price, stop_loss, take_profit) = match signal.zone_type.as_str() {
             "demand_zone" => {
                 let entry = current_price;
-                // Convert pip counts to pip distances (price units)
-                let sl = config.stop_loss_pips * pip_value; // e.g., 40 * 0.0001 = 0.004
-                let tp = config.take_profit_pips * pip_value; // e.g., 10 * 0.0001 = 0.001
+                let sl = entry - (sl_pips * pip_value);
+                let tp = entry + (tp_pips * pip_value);
                 ("buy".to_string(), entry, sl, tp)
             }
             "supply_zone" => {
                 let entry = current_price;
-                // Convert pip counts to pip distances (price units)
-                let sl = config.stop_loss_pips * pip_value; // e.g., 40 * 0.0001 = 0.004
-                let tp = config.take_profit_pips * pip_value; // e.g., 10 * 0.0001 = 0.001
+                let sl = entry + (sl_pips * pip_value);
+                let tp = entry - (tp_pips * pip_value);
                 ("sell".to_string(), entry, sl, tp)
             }
             _ => {
@@ -504,8 +515,8 @@ impl TradingEngine {
         let lot_size = self.get_lot_size_for_symbol(&signal.symbol, config.lot_size);
 
         // Calculate risk/reward ratio
-        let risk_pips = config.stop_loss_pips;
-        let reward_pips = config.take_profit_pips;
+        let risk_pips = sl_pips;
+        let reward_pips = tp_pips;
         let risk_reward_ratio = reward_pips / risk_pips;
 
         if risk_reward_ratio < config.min_risk_reward {
@@ -513,6 +524,14 @@ impl TradingEngine {
                 "risk_reward_too_low_{:.2}_min_{:.2}",
                 risk_reward_ratio, config.min_risk_reward
             ));
+        }
+
+        if plan_used {
+            info!("📋 Using trading plan SL/TP for {} {}: SL={} TP={}", signal.symbol, signal.timeframe, sl_pips, tp_pips);
+            info!("✅ Trade {} {} IS IN THE TRADING PLAN", signal.symbol, signal.timeframe);
+        } else {
+            info!("📋 Using default SL/TP for {} {}: SL={} TP={}", signal.symbol, signal.timeframe, sl_pips, tp_pips);
+            info!("⚠️ Trade {} {} is NOT in the trading plan", signal.symbol, signal.timeframe);
         }
 
         Ok(Trade {
@@ -529,7 +548,7 @@ impl TradingEngine {
             closed_at: None,
             profit_loss: None,
             risk_reward_ratio,
-            timeframe: "unknown".to_string(),
+            timeframe: signal.timeframe.clone(),
             ctrader_order_id: None,
         })
     }

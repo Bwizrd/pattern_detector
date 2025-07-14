@@ -242,7 +242,8 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         ])
     };
 
-    let timeframes_line = Line::from(vec![
+    // Build the timeframes line and append trading plan pairs/timeframes if enabled
+    let mut timeframes_line_spans = vec![
         Span::styled("Timeframes: ", Style::default().fg(Color::Cyan)),
         Span::styled(
             format!("{} ", app.get_timeframe_status()),
@@ -275,7 +276,20 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
                 Style::default().fg(Color::Yellow)
             },
         ),
-    ]);
+    ];
+    if app.trading_plan_enabled {
+        if let Some(plan) = &app.trading_plan {
+            let pairs = plan.top_setups.iter()
+                .map(|s| format!("{} {}", s.symbol, s.timeframe))
+                .collect::<Vec<_>>()
+                .join(", ");
+            timeframes_line_spans.push(Span::styled(
+                format!(" | Plan: {}", pairs),
+                Style::default().fg(Color::Green),
+            ));
+        }
+    }
+    let timeframes_line = Line::from(timeframes_line_spans);
 
     let strength_line = Line::from(vec![
         Span::styled(
@@ -319,7 +333,22 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         },
     ]);
 
-    // NEW: Add selection status line
+    let trading_plan_status_span = if app.trading_plan_enabled {
+        Span::styled(
+            " | Trading Plan: ON",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            " | Trading Plan: OFF",
+            Style::default().fg(Color::Gray),
+        )
+    };
+
+    let mut stats_line_spans = stats_line.spans.clone();
+    stats_line_spans.push(trading_plan_status_span);
+    let stats_line = Line::from(stats_line_spans);
+
     let selection_line = Line::from(vec![
         if let Some(index) = app.selected_zone_index {
             Span::styled(
@@ -402,7 +431,6 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
         Span::styled("[c]clear", Style::default().fg(Color::Cyan)),
     ]);
 
-    // NEW: Build text with 6 lines including symbol filter
     let stats_text = Text::from(vec![
         stats_line,
         timeframes_line,
@@ -638,8 +666,21 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
 
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-        let rows: Vec<Row> = app
-            .zones
+        // Filter zones by trading plan if enabled
+        let filtered_zones: Vec<_> = if app.trading_plan_enabled {
+            if let Some(plan) = &app.trading_plan {
+                let allowed: std::collections::HashSet<_> = plan.top_setups.iter().map(|s| (s.symbol.as_str(), s.timeframe.as_str())).collect();
+                app.zones.iter().filter(|zone|
+                    allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
+                ).collect()
+            } else {
+                vec![]
+            }
+        } else {
+            app.zones.iter().collect()
+        };
+
+        let rows: Vec<Row> = filtered_zones
             .iter()
             .enumerate()
             .take(max_rows)

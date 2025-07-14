@@ -574,6 +574,7 @@ impl PendingOrderManager {
         price_update: &PriceUpdate,
         zones: &[Zone],
         csv_logger: &CsvLogger,
+        trading_plan: Option<&crate::trading_plan::TradingPlan>, // <-- add trading_plan argument
     ) {
         if !self.enabled {
             return;
@@ -620,6 +621,17 @@ impl PendingOrderManager {
                         zone.id, zone.timeframe
                     );
                     continue;
+                }
+
+                // TRADING PLAN FILTER (final check, just before booking)
+                if let Some(plan) = trading_plan {
+                    let in_plan = plan.top_setups.iter().any(|s| s.symbol == price_update.symbol && s.timeframe == zone.timeframe);
+                    if !in_plan {
+                        // Do not log, just skip
+                        continue;
+                    } else {
+                        info!("✅ Booking pending order: {} {} IS IN THE TRADING PLAN", price_update.symbol, zone.timeframe);
+                    }
                 }
 
                 // Create zone alert for CSV logging

@@ -15,6 +15,7 @@ use crate::types::{PriceUpdate, ZoneAlert, ZoneCache};
 use crate::websocket::WebSocketClient;
 use crate::zone_state_manager::ProcessResult;
 use crate::zone_state_manager::ZoneStateManager;
+use crate::trading_plan::TradingPlan;
 use chrono::Timelike;
 use chrono::{DateTime, Utc};
 use pattern_detector::zone_interactions::{InteractionConfig, ZoneInteractionContainer};
@@ -107,10 +108,11 @@ pub struct MonitorState {
     pub cache_file_path: String,
     pub websocket_url: String,
     pub order_database: Arc<OrderDatabase>,
+    pub trading_plan: Option<TradingPlan>,
 }
 
 impl MonitorState {
-    pub fn new(cache_file_path: String) -> Self {
+    pub fn new(cache_file_path: String, trading_plan: Option<TradingPlan>) -> Self {
         let websocket_url =
             std::env::var("PRICE_WS_URL").unwrap_or_else(|_| "ws://localhost:8083".to_string());
 
@@ -162,6 +164,7 @@ impl MonitorState {
             cache_file_path,
             websocket_url,
             order_database: Arc::new(order_database),
+            trading_plan,
         }
     }
 
@@ -602,7 +605,7 @@ impl MonitorState {
             let zone_interactions_guard = self.zone_interactions.read().await;
             let result = self
                 .zone_state_manager
-                .process_price_update(&price_update, &zones, Some(&*zone_interactions_guard))
+                .process_price_update(&price_update, &zones, Some(&*zone_interactions_guard), self.trading_plan.as_ref())
                 .await;
 
             // Log proximity data for debugging and verification
@@ -617,7 +620,7 @@ impl MonitorState {
             {
                 let mut pending_order_manager = self.pending_order_manager.write().await;
                 pending_order_manager
-                    .check_and_place_orders(&price_update, &zones, &self.csv_logger)
+                    .check_and_place_orders(&price_update, &zones, &self.csv_logger, self.trading_plan.as_ref())
                     .await;
             }
 

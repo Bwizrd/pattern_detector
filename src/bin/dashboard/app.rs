@@ -18,6 +18,8 @@ use crate::types::{
 };
 use pattern_detector::zone_interactions::ZoneInteractionContainer;
 use serde::{Deserialize, Serialize};
+// REMOVE: mod trading_plan;
+use crate::trading_plan::TradingPlan;
 
 // Import PendingOrder from zone monitor
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +128,9 @@ pub struct App {
 
     pub redis_client: Option<RedisClient>,
     pub redis_connection: Option<Arc<Mutex<redis::Connection>>>,
+
+    pub trading_plan_enabled: bool,
+    pub trading_plan: Option<TradingPlan>,
 }
 
 impl App {
@@ -207,6 +212,13 @@ impl App {
         notification_timeframe_filters.insert("4h".to_string(), true);
         notification_timeframe_filters.insert("1d".to_string(), true);
 
+        let trading_plan_enabled = std::env::var("TRADING_PLAN_ENABLED").unwrap_or_else(|_| "false".to_string()) == "true";
+        let trading_plan = if trading_plan_enabled {
+            TradingPlan::load_from_file("trading_plan.json")
+        } else {
+            None
+        };
+
         Self {
             client: HttpClient::new(),
             api_base_url,
@@ -269,6 +281,9 @@ impl App {
             pending_orders: HashMap::new(),
             redis_client,
             redis_connection,
+
+            trading_plan_enabled,
+            trading_plan,
         }
     }
 

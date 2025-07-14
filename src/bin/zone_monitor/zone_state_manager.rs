@@ -4,6 +4,7 @@
 use crate::types::{PriceUpdate, Zone, ZoneAlert};
 use crate::trade_rules::TradeRulesEngine;
 use crate::csv_logger::CsvLogger;
+use crate::trading_plan::TradingPlan;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -169,11 +170,27 @@ impl ZoneStateManager {
         price_update: &PriceUpdate,
         zones: &[Zone],
         zone_interactions: Option<&pattern_detector::zone_interactions::ZoneInteractionContainer>,
+        trading_plan: Option<&TradingPlan>,
     ) -> ProcessResult {
         let mut result = ProcessResult::default();
         let current_price = (price_update.bid + price_update.ask) / 2.0;
 
-        for zone in zones {
+        // If trading plan is enabled, filter zones to only those in the plan
+        let filtered_zones: Vec<&Zone> = if let Some(plan) = trading_plan {
+            zones.iter().filter(|zone| {
+                let found = plan.top_setups.iter().any(|setup| {
+                    setup.symbol == zone.symbol && setup.timeframe == zone.timeframe
+                });
+                if !found {
+                    debug!("⏭️ Zone {} {} {} filtered out by trading plan", zone.symbol, zone.timeframe, zone.id);
+                }
+                found
+            }).collect()
+        } else {
+            zones.iter().collect()
+        };
+
+        for zone in filtered_zones {
             // Skip excluded zones (e.g., certain timeframes)
             if self.should_exclude_zone(zone) {
                 continue;
