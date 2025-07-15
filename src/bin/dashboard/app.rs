@@ -619,17 +619,29 @@ impl App {
         filters.get(timeframe).copied().unwrap_or(true)
     }
 
-    /// Returns the filtered list of zones as used by the dashboard UI (trading plan, symbol, timeframe, etc.)
+    /// Returns the filtered list of zones as used by the dashboard UI (trading plan, day trading mode, symbol, timeframe, etc.)
     pub fn get_filtered_zones(&self) -> Vec<&ZoneDistanceInfo> {
-        let mut filtered: Vec<&ZoneDistanceInfo> = if self.trading_plan_enabled {
-            if let Some(plan) = &self.trading_plan {
-                let allowed: std::collections::HashSet<_> = plan.top_setups.iter().map(|s| (s.symbol.as_str(), s.timeframe.as_str())).collect();
-                self.zones.iter().filter(|zone|
-                    allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
-                ).collect()
-            } else {
-                vec![]
+        let day_trading_mode = std::env::var("DAY_TRADING_MODE_ACTIVE").unwrap_or_else(|_| "false".to_string()) == "true";
+        let mut filtered: Vec<&ZoneDistanceInfo> = if self.trading_plan_enabled || day_trading_mode {
+            let mut allowed = std::collections::HashSet::new();
+            if self.trading_plan_enabled {
+                if let Some(plan) = &self.trading_plan {
+                    for s in &plan.top_setups {
+                        allowed.insert((s.symbol.as_str(), s.timeframe.as_str()));
+                    }
+                }
             }
+            if day_trading_mode {
+                // Allow all 5m/15m zones (for all symbols)
+                for zone in &self.zones {
+                    if zone.timeframe == "5m" || zone.timeframe == "15m" {
+                        allowed.insert((zone.symbol.as_str(), zone.timeframe.as_str()));
+                    }
+                }
+            }
+            self.zones.iter().filter(|zone|
+                allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
+            ).collect()
         } else {
             self.zones.iter().collect()
         };
