@@ -8,9 +8,10 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, SharedStrategies};
 use crate::notifications::render_enhanced_notifications_page;
-use crate::types::{AppPage, TradeNotificationDisplay, ZoneStatus};
+use crate::trading_plan::TradingPlan;
+use crate::types::{AppPage, TradeNotificationDisplay, ZoneDistanceInfo, ZoneStatus};
 
 pub fn ui(f: &mut Frame, app: &App) {
     match app.current_page {
@@ -70,11 +71,25 @@ pub fn ui_dashboard(f: &mut Frame, app: &App) {
         .split(main_chunks[1]);
 
     render_header(f, app, left_chunks[0], "Dashboard");
+    let shared_strategies = if std::env::var("DAY_TRADING_MODE_ACTIVE")
+        .unwrap_or_else(|_| "false".to_string())
+        == "true"
+    {
+        App::load_shared_strategies()
+    } else {
+        None
+    };
     render_stats_and_controls_enhanced(f, app, left_chunks[1], size.width);
-    render_zones_table_improved(f, app, left_chunks[2], size.width);
+    render_zones_table_improved(
+        f,
+        app,
+        left_chunks[2],
+        size.width,
+        shared_strategies.as_ref(),
+    );
     render_dashboard_help(f, left_chunks[3]);
     render_placed_trades_panel(f, app, right_chunks[0], right_chunks[1]);
-    
+
     // Show trading reminder popup if needed
     if app.show_trading_reminder {
         render_trading_reminder_popup(f, size);
@@ -131,19 +146,31 @@ fn render_header(f: &mut Frame, app: &App, area: Rect, page_name: &str) {
 
     let now = Utc::now();
     let elapsed = app.last_update.elapsed().as_secs();
-    let ws_status = if app.websocket_connected { "🟢 WS" } else { "🔴 WS" };
-    
+    let ws_status = if app.websocket_connected {
+        "🟢 WS"
+    } else {
+        "🔴 WS"
+    };
+
     // ✅ FIX: Use the helper method instead of accessing private field
-    let redis_status = if app.is_redis_connected() { "🟢 Redis" } else { "🔴 Redis" };
-    
+    let redis_status = if app.is_redis_connected() {
+        "🟢 Redis"
+    } else {
+        "🔴 Redis"
+    };
+
     let trading_status = if app.trading_enabled {
-        if app.websocket_connected { "🟢 ON" } else { "🟡 ON (NO WS)" }
+        if app.websocket_connected {
+            "🟢 ON"
+        } else {
+            "🟡 ON (NO WS)"
+        }
     } else {
         "🔴 OFF"
     };
-    
+
     let pending_orders_count = app.pending_orders.len();
-    
+
     let header_text = format!(
         "API: {} | {} | {} | Updates: {} | Last: {}s ago | Time: {} | Page: {} | Prices: {} | Trading: {} | Pending: {}",
         app.api_base_url,
@@ -157,7 +184,7 @@ fn render_header(f: &mut Frame, app: &App, area: Rect, page_name: &str) {
         trading_status,
         pending_orders_count
     );
-    
+
     let header = Paragraph::new(header_text)
         .block(header_block)
         .alignment(Alignment::Center)
@@ -279,7 +306,9 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
     ];
     if app.trading_plan_enabled {
         if let Some(plan) = &app.trading_plan {
-            let pairs = plan.top_setups.iter()
+            let pairs = plan
+                .top_setups
+                .iter()
                 .map(|s| format!("{} {}", s.symbol, s.timeframe))
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -329,24 +358,49 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
                 Style::default().fg(Color::Gray),
             )
         } else {
-            Span::styled(" | Press 'f' to edit, 'c' to clear", Style::default().fg(Color::Gray))
+            Span::styled(
+                " | Press 'f' to edit, 'c' to clear",
+                Style::default().fg(Color::Gray),
+            )
         },
     ]);
 
+    let day_trading_mode =
+        std::env::var("DAY_TRADING_MODE_ACTIVE").unwrap_or_else(|_| "false".to_string()) == "true";
     let trading_plan_status_span = if app.trading_plan_enabled {
         Span::styled(
             " | Trading Plan: ON",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
+        Span::styled(" | Trading Plan: OFF", Style::default().fg(Color::Gray))
+    };
+    let day_trading_status_span = if day_trading_mode {
         Span::styled(
-            " | Trading Plan: OFF",
-            Style::default().fg(Color::Gray),
+            " | Day Trading Mode: ON",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("")
+    };
+    let noise_status = app.get_noise_filter_status();
+    let noise_status_span = if noise_status.is_empty() {
+        Span::raw("")
+    } else {
+        Span::styled(
+            format!(" | Noise Filter: {}", noise_status),
+            Style::default().fg(Color::Cyan),
         )
     };
 
     let mut stats_line_spans = stats_line.spans.clone();
     stats_line_spans.push(trading_plan_status_span);
+    stats_line_spans.push(day_trading_status_span);
+    stats_line_spans.push(noise_status_span); // ← ADD THIS LINE
     let stats_line = Line::from(stats_line_spans);
 
     let selection_line = Line::from(vec![
@@ -447,7 +501,54 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
     f.render_widget(stats, area);
 }
 
-fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_width: u16) {
+fn get_strategy_for_zone(
+    zone: &ZoneDistanceInfo,
+    shared_strategies: Option<&SharedStrategies>,
+) -> String {
+    if let Some(strategies) = shared_strategies {
+        // Try to find strategy by exact symbol match first
+        let strategy = strategies
+            .strategies_by_symbol
+            .get(&zone.symbol)
+            .or_else(|| {
+                // If not found, try with _SB suffix
+                let symbol_with_sb = format!("{}_SB", zone.symbol);
+                strategies.strategies_by_symbol.get(&symbol_with_sb)
+            })
+            .or_else(|| {
+                // If still not found and zone symbol has _SB, try without it
+                if zone.symbol.ends_with("_SB") {
+                    let symbol_without_sb = zone.symbol.strip_suffix("_SB").unwrap_or(&zone.symbol);
+                    strategies.strategies_by_symbol.get(symbol_without_sb)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(strategy) = strategy {
+            // Only show strategy for 5m/15m timeframes (day trading mode)
+            if zone.timeframe == "5m" || zone.timeframe == "15m" {
+                let is_sell = zone.zone_type.to_lowercase().contains("supply");
+                let is_buy = zone.zone_type.to_lowercase().contains("demand");
+
+                if strategy.direction == "short" && is_sell {
+                    return "📉 DTS".to_string(); // Day Trading Short
+                } else if strategy.direction == "long" && is_buy {
+                    return "📈 DTL".to_string(); // Day Trading Long
+                }
+            }
+        }
+    }
+    "N/A".to_string()
+}
+
+fn render_zones_table_improved(
+    f: &mut Frame,
+    app: &App,
+    area: Rect,
+    screen_width: u16,
+    shared_strategies: Option<&SharedStrategies>,
+) {
     if let Some(error) = &app.error_message {
         let error_block = Block::default()
             .borders(Borders::ALL)
@@ -474,7 +575,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             // Extra large screens: Show all columns including interaction metrics
             let mut headers = vec![
                 "Symbol/TF",
-                "Type", 
+                "Type",
                 "Distance",
                 "Status",
                 "Price",
@@ -482,25 +583,26 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 "Distal",
                 "Str",
                 "Touch",
-                "TimeIn", // Time in zone (seconds)
-                "Cross", // Proximal crossings  
-                "Fresh", // Has ever entered
+                "TimeIn",   // Time in zone (seconds)
+                "Cross",    // Proximal crossings
+                "Fresh",    // Has ever entered
+                "Strategy", // New strategy column
             ];
-            
-            let mut base_widths = vec![10, 6, 8, 12, 8, 8, 8, 6, 6, 6, 6, 6];
-            
+
+            let mut base_widths = vec![10, 6, 8, 12, 8, 8, 8, 6, 6, 6, 6, 6, 10];
+
             // Add start date column if enabled
             if app.show_start_dates {
                 headers.push("Start");
                 base_widths.push(10);
             }
-            
+
             headers.push("P"); // Pending order indicator
             base_widths.push(3);
-            
+
             headers.push("Zone ID");
             base_widths.push(18);
-            
+
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -517,31 +619,32 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
             let mut headers = vec![
                 "Symbol/TF",
                 "Type",
-                "Distance", 
+                "Distance",
                 "Status",
                 "Price",
                 "Proximal",
                 "Distal",
                 "Str",
                 "Touch",
-                "TimeIn", // Time in zone
-                "Cross", // Crossings
+                "TimeIn",   // Time in zone
+                "Cross",    // Crossings
+                "Strategy", // New strategy column
             ];
-            
-            let mut base_widths = vec![12, 6, 8, 12, 10, 10, 10, 6, 6, 6, 6];
-            
+
+            let mut base_widths = vec![12, 6, 8, 12, 10, 10, 10, 6, 6, 6, 6, 10];
+
             // Add start date column if enabled
             if app.show_start_dates {
                 headers.push("Start");
                 base_widths.push(10);
             }
-            
+
             headers.push("P"); // Pending order indicator
             base_widths.push(3);
-            
+
             headers.push("Zone ID");
             base_widths.push(16);
-            
+
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -564,22 +667,23 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 "Proximal",
                 "Distal",
                 "Str",
+                "Strategy", // New strategy column
             ];
-            
-            let mut base_widths = vec![15, 6, 10, 15, 12, 12, 12, 8];
-            
+
+            let mut base_widths = vec![15, 6, 10, 15, 12, 12, 12, 8, 10];
+
             // Add start date column if enabled
             if app.show_start_dates {
                 headers.push("Start");
                 base_widths.push(8);
             }
-            
+
             headers.push("P"); // Pending order indicator
             base_widths.push(3);
-            
+
             headers.push("Zone ID");
             base_widths.push(16);
-            
+
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -600,22 +704,23 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 "Status",
                 "Price",
                 "Proximal",
+                "Strategy", // New strategy column
             ];
-            
-            let mut base_widths = vec![18, 8, 12, 18, 15, 15];
-            
+
+            let mut base_widths = vec![18, 8, 12, 18, 15, 15, 10];
+
             // Add start date column if enabled (condensed)
             if app.show_start_dates {
                 headers.push("Start");
                 base_widths.push(10);
             }
-            
+
             headers.push("P"); // Pending order indicator
             base_widths.push(3);
-            
+
             headers.push("Zone ID");
             base_widths.push(16);
-            
+
             let total_base: u16 = base_widths.iter().sum();
 
             let widths = base_widths
@@ -630,14 +735,24 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         } else if screen_width > 100 {
             // Medium screens: Essential columns only
             (
-                vec!["Symbol/TF", "Type", "S.Dist", "Status", "Price", "P", "Zone ID"],
                 vec![
-                    Constraint::Percentage(18),
+                    "Symbol/TF",
+                    "Type",
+                    "S.Dist",
+                    "Status",
+                    "Price",
+                    "Strategy",
+                    "P",
+                    "Zone ID",
+                ],
+                vec![
+                    Constraint::Percentage(16),
+                    Constraint::Percentage(8),
                     Constraint::Percentage(10),
-                    Constraint::Percentage(12),
-                    Constraint::Percentage(18),
-                    Constraint::Percentage(18),
-                    Constraint::Percentage(4), // P column
+                    Constraint::Percentage(16),
+                    Constraint::Percentage(14),
+                    Constraint::Percentage(12), // Strategy column
+                    Constraint::Percentage(4),  // P column
                     Constraint::Percentage(20), // Zone ID gets remaining space
                 ],
                 35,
@@ -669,10 +784,17 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
         // Filter zones by trading plan if enabled
         let filtered_zones: Vec<_> = if app.trading_plan_enabled {
             if let Some(plan) = &app.trading_plan {
-                let allowed: std::collections::HashSet<_> = plan.top_setups.iter().map(|s| (s.symbol.as_str(), s.timeframe.as_str())).collect();
-                app.zones.iter().filter(|zone|
-                    allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
-                ).collect()
+                let allowed: std::collections::HashSet<_> = plan
+                    .top_setups
+                    .iter()
+                    .map(|s| (s.symbol.as_str(), s.timeframe.as_str()))
+                    .collect();
+                app.zones
+                    .iter()
+                    .filter(|zone| {
+                        allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
+                    })
+                    .collect()
             } else {
                 vec![]
             }
@@ -707,8 +829,21 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                 };
 
                 // Build row cells based on screen size
+                let symbol_tf = format!("{}/{}", zone.symbol, zone.timeframe);
+
+                // Check if this symbol/timeframe combination is in the trading plan
+                let is_trading_plan_match =
+                    is_in_trading_plan(&zone.symbol, &zone.timeframe, app.trading_plan.as_ref());
+
+                // Create Symbol/TF cell with conditional green background
+                let symbol_tf_cell = if is_trading_plan_match {
+                    Cell::from(symbol_tf).style(Style::default().bg(Color::Green).fg(Color::Black))
+                } else {
+                    Cell::from(symbol_tf)
+                };
+
                 let mut cells = vec![
-                    Cell::from(symbol_tf),
+                    symbol_tf_cell,
                     Cell::from(zone_type_short),
                     Cell::from(format!("{:+.1}", zone.signed_distance_pips)),
                     Cell::from(status_text),
@@ -736,7 +871,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                             } else {
                                 Cell::from(format!("{:.5}", zone.distal_line))
                             };
-                            
+
                             cells.extend(vec![
                                 distal_cell,
                                 Cell::from(format!("{:.0}", zone.strength_score)),
@@ -744,7 +879,7 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
 
                             if screen_width > 160 {
                                 cells.push(Cell::from(format!("{}", zone.touch_count)));
-                                
+
                                 // Add interaction metrics for very large screens
                                 if screen_width > 180 {
                                     // Time in zone (convert seconds to human readable)
@@ -760,19 +895,28 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                                         "0".to_string()
                                     };
                                     cells.push(Cell::from(time_in_display));
-                                    
+
                                     // Zone entries (actual entries into the zone)
                                     cells.push(Cell::from(format!("{}", zone.zone_entries)));
-                                    
+
                                     // Fresh zone indicator
-                                    let fresh_indicator = if zone.has_ever_entered { "✓" } else { "✨" };
+                                    let fresh_indicator =
+                                        if zone.has_ever_entered { "✓" } else { "✨" };
                                     cells.push(Cell::from(fresh_indicator).style(
                                         if zone.has_ever_entered {
                                             Style::default().fg(Color::Green)
                                         } else {
                                             Style::default().fg(Color::Cyan)
-                                        }
+                                        },
                                     ));
+
+                                    // Strategy column for 180+ screens
+                                    let strategy_display =
+                                        get_strategy_for_zone(zone, shared_strategies);
+                                    cells.push(
+                                        Cell::from(strategy_display)
+                                            .style(Style::default().fg(Color::Cyan)),
+                                    );
                                 } else {
                                     // For 160+ screens, add basic interaction metrics
                                     let time_in_display = if zone.total_time_inside_seconds > 0 {
@@ -785,11 +929,40 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                                         "0".to_string()
                                     };
                                     cells.push(Cell::from(time_in_display));
-                                    
+
                                     cells.push(Cell::from(format!("{}", zone.zone_entries)));
+
+                                    // Strategy column for 160+ screens
+                                    let strategy_display =
+                                        get_strategy_for_zone(zone, shared_strategies);
+                                    cells.push(
+                                        Cell::from(strategy_display)
+                                            .style(Style::default().fg(Color::Cyan)),
+                                    );
                                 }
+                            } else {
+                                // Strategy column for 140+ screens
+                                let strategy_display =
+                                    get_strategy_for_zone(zone, shared_strategies);
+                                cells.push(
+                                    Cell::from(strategy_display)
+                                        .style(Style::default().fg(Color::Cyan)),
+                                );
                             }
+                        } else {
+                            // Strategy column for 120+ screens
+                            let strategy_display = get_strategy_for_zone(zone, shared_strategies);
+                            cells.push(
+                                Cell::from(strategy_display)
+                                    .style(Style::default().fg(Color::Cyan)),
+                            );
                         }
+                    } else {
+                        // Strategy column for 100+ screens
+                        let strategy_display = get_strategy_for_zone(zone, shared_strategies);
+                        cells.push(
+                            Cell::from(strategy_display).style(Style::default().fg(Color::Cyan)),
+                        );
                     }
 
                     // Add start date column if enabled
@@ -812,7 +985,13 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
                     } else {
                         ""
                     };
-                    cells.push(Cell::from(pending_indicator).style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
+                    cells.push(
+                        Cell::from(pending_indicator).style(
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    );
 
                     // Add Zone ID column (truncated based on available space)
                     let zone_id_display = if screen_width > 160 {
@@ -907,6 +1086,18 @@ fn render_zones_table_improved(f: &mut Frame, app: &App, area: Rect, screen_widt
     }
 }
 
+fn is_in_trading_plan(symbol: &str, timeframe: &str, trading_plan: Option<&TradingPlan>) -> bool {
+    if let Some(plan) = trading_plan {
+        // Check top5Setups only
+        for setup in &plan.top_setups {
+            if setup.symbol == symbol && setup.timeframe == timeframe {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn render_dashboard_help(f: &mut Frame, area: Rect) {
     let help_block = Block::default()
         .borders(Borders::ALL)
@@ -924,7 +1115,11 @@ fn render_dashboard_help(f: &mut Frame, area: Rect) {
 
 fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, content_area: Rect) {
     // Calculate totals
-    let open_trades_count = app.live_trades.iter().filter(|t| t.status == crate::types::TradeStatus::Open).count();
+    let open_trades_count = app
+        .live_trades
+        .iter()
+        .filter(|t| t.status == crate::types::TradeStatus::Open)
+        .count();
     let total_unrealized = app.get_total_unrealized_pips();
     let total_closed = app.get_closed_trades_total_pips();
     let total_pips = total_unrealized + total_closed;
@@ -937,9 +1132,8 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
         .border_style(Style::default().fg(Color::Green));
 
     let trades_header_text = format!(
-        "Open: {} | Total P&L: {:.1} pips", 
-        open_trades_count,
-        total_pips
+        "Open: {} | Total P&L: {:.1} pips",
+        open_trades_count, total_pips
     );
 
     let header_color = if total_pips > 0.0 {
@@ -1020,9 +1214,7 @@ fn render_placed_trades_panel(f: &mut Frame, app: &App, header_area: Rect, conte
                     ),
                     Span::styled(
                         format!("{:+.1}p ", trade.unrealized_pips),
-                        Style::default()
-                            .fg(pips_color)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(pips_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         format!("Zone:{}", &trade.zone_id[..8]),
@@ -1847,7 +2039,7 @@ fn render_trading_reminder_popup(f: &mut Frame, area: Rect) {
     let popup_height = 8;
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
-    
+
     let popup_area = Rect {
         x,
         y,
@@ -1866,23 +2058,37 @@ fn render_trading_reminder_popup(f: &mut Frame, area: Rect) {
         .border_style(Style::default().fg(Color::Yellow));
 
     let popup_content = vec![
-        Line::from(vec![
-            Span::styled("WebSocket Connected! 🟢", Style::default().fg(Color::Green)),
-        ]),
+        Line::from(vec![Span::styled(
+            "WebSocket Connected! 🟢",
+            Style::default().fg(Color::Green),
+        )]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Trading is currently ", Style::default().fg(Color::White)),
-            Span::styled("DISABLED", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "DISABLED",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Press ", Style::default().fg(Color::White)),
-            Span::styled("'t'", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "'t'",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" to enable trading", Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
             Span::styled("Press ", Style::default().fg(Color::White)),
-            Span::styled("Enter", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Enter",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" to dismiss", Style::default().fg(Color::White)),
         ]),
     ];

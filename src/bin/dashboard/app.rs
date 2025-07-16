@@ -20,6 +20,7 @@ use pattern_detector::zone_interactions::ZoneInteractionContainer;
 use serde::{Deserialize, Serialize};
 // REMOVE: mod trading_plan;
 use crate::trading_plan::TradingPlan;
+use std::fs;
 
 // Import PendingOrder from zone monitor
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +132,24 @@ pub struct App {
 
     pub trading_plan_enabled: bool,
     pub trading_plan: Option<TradingPlan>,
+    pub filter_noise_zones: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DayTradingStrategy {
+    pub id: String,
+    pub symbol: String,
+    #[serde(rename = "type")]
+    pub strategy_type: String,
+    pub description: String,
+    pub createdAt: String,
+    pub updatedAt: String,
+    pub direction: String, // "short" or "long"
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharedStrategies {
+    pub strategies_by_symbol: HashMap<String, DayTradingStrategy>,
 }
 
 impl App {
@@ -212,7 +231,8 @@ impl App {
         notification_timeframe_filters.insert("4h".to_string(), true);
         notification_timeframe_filters.insert("1d".to_string(), true);
 
-        let trading_plan_enabled = std::env::var("TRADING_PLAN_ENABLED").unwrap_or_else(|_| "false".to_string()) == "true";
+        let trading_plan_enabled =
+            std::env::var("TRADING_PLAN_ENABLED").unwrap_or_else(|_| "false".to_string()) == "true";
         let trading_plan = if trading_plan_enabled {
             TradingPlan::load_from_file("trading_plan.json")
         } else {
@@ -284,6 +304,21 @@ impl App {
 
             trading_plan_enabled,
             trading_plan,
+            filter_noise_zones: false,
+        }
+    }
+
+    pub fn toggle_noise_filter(&mut self) {
+        self.filter_noise_zones = !self.filter_noise_zones;
+        // Reset zone selection when toggling filter
+        self.selected_zone_index = None;
+    }
+
+    pub fn get_noise_filter_status(&self) -> &str {
+        if self.filter_noise_zones {
+            "ON"
+        } else {
+            "OFF"
         }
     }
 
@@ -621,8 +656,12 @@ impl App {
 
     /// Returns the filtered list of zones as used by the dashboard UI (trading plan, day trading mode, symbol, timeframe, etc.)
     pub fn get_filtered_zones(&self) -> Vec<&ZoneDistanceInfo> {
-        let day_trading_mode = std::env::var("DAY_TRADING_MODE_ACTIVE").unwrap_or_else(|_| "false".to_string()) == "true";
-        let mut filtered: Vec<&ZoneDistanceInfo> = if self.trading_plan_enabled || day_trading_mode {
+        let day_trading_mode = std::env::var("DAY_TRADING_MODE_ACTIVE")
+            .unwrap_or_else(|_| "false".to_string())
+            == "true";
+
+        let mut filtered: Vec<&ZoneDistanceInfo> = if self.trading_plan_enabled || day_trading_mode
+        {
             let mut allowed = std::collections::HashSet::new();
             if self.trading_plan_enabled {
                 if let Some(plan) = &self.trading_plan {
@@ -639,41 +678,151 @@ impl App {
                     }
                 }
             }
-            self.zones.iter().filter(|zone|
-                allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str()))
-            ).collect()
+            self.zones
+                .iter()
+                .filter(|zone| allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str())))
+                .collect()
         } else {
             self.zones.iter().collect()
         };
+
         // Apply timeframe filter
         filtered.retain(|zone| self.is_timeframe_enabled(&zone.timeframe));
+
         // Apply breached filter
         if !self.show_breached {
             filtered.retain(|zone| zone.zone_status != ZoneStatus::Breached);
         }
+
         // Apply strength filter (dashboard only)
         if matches!(self.current_page, AppPage::Dashboard) {
             filtered.retain(|zone| zone.strength_score >= self.min_strength_filter);
         }
+
         // Apply indices filter
         if !self.show_indices {
             filtered.retain(|zone| zone.symbol != "NAS100" && zone.symbol != "US500");
         }
+
         // Apply symbol filter (dashboard only)
         if matches!(self.current_page, AppPage::Dashboard) {
             filtered.retain(|zone| self.symbol_matches_filter(&zone.symbol));
         }
-        // Sorting (same as process_zones_response)
+
+        // NEW: Apply noise filter if enabled
+        if self.filter_noise_zones {
+            let shared_strategies = if day_trading_mode {
+                App::load_shared_strategies()
+            } else {
+                None
+            };
+
+            filtered.retain(|zone| {
+                // Keep zones that meet ANY of these criteria:
+
+                // 1. Has a pending order (always show these)
+                if self.has_pending_order(&zone.zone_id) {
+                    return true;
+                }
+
+                // 2. Is in trading plan (if enabled)
+                // if self.trading_plan_enabled {
+                //     if let Some(plan) = &self.trading_plan {
+                //         for setup in &plan.top_setups {
+                //             if setup.symbol == zone.symbol
+                //                 && (zone.timeframe == "5m" || zone.timeframe == "15m")
+                //             {
+                //                 return true;
+                //             }
+                //         }
+                //     }
+                // }
+                if self.trading_plan_enabled {
+                    if let Some(plan) = &self.trading_plan {
+                        for setup in &plan.top_setups {
+                            if setup.symbol == zone.symbol && setup.timeframe == zone.timeframe {
+                                // ← EXACT timeframe match
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                // 3. Has a valid day trading strategy (if day trading mode enabled)
+                if day_trading_mode {
+                    if self.has_valid_day_trading_strategy(zone, shared_strategies.as_ref()) {
+                        return true;
+                    }
+                }
+
+                // 4. Zone is actively triggering (high priority statuses)
+                if matches!(
+                    zone.zone_status,
+                    ZoneStatus::AtProximal | ZoneStatus::InsideZone
+                ) {
+                    return true;
+                }
+
+                // Otherwise, filter out as noise
+                false
+            });
+        }
+
+        // Sorting (same as before)
         filtered.sort_by(|a, b| {
             use std::cmp::Ordering;
             let a_priority = a.zone_status.priority();
             let b_priority = b.zone_status.priority();
             match b_priority.cmp(&a_priority) {
-                Ordering::Equal => a.distance_pips.partial_cmp(&b.distance_pips).unwrap_or(Ordering::Equal),
+                Ordering::Equal => a
+                    .distance_pips
+                    .partial_cmp(&b.distance_pips)
+                    .unwrap_or(Ordering::Equal),
                 other => other,
             }
         });
+
         filtered
+    }
+
+    // Helper method to check if zone has a valid day trading strategy
+    pub fn has_valid_day_trading_strategy(
+        &self,
+        zone: &ZoneDistanceInfo,
+        shared_strategies: Option<&SharedStrategies>,
+    ) -> bool {
+        if let Some(strategies) = shared_strategies {
+            // Try to find strategy (same logic as get_strategy_for_zone)
+            let strategy = strategies
+                .strategies_by_symbol
+                .get(&zone.symbol)
+                .or_else(|| {
+                    let symbol_with_sb = format!("{}_SB", zone.symbol);
+                    strategies.strategies_by_symbol.get(&symbol_with_sb)
+                })
+                .or_else(|| {
+                    if zone.symbol.ends_with("_SB") {
+                        let symbol_without_sb =
+                            zone.symbol.strip_suffix("_SB").unwrap_or(&zone.symbol);
+                        strategies.strategies_by_symbol.get(symbol_without_sb)
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(strategy) = strategy {
+                // Only for 5m/15m timeframes
+                if zone.timeframe == "5m" || zone.timeframe == "15m" {
+                    let is_sell = zone.zone_type.to_lowercase().contains("supply");
+                    let is_buy = zone.zone_type.to_lowercase().contains("demand");
+
+                    // Valid if strategy direction matches zone type
+                    return (strategy.direction == "short" && is_sell)
+                        || (strategy.direction == "long" && is_buy);
+                }
+            }
+        }
+        false
     }
 
     pub fn select_next_zone(&mut self) {
@@ -755,7 +904,8 @@ impl App {
                 );
                 match self.copy_to_clipboard(&zone_details) {
                     Ok(()) => {
-                        self.last_copied_zone_id = Some(format!("✅ Zone Details: {}", zone_details));
+                        self.last_copied_zone_id =
+                            Some(format!("✅ Zone Details: {}", zone_details));
                     }
                     Err(_) => {
                         self.last_copied_zone_id = Some(format!("Zone Details: {}", zone_details));
@@ -2055,16 +2205,25 @@ impl App {
                 match conn.keys::<&str, Vec<String>>("pending_order:*") {
                     Ok(keys) => {
                         let mut loaded_count = 0;
+                        let mut total_count = 0;
 
                         for key in keys {
+                            total_count += 1;
                             if let Some(zone_id) = key.strip_prefix("pending_order:") {
                                 match conn.get::<&str, String>(&key) {
                                     Ok(order_json) => {
                                         match serde_json::from_str::<PendingOrder>(&order_json) {
                                             Ok(order) => {
-                                                self.pending_orders
-                                                    .insert(zone_id.to_string(), order);
-                                                loaded_count += 1;
+                                                // ONLY load orders with "PENDING" status
+                                                if order.status == "PENDING" {
+                                                    self.pending_orders
+                                                        .insert(zone_id.to_string(), order);
+                                                    loaded_count += 1;
+                                                    log::debug!("📋 Dashboard loaded PENDING order for zone: {}", zone_id);
+                                                } else {
+                                                    log::debug!("📋 Dashboard skipped {} order for zone: {} (status: {})", 
+                                                    order.status, zone_id, order.status);
+                                                }
                                             }
                                             Err(e) => {
                                                 log::warn!("📋 Dashboard failed to parse pending order {}: {}", zone_id, e);
@@ -2082,14 +2241,11 @@ impl App {
                             }
                         }
 
-                        if loaded_count > 0 {
-                            log::info!(
-                                "📋 Dashboard loaded {} pending orders from Redis",
-                                loaded_count
-                            );
-                        } else {
-                            log::debug!("📋 Dashboard found no pending orders in Redis");
-                        }
+                        log::info!(
+                            "📋 Dashboard loaded {} PENDING orders out of {} total Redis entries",
+                            loaded_count,
+                            total_count
+                        );
                     }
                     Err(e) => {
                         log::warn!(
@@ -2135,5 +2291,33 @@ impl App {
     /// Get pending order info for a zone
     pub fn get_pending_order(&self, zone_id: &str) -> Option<&PendingOrder> {
         self.pending_orders.get(zone_id)
+    }
+
+    pub fn load_shared_strategies() -> Option<SharedStrategies> {
+        let path = "shared_strategies.json";
+        let data = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    pub fn get_strategy_code_for_zone(
+        &self,
+        zone: &ZoneDistanceInfo,
+        shared_strategies: &Option<SharedStrategies>,
+    ) -> Option<&'static str> {
+        if let Some(strategies) = shared_strategies {
+            if let Some(strategy) = strategies.strategies_by_symbol.get(&zone.symbol) {
+                // Only for 5m/15m
+                if zone.timeframe == "5m" || zone.timeframe == "15m" {
+                    let is_sell = zone.zone_type.to_lowercase().contains("supply");
+                    let is_buy = zone.zone_type.to_lowercase().contains("demand");
+                    if strategy.direction == "short" && is_sell {
+                        return Some("DTS");
+                    } else if strategy.direction == "long" && is_buy {
+                        return Some("DTL");
+                    }
+                }
+            }
+        }
+        None
     }
 }

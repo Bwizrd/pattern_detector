@@ -14,9 +14,9 @@ use tracing::{error, info, warn};
 
 mod app;
 mod notifications;
+mod trading_plan;
 mod types;
 mod ui;
-mod trading_plan;
 #[path = "../zone_monitor/websocket.rs"]
 mod websocket;
 use dotenvy::dotenv;
@@ -170,6 +170,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                         KeyCode::Char('s') => {
                             if app.current_page == AppPage::Dashboard {
                                 app.toggle_strength_input_mode();
+                            }
+                        }
+                        // Noise filter toggle (only on dashboard)
+                        KeyCode::Char('o') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.toggle_noise_filter();
                             }
                         }
                         // Symbol filter toggle (only on dashboard)
