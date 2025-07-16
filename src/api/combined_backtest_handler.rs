@@ -343,10 +343,10 @@ async fn run_single_symbol_timeframe_backtest(
     );
 
     // --- 5. Trade Execution (IDENTICAL TO SINGLE BACKTEST) ---
-    let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
+    // let default_symbol_for_recognizer_trade = "UNKNOWN_SYMBOL_IN_RECOGNIZER"; 
     let mut trade_executor = TradeExecutor::new(
         trade_config,
-        default_symbol_for_recognizer_trade, // Use same placeholder as single backtest
+        symbol, // Use same placeholder as single backtest
         None,   // allowed_days
         None,   // trade_end_hour
     );
