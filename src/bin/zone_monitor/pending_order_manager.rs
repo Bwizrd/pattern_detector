@@ -17,6 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::db::order_db::EnrichedDeal;
 use crate::active_order_manager::EnrichedActiveTrade;
+use crate::strategy_manager::StrategyManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrder {
@@ -106,7 +107,7 @@ struct PlacePendingOrderResponse {
 }
 
 impl PendingOrderManager {
-    pub fn new() -> Self {
+    pub fn new(strategies: Option<&StrategyManager>) -> Self {
         let (_redis_client, redis_connection) = match Client::open("redis://127.0.0.1:6379/") {
             Ok(client) => match client.get_connection() {
                 Ok(conn) => {
@@ -176,6 +177,18 @@ impl PendingOrderManager {
             info!("   Min zone strength: {:.1}", min_zone_strength);
         } else {
             info!("📋 Pending Order Manager disabled");
+        }
+
+        let day_trading_mode = std::env::var("DAY_TRADING_MODE_ACTIVE").unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true";
+
+        if day_trading_mode {
+            info!("🚦 DAY TRADING MODE ACTIVE! Day trading strategy filtering is enabled for 5m/15m timeframes.");
+            info!("   (Loaded strategies will be used for filtering. See /api/strategies or shared_strategies.json for details.)");
+            // Reminder for allowed timeframes
+            let allowed_timeframes = std::env::var("TRADING_ALLOWED_TIMEFRAMES").unwrap_or_else(|_| "5m,15m,30m,1h,4h,1d".to_string());
+            if !allowed_timeframes.split(',').any(|tf| tf.trim() == "5m") {
+                warn!("⚠️  5m is NOT included in TRADING_ALLOWED_TIMEFRAMES! Add it to allow 5m trades.");
+            }
         }
 
         let redis_client = match Client::open("redis://127.0.0.1:6379/") {
@@ -574,7 +587,9 @@ impl PendingOrderManager {
         price_update: &PriceUpdate,
         zones: &[Zone],
         csv_logger: &CsvLogger,
-        trading_plan: Option<&crate::trading_plan::TradingPlan>, // <-- add trading_plan argument
+        trading_plan: Option<&crate::trading_plan::TradingPlan>,
+        // Add strategies argument if not present
+        strategies: Option<&StrategyManager>,
     ) {
         if !self.enabled {
             return;
@@ -587,6 +602,7 @@ impl PendingOrderManager {
         }
 
         let current_price = (price_update.bid + price_update.ask) / 2.0;
+        let day_trading_mode = std::env::var("DAY_TRADING_MODE_ACTIVE").unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true";
 
         for zone in zones {
             if !zone.is_active {
@@ -623,16 +639,48 @@ impl PendingOrderManager {
                     continue;
                 }
 
-                // TRADING PLAN FILTER (final check, just before booking)
+                // --- OR LOGIC: Trading Plan OR Day Trading Mode ---
+                let mut allowed_by_plan = false;
+                let mut allowed_by_strategy = false;
+                let mut strategy_direction_match = false;
+                let is_short_tf = zone.timeframe == "5m" || zone.timeframe == "15m";
+
+                // Trading plan filter
                 if let Some(plan) = trading_plan {
-                    let in_plan = plan.top_setups.iter().any(|s| s.symbol == price_update.symbol && s.timeframe == zone.timeframe);
-                    if !in_plan {
-                        // Do not log, just skip
-                        continue;
-                    } else {
-                        info!("✅ Booking pending order: {} {} IS IN THE TRADING PLAN", price_update.symbol, zone.timeframe);
+                    allowed_by_plan = plan.top_setups.iter().any(|s| s.symbol == price_update.symbol && s.timeframe == zone.timeframe);
+                }
+
+                // Day trading strategy filter (only for 5m/15m)
+                if day_trading_mode && is_short_tf {
+                    if let Some(strategies) = strategies {
+                        let symbol_key = format!("{}_SB", price_update.symbol);
+                        if let Some(strategy) = futures::executor::block_on(strategies.get_strategy_for_symbol(&symbol_key)) {
+                            // Optional: check direction
+                            let is_long = strategy.direction == "long";
+                            let is_short = strategy.direction == "short";
+                            let is_buy_zone = zone.zone_type.to_lowercase().contains("demand");
+                            let is_sell_zone = zone.zone_type.to_lowercase().contains("supply");
+                            strategy_direction_match = (is_long && is_buy_zone) || (is_short && is_sell_zone);
+                            allowed_by_strategy = strategy_direction_match;
+                        }
                     }
                 }
+
+                // OR logic: book if either filter passes
+                if allowed_by_plan || allowed_by_strategy {
+                    if allowed_by_plan && allowed_by_strategy {
+                        info!("✅ Booking pending order: {} {} allowed by BOTH trading plan and day trading strategy", price_update.symbol, zone.timeframe);
+                    } else if allowed_by_plan {
+                        info!("✅ Booking pending order: {} {} allowed by trading plan", price_update.symbol, zone.timeframe);
+                    } else if allowed_by_strategy {
+                        info!("✅ Booking pending order: {} {} allowed by day trading strategy (direction match: {})", price_update.symbol, zone.timeframe, strategy_direction_match);
+                    }
+                } else {
+                    debug!("❌ Skipping booking: {} {} not allowed by trading plan or day trading strategy", price_update.symbol, zone.timeframe);
+                    continue;
+                }
+
+                // --- End OR logic ---
 
                 // Create zone alert for CSV logging
                 let zone_alert = ZoneAlert {

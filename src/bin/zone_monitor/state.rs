@@ -144,6 +144,8 @@ impl MonitorState {
         let order_database =
             OrderDatabase::new(influx_host, influx_org, influx_token, influx_bucket);
 
+        let strategy_manager = Arc::new(StrategyManager::new());
+
         Self {
             zone_cache: Arc::new(RwLock::new(ZoneCache::default())),
             latest_prices: Arc::new(RwLock::new(HashMap::new())),
@@ -156,8 +158,8 @@ impl MonitorState {
             csv_logger: Arc::new(CsvLogger::new()),
             telegram_notifier: Arc::new(TelegramNotifier::new()),
             proximity_logger: Arc::new(RwLock::new(ProximityLogger::new())),
-            pending_order_manager: Arc::new(RwLock::new(PendingOrderManager::new())),
-            strategy_manager: Arc::new(StrategyManager::new()),
+            pending_order_manager: Arc::new(RwLock::new(PendingOrderManager::new(Some(&*strategy_manager)))),
+            strategy_manager: Arc::clone(&strategy_manager),
             active_order_manager: Arc::new(ActiveOrderManager::new(Some(Arc::new(order_database.clone())))),
             zone_interactions: Arc::new(RwLock::new(zone_interactions)),
             interaction_config,
@@ -217,6 +219,26 @@ impl MonitorState {
             Err(e) => {
                 warn!("⚠️ Failed to load initial strategies: {}", e);
                 // Don't fail initialization if strategies can't be loaded
+            }
+        }
+
+        // Log loaded strategies if day trading mode is active
+        if std::env::var("DAY_TRADING_MODE_ACTIVE").unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true" {
+            match self.strategy_manager.load_strategies_from_file().await {
+                Ok(strategies_file) => {
+                    info!("🚦 DAY TRADING MODE ACTIVE! Strategies loaded for 5m/15m:");
+                    for (symbol, strat) in &strategies_file.strategies_by_symbol {
+                        info!(
+                            "   - {} | Direction: {} | Type: {}",
+                            symbol,
+                            strat.direction,
+                            strat.r#type
+                        );
+                    }
+                }
+                Err(e) => {
+                    info!("   (Failed to load strategies: {})", e);
+                }
             }
         }
 
@@ -620,7 +642,7 @@ impl MonitorState {
             {
                 let mut pending_order_manager = self.pending_order_manager.write().await;
                 pending_order_manager
-                    .check_and_place_orders(&price_update, &zones, &self.csv_logger, self.trading_plan.as_ref())
+                    .check_and_place_orders(&price_update, &zones, &self.csv_logger, self.trading_plan.as_ref(), Some(&*self.strategy_manager))
                     .await;
             }
 

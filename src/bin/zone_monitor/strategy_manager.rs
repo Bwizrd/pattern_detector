@@ -107,7 +107,6 @@ impl StrategyManager {
             Ok(content) => {
                 match serde_json::from_str::<StrategiesFile>(&content) {
                     Ok(strategies_file) => {
-                        info!("📋 Loaded {} strategies from file", strategies_file.total_strategies);
                         Ok(strategies_file)
                     }
                     Err(e) => {
