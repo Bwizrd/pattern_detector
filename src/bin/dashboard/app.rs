@@ -665,7 +665,7 @@ impl App {
             let mut allowed = std::collections::HashSet::new();
             if self.trading_plan_enabled {
                 if let Some(plan) = &self.trading_plan {
-                    for s in &plan.top_setups {
+                    for s in plan.best_combinations.values() {
                         allowed.insert((s.symbol.as_str(), s.timeframe.as_str()));
                     }
                 }
@@ -739,7 +739,7 @@ impl App {
                 // }
                 if self.trading_plan_enabled {
                     if let Some(plan) = &self.trading_plan {
-                        for setup in &plan.top_setups {
+                        for setup in plan.best_combinations.values() {
                             if setup.symbol == zone.symbol && setup.timeframe == zone.timeframe {
                                 // ← EXACT timeframe match
                                 return true;

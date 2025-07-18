@@ -307,9 +307,9 @@ fn render_stats_and_controls_enhanced(f: &mut Frame, app: &App, area: Rect, scre
     if app.trading_plan_enabled {
         if let Some(plan) = &app.trading_plan {
             let pairs = plan
-                .top_setups
-                .iter()
-                .map(|s| format!("{} {}", s.symbol, s.timeframe))
+                .best_combinations
+                .values()
+                .map(|combo| format!("{} {}", combo.symbol, combo.timeframe))
                 .collect::<Vec<_>>()
                 .join(", ");
             timeframes_line_spans.push(Span::styled(
@@ -785,9 +785,9 @@ fn render_zones_table_improved(
         let filtered_zones: Vec<_> = if app.trading_plan_enabled {
             if let Some(plan) = &app.trading_plan {
                 let allowed: std::collections::HashSet<_> = plan
-                    .top_setups
-                    .iter()
-                    .map(|s| (s.symbol.as_str(), s.timeframe.as_str()))
+                    .best_combinations
+                    .values()
+                    .map(|combo| (combo.symbol.as_str(), combo.timeframe.as_str()))
                     .collect();
                 app.zones
                     .iter()
@@ -1088,8 +1088,7 @@ fn render_zones_table_improved(
 
 fn is_in_trading_plan(symbol: &str, timeframe: &str, trading_plan: Option<&TradingPlan>) -> bool {
     if let Some(plan) = trading_plan {
-        // Check top5Setups only
-        for setup in &plan.top_setups {
+        for setup in plan.best_combinations.values() {
             if setup.symbol == symbol && setup.timeframe == timeframe {
                 return true;
             }
