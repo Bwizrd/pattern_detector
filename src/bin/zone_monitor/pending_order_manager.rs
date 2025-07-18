@@ -639,15 +639,32 @@ impl PendingOrderManager {
                     continue;
                 }
 
-                // --- OR LOGIC: Trading Plan OR Day Trading Mode ---
+                // --- TRADING PLAN ENABLED FILTER ---
+                let trading_plan_enabled = std::env::var("TRADING_PLAN_ENABLED")
+                    .unwrap_or_else(|_| "false".to_string())
+                    .to_lowercase() == "true";
+
                 let mut allowed_by_plan = false;
                 let mut allowed_by_strategy = false;
                 let mut strategy_direction_match = false;
                 let is_short_tf = zone.timeframe == "5m" || zone.timeframe == "15m";
 
-                // Trading plan filter
-                if let Some(plan) = trading_plan {
-                    allowed_by_plan = plan.top_setups.iter().any(|s| s.symbol == price_update.symbol && s.timeframe == zone.timeframe);
+                // Trading plan filter (NEW STRUCTURE)
+                if trading_plan_enabled {
+                    if let Some(plan) = trading_plan {
+                        allowed_by_plan = plan.is_combination_allowed(&price_update.symbol, &zone.timeframe);
+                        if allowed_by_plan {
+                            info!("✅ [TRADING_PLAN] Combination {}_{} is ALLOWED by trading plan", price_update.symbol, zone.timeframe);
+                        } else {
+                            info!("❌ [TRADING_PLAN] Combination {}_{} is NOT in trading plan", price_update.symbol, zone.timeframe);
+                        }
+                    } else {
+                        warn!("⚠️  [TRADING_PLAN] TRADING_PLAN_ENABLED=true but no trading plan loaded!");
+                        continue; // Skip if plan is required but not loaded
+                    }
+                } else {
+                    info!("📊 [TRADING_PLAN] Trading plan filter disabled (TRADING_PLAN_ENABLED=false)");
+                    allowed_by_plan = true; // Allow all if trading plan is disabled
                 }
 
                 // Day trading strategy filter (only for 5m/15m)
@@ -666,17 +683,33 @@ impl PendingOrderManager {
                     }
                 }
 
-                // OR logic: book if either filter passes
-                if allowed_by_plan || allowed_by_strategy {
-                    if allowed_by_plan && allowed_by_strategy {
-                        info!("✅ Booking pending order: {} {} allowed by BOTH trading plan and day trading strategy", price_update.symbol, zone.timeframe);
-                    } else if allowed_by_plan {
-                        info!("✅ Booking pending order: {} {} allowed by trading plan", price_update.symbol, zone.timeframe);
+                // LOGIC: If trading plan is enabled, ONLY trading plan matters
+                // If trading plan is disabled, use day trading strategy OR allow all
+                let should_trade = if trading_plan_enabled {
+                    allowed_by_plan // Only trading plan matters when enabled
+                } else {
+                    // When trading plan is disabled, use day trading strategy OR allow all
+                    if day_trading_mode && is_short_tf {
+                        allowed_by_strategy
+                    } else {
+                        true // Allow all non-short timeframes when trading plan is disabled
+                    }
+                };
+
+                if should_trade {
+                    if trading_plan_enabled {
+                        info!("✅ Booking pending order: {} {} allowed by TRADING PLAN", price_update.symbol, zone.timeframe);
                     } else if allowed_by_strategy {
                         info!("✅ Booking pending order: {} {} allowed by day trading strategy (direction match: {})", price_update.symbol, zone.timeframe, strategy_direction_match);
+                    } else {
+                        info!("✅ Booking pending order: {} {} allowed (no filters active)", price_update.symbol, zone.timeframe);
                     }
                 } else {
-                    debug!("❌ Skipping booking: {} {} not allowed by trading plan or day trading strategy", price_update.symbol, zone.timeframe);
+                    if trading_plan_enabled {
+                        debug!("❌ Skipping booking: {} {} not in trading plan", price_update.symbol, zone.timeframe);
+                    } else {
+                        debug!("❌ Skipping booking: {} {} not allowed by day trading strategy", price_update.symbol, zone.timeframe);
+                    }
                     continue;
                 }
 
@@ -774,8 +807,8 @@ impl PendingOrderManager {
         // Calculate stop loss and take profit
         let pip_value = self.get_pip_value(&price_update.symbol);
         let (sl_pips, tp_pips, plan_used) = if let Some(plan) = trading_plan {
-            if let Some(setup) = plan.top_setups.iter().find(|s| s.symbol == price_update.symbol && s.timeframe == zone.timeframe) {
-                (setup.sl, setup.tp, true)
+            if let Some((sl, tp)) = plan.get_optimized_params(&price_update.symbol, &zone.timeframe) {
+                (sl, tp, true)
             } else {
                 (self.default_sl_pips, self.default_tp_pips, false)
             }
