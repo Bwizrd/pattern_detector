@@ -20,6 +20,8 @@ mod types;
 mod websocket;
 mod zone_state_manager;
 mod trading_plan;
+mod friday_closer;
+mod deadman;
 
 mod enriched_trades;
 use chrono::Utc;
@@ -645,6 +647,31 @@ async fn api_db_deal(Path(deal_id): Path<String>, State(state): State<MonitorSta
     }
 }
 
+// GET /deadmanStatus
+async fn deadman_status() -> Json<serde_json::Value> {
+    Json(json!({ "status": deadman::get_deadman_status() }))
+}
+
+// POST /resetDeadman
+async fn reset_deadman() -> Json<serde_json::Value> {
+    let _ = deadman::set_deadman_status("on");
+    Json(json!({ "status": "on" }))
+}
+
+// POST /emergencyCloseAll
+async fn emergency_close_all() -> Json<serde_json::Value> {
+    let api_url = std::env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let endpoint = format!("{}/closeAllPositionsAndOrders", api_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let result = client.post(&endpoint).send().await;
+    let _ = deadman::set_deadman_status("off");
+    match result {
+        Ok(resp) if resp.status().is_success() => Json(json!({ "result": "success" })),
+        Ok(resp) => Json(json!({ "result": "error", "status": resp.status().as_u16() })),
+        Err(e) => Json(json!({ "result": "error", "error": e.to_string() })),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load .env file from current directory (root of project)
@@ -692,8 +719,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match &plan {
             Some(plan) => {
                 info!("\n🚦 TRADING PLAN ENABLED! Only these setups will be traded:");
-                for setup in &plan.top_setups {
-                    info!("   - {} {} | SL: {} | TP: {}", setup.symbol, setup.timeframe, setup.sl, setup.tp);
+                for setup in plan.best_combinations.values() {
+                    info!("   - {} {} | SL: {} | TP: {}", setup.symbol, setup.timeframe, setup.stop_loss, setup.take_profit);
                 }
             },
             None => {
@@ -760,8 +787,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/enrich_deal/:deal_id", get(api_enrich_deal))
         .route("/api/save_enriched_deal/:deal_id", post(api_save_enriched_deal))
         .route("/api/db_deal/:deal_id", get(api_db_deal))
+        .route("/deadmanStatus", get(deadman_status))
+        .route("/resetDeadman", post(reset_deadman))
+        .route("/emergencyCloseAll", post(emergency_close_all))
         .layer(cors)
         .with_state(state);
+
+    let api_url = std::env::var("CTRADER_API_BRIDGE_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+    let api_url_clone = api_url.clone();
+    tokio::spawn(async move {
+        friday_closer::friday_close_all_positions_task(&api_url_clone).await;
+    });
+    tokio::spawn(friday_closer::sunday_reset_deadman_task());
 
     info!(
         "🌐 Zone Monitor Dashboard starting on http://localhost:{}",
@@ -819,6 +856,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!(
         "   ❤️  Health Check: http://localhost:{}/health",
+        monitor_port
+    );
+    info!(
+        "   💰 Deadman Status: http://localhost:{}/deadmanStatus",
+        monitor_port
+    );
+    info!(
+        "   🔄 Reset Deadman: POST http://localhost:{}/resetDeadman",
+        monitor_port
+    );
+    info!(
+        "   💥 Emergency Close All: POST http://localhost:{}/emergencyCloseAll",
         monitor_port
     );
     info!("✅ Zone Monitor with Notifications and CSV Logging ready!");

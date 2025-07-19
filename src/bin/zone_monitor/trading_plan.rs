@@ -2,22 +2,31 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::{info, debug, warn};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OptimizedCombination {
     pub symbol: String,
     pub timeframe: String,
+    #[serde(rename = "stopLoss")]
     pub stop_loss: f64,
+    #[serde(rename = "takeProfit")]
     pub take_profit: f64,
+    #[serde(rename = "winRate")]
     pub win_rate: f64,
+    #[serde(rename = "totalPnL")]
     pub total_pnl: f64,
     pub profit_factor: Option<f64>,
+    #[serde(rename = "totalTrades")]
     pub total_trades: i32,
+    #[serde(rename = "winningTrades")]
     pub winning_trades: i32,
+    #[serde(rename = "losingTrades")]
     pub losing_trades: i32,
+    #[serde(rename = "avgDuration")]
     pub avg_duration: String,
+    #[serde(rename = "lotSize")]
     pub lot_size: f64,
     pub pattern: String,
 }
@@ -30,7 +39,9 @@ pub struct DateRange {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Metadata {
+    #[serde(rename = "exportedAt")]
     pub exported_at: String,
     pub version: String,
     pub description: String,
@@ -39,35 +50,29 @@ pub struct Metadata {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TradingPlan {
+    #[serde(rename = "optimizationDate")]
     pub optimization_date: String,
+    #[serde(rename = "totalCombinations")]
     pub total_combinations: i32,
+    #[serde(rename = "totalPnL")]
     pub total_pnl: f64,
+    #[serde(rename = "dateRange")]
     pub date_range: DateRange,
+    #[serde(rename = "bestCombinations")]
     pub best_combinations: HashMap<String, OptimizedCombination>,
     pub metadata: Metadata,
 }
 
 impl TradingPlan {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Option<Self> {
-        let data = fs::read_to_string(path).ok()?;
-        match serde_json::from_str(&data) {
-            Ok(plan) => {
-                info!("📊 [TRADING_PLAN] Loaded optimization data:");
-                info!("📊 [TRADING_PLAN]   - Date: {}", plan.optimization_date);
-                info!("📊 [TRADING_PLAN]   - Total combinations: {}", plan.total_combinations);
-                info!("📊 [TRADING_PLAN]   - Total PnL: {:.2} pips", plan.total_pnl);
-                info!("📊 [TRADING_PLAN]   - Best combinations count: {}", plan.best_combinations.len());
-                
-                // Log a few examples
-                for (key, combo) in plan.best_combinations.iter().take(3) {
-                    info!("📊 [TRADING_PLAN]   - {}: SL={} TP={} PnL={:.2} pips", 
-                          key, combo.stop_loss, combo.take_profit, combo.total_pnl);
-                }
-                
-                Some(plan)
-            },
+        let data = fs::read_to_string(&path).map_err(|e| {
+            warn!("Failed to read trading plan file {:?}: {}", path.as_ref(), e);
+            e
+        }).ok()?;
+        match serde_json::from_str::<Self>(&data) {
+            Ok(plan) => Some(plan),
             Err(e) => {
-                warn!("📊 [TRADING_PLAN] Failed to parse trading plan: {}", e);
+                warn!("Failed to parse trading plan JSON: {}", e);
                 None
             }
         }
@@ -95,7 +100,7 @@ impl TradingPlan {
         if allowed {
             info!("📊 [TRADING_PLAN] Combination {} is ALLOWED by trading plan", key);
         } else {
-            info!("📊 [TRADING_PLAN] Combination {} is NOT in trading plan", key);
+            debug!("📊 [TRADING_PLAN] Combination {} is NOT in trading plan", key);
         }
         
         allowed

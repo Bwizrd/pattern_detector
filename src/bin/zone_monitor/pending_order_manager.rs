@@ -18,6 +18,7 @@ use tracing::{debug, error, info, warn};
 use crate::db::order_db::EnrichedDeal;
 use crate::active_order_manager::EnrichedActiveTrade;
 use crate::strategy_manager::StrategyManager;
+use crate::deadman;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingOrder {
@@ -595,6 +596,12 @@ impl PendingOrderManager {
             return;
         }
 
+        // DEADMAN SWITCH: Prevent booking if deadman is off
+        if !deadman::is_trading_enabled() {
+            tracing::warn!("Deadman switch is OFF: no new trades will be booked.");
+            return;
+        }
+
         // CRITICAL CHECK: Ensure Redis is available before ANY trading
         if let Err(e) = self.ensure_redis_available().await {
             error!("🚨 TRADING BLOCKED: Redis unavailable - {}", e);
@@ -656,7 +663,7 @@ impl PendingOrderManager {
                         if allowed_by_plan {
                             info!("✅ [TRADING_PLAN] Combination {}_{} is ALLOWED by trading plan", price_update.symbol, zone.timeframe);
                         } else {
-                            info!("❌ [TRADING_PLAN] Combination {}_{} is NOT in trading plan", price_update.symbol, zone.timeframe);
+                            debug!("❌ [TRADING_PLAN] Combination {}_{} is NOT in trading plan", price_update.symbol, zone.timeframe);
                         }
                     } else {
                         warn!("⚠️  [TRADING_PLAN] TRADING_PLAN_ENABLED=true but no trading plan loaded!");

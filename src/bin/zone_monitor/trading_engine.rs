@@ -483,8 +483,8 @@ impl TradingEngine {
 
         // Determine SL/TP to use
         let (sl_pips, tp_pips, plan_used) = if let Some(plan) = trading_plan {
-            if let Some(setup) = plan.top_setups.iter().find(|s| s.symbol == signal.symbol && s.timeframe == signal.timeframe) {
-                (setup.sl, setup.tp, true)
+            if let Some(setup) = plan.best_combinations.values().find(|s| s.symbol == signal.symbol && s.timeframe == signal.timeframe) {
+                (setup.stop_loss, setup.take_profit, true)
             } else {
                 (config.stop_loss_pips, config.take_profit_pips, false)
             }

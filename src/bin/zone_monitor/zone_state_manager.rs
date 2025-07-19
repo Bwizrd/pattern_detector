@@ -178,7 +178,7 @@ impl ZoneStateManager {
         // If trading plan is enabled, filter zones to only those in the plan
         let filtered_zones: Vec<&Zone> = if let Some(plan) = trading_plan {
             zones.iter().filter(|zone| {
-                let found = plan.top_setups.iter().any(|setup| {
+                let found = plan.best_combinations.values().any(|setup| {
                     setup.symbol == zone.symbol && setup.timeframe == zone.timeframe
                 });
                 if !found {

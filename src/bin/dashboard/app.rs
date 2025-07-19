@@ -133,6 +133,7 @@ pub struct App {
     pub trading_plan_enabled: bool,
     pub trading_plan: Option<TradingPlan>,
     pub filter_noise_zones: bool,
+    pub show_all_zones: bool, // Add this line
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -305,6 +306,7 @@ impl App {
             trading_plan_enabled,
             trading_plan,
             filter_noise_zones: false,
+            show_all_zones: false, // Initialize to false
         }
     }
 
@@ -656,133 +658,20 @@ impl App {
 
     /// Returns the filtered list of zones as used by the dashboard UI (trading plan, day trading mode, symbol, timeframe, etc.)
     pub fn get_filtered_zones(&self) -> Vec<&ZoneDistanceInfo> {
-        let day_trading_mode = std::env::var("DAY_TRADING_MODE_ACTIVE")
-            .unwrap_or_else(|_| "false".to_string())
-            == "true";
-
-        let mut filtered: Vec<&ZoneDistanceInfo> = if self.trading_plan_enabled || day_trading_mode
-        {
-            let mut allowed = std::collections::HashSet::new();
-            if self.trading_plan_enabled {
-                if let Some(plan) = &self.trading_plan {
-                    for s in plan.best_combinations.values() {
-                        allowed.insert((s.symbol.as_str(), s.timeframe.as_str()));
-                    }
-                }
+        if self.show_all_zones {
+            self.zones.iter().collect()
+        } else if self.trading_plan_enabled {
+            if let Some(plan) = &self.trading_plan {
+                self.zones
+                    .iter()
+                    .filter(|zone| plan.best_combinations.values().any(|combo| combo.symbol == zone.symbol && combo.timeframe == zone.timeframe))
+                    .collect()
+            } else {
+                self.zones.iter().collect()
             }
-            if day_trading_mode {
-                // Allow all 5m/15m zones (for all symbols)
-                for zone in &self.zones {
-                    if zone.timeframe == "5m" || zone.timeframe == "15m" {
-                        allowed.insert((zone.symbol.as_str(), zone.timeframe.as_str()));
-                    }
-                }
-            }
-            self.zones
-                .iter()
-                .filter(|zone| allowed.contains(&(zone.symbol.as_str(), zone.timeframe.as_str())))
-                .collect()
         } else {
             self.zones.iter().collect()
-        };
-
-        // Apply timeframe filter
-        filtered.retain(|zone| self.is_timeframe_enabled(&zone.timeframe));
-
-        // Apply breached filter
-        if !self.show_breached {
-            filtered.retain(|zone| zone.zone_status != ZoneStatus::Breached);
         }
-
-        // Apply strength filter (dashboard only)
-        if matches!(self.current_page, AppPage::Dashboard) {
-            filtered.retain(|zone| zone.strength_score >= self.min_strength_filter);
-        }
-
-        // Apply indices filter
-        if !self.show_indices {
-            filtered.retain(|zone| zone.symbol != "NAS100" && zone.symbol != "US500");
-        }
-
-        // Apply symbol filter (dashboard only)
-        if matches!(self.current_page, AppPage::Dashboard) {
-            filtered.retain(|zone| self.symbol_matches_filter(&zone.symbol));
-        }
-
-        // NEW: Apply noise filter if enabled
-        if self.filter_noise_zones {
-            let shared_strategies = if day_trading_mode {
-                App::load_shared_strategies()
-            } else {
-                None
-            };
-
-            filtered.retain(|zone| {
-                // Keep zones that meet ANY of these criteria:
-
-                // 1. Has a pending order (always show these)
-                if self.has_pending_order(&zone.zone_id) {
-                    return true;
-                }
-
-                // 2. Is in trading plan (if enabled)
-                // if self.trading_plan_enabled {
-                //     if let Some(plan) = &self.trading_plan {
-                //         for setup in &plan.top_setups {
-                //             if setup.symbol == zone.symbol
-                //                 && (zone.timeframe == "5m" || zone.timeframe == "15m")
-                //             {
-                //                 return true;
-                //             }
-                //         }
-                //     }
-                // }
-                if self.trading_plan_enabled {
-                    if let Some(plan) = &self.trading_plan {
-                        for setup in plan.best_combinations.values() {
-                            if setup.symbol == zone.symbol && setup.timeframe == zone.timeframe {
-                                // ← EXACT timeframe match
-                                return true;
-                            }
-                        }
-                    }
-                }
-
-                // 3. Has a valid day trading strategy (if day trading mode enabled)
-                if day_trading_mode {
-                    if self.has_valid_day_trading_strategy(zone, shared_strategies.as_ref()) {
-                        return true;
-                    }
-                }
-
-                // 4. Zone is actively triggering (high priority statuses)
-                if matches!(
-                    zone.zone_status,
-                    ZoneStatus::AtProximal | ZoneStatus::InsideZone
-                ) {
-                    return true;
-                }
-
-                // Otherwise, filter out as noise
-                false
-            });
-        }
-
-        // Sorting (same as before)
-        filtered.sort_by(|a, b| {
-            use std::cmp::Ordering;
-            let a_priority = a.zone_status.priority();
-            let b_priority = b.zone_status.priority();
-            match b_priority.cmp(&a_priority) {
-                Ordering::Equal => a
-                    .distance_pips
-                    .partial_cmp(&b.distance_pips)
-                    .unwrap_or(Ordering::Equal),
-                other => other,
-            }
-        });
-
-        filtered
     }
 
     // Helper method to check if zone has a valid day trading strategy

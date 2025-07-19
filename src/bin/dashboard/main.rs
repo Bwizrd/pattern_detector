@@ -241,6 +241,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 app.toggle_breached();
                             }
                         }
+                        KeyCode::Char('a') => {
+                            if app.current_page == AppPage::Dashboard {
+                                app.show_all_zones = !app.show_all_zones;
+                            }
+                        }
                         _ => {}
                     }
                 }
